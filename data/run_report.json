@@ -1,0 +1,11 @@
+{
+  "run_finished_at": "2026-06-26T15:37:11Z",
+  "last_successful_scrape": "2026-06-26T15:37:11Z",
+  "crawled": 3,
+  "succeeded": 3,
+  "skipped": 368,
+  "removed": [],
+  "failed": [],
+  "thin_content": [],
+  "elapsed_seconds": 4.3
+}
