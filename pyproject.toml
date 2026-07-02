@@ -1,7 +1,7 @@
 [project]
-name = "stratpoint-crawler"
+name = "stratpoint-rag"
 version = "0.1.0"
-description = "Sitemap-driven Playwright crawler for stratpoint.com -> Markdown corpus for RAG."
+description = "RAG chatbot for stratpoint.com: crawler, retrieval pipeline, agent, API, and chat UI."
 authors = [
     { name = "Dattebayo2505", email = "seankyled1st@gmail.com" }
 ]
@@ -17,11 +17,14 @@ dependencies = [
 ]
 
 [project.scripts]
-stratpoint-crawler = "stratpoint_crawler.cli:main"
+stratpoint-crawler = "stratpoint_crawl.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["stratpoint_crawl", "stratpoint_rag"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

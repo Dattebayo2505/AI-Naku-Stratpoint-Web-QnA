@@ -4,7 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A sitemap-driven Playwright crawler that turns `stratpoint.com` into a per-page Markdown corpus (plus an `index.jsonl` manifest) for a downstream RAG pipeline. Managed with **uv**, Python 3.13.
+A **RAG chatbot for `stratpoint.com`**, managed with **uv**, Python 3.13. The site is crawled into a per-page Markdown corpus, which feeds a retrieval pipeline and an agentic chatbot served over an API with a Streamlit chat UI.
+
+Only the **crawler** (`stratpoint_crawl`) is implemented so far; the chatbot components exist as scaffolded subpackages under `src/stratpoint_rag/` and are built out incrementally.
+
+## Repository layout
+
+Two top-level packages with a deliberate ownership split:
+
+```
+src/
+├── stratpoint_crawl/    # LIVE — sitemap-driven Playwright crawler → data/pages/*.md + index.jsonl
+└── stratpoint_rag/      # the chatbot (one subpackage per component)
+    ├── rag/             # planned — chunking, embeddings, vector store, retrieval
+    ├── prompts/         # planned — prompt engineering: system prompts, few-shot, CoT templates
+    ├── disambiguation/  # planned — ambiguous-input detection; clarify intent before tool calls
+    ├── guardrails/      # planned — input/output guardrails
+    ├── agent/           # planned — ReAct agent orchestrating retrieval + tools
+    ├── api/             # planned — HTTP API endpoint (e.g. FastAPI)
+    ├── ui/              # planned — Streamlit chat UI
+    └── evaluation/      # planned — retrieval / answer-quality evals
+```
+
+**`stratpoint_crawl` is maintained and run by the repo owner** — treat it as a stable upstream: don't restructure it or move it back under `stratpoint_rag`, and only touch it when the task is explicitly about crawling/extraction. Chatbot work goes in `stratpoint_rag`; when implementing a planned component, put it in its subpackage (its `__init__.py` docstring states the intended scope). New chatbot features (prompting, disambiguation, guardrails, agent behavior, API, UI) map onto these folders — not necessarily 1-to-1, but the boundaries above are the default. The only coupling between the two packages is the crawled corpus on disk: `data/pages/*.md` + `data/index.jsonl` (see the corpus invariant below) — `stratpoint_rag` must not import from `stratpoint_crawl`.
 
 ## Commands
 
@@ -39,16 +61,16 @@ playwright install chromium                   # one-time browser download (requi
 
 pytest                                        # unit suite
 pytest -m integration                         # live test
-stratpoint-crawler --limit 5                  # or: python -m stratpoint_crawler --limit 5
+stratpoint-crawler --limit 5                  # or: python -m stratpoint_crawl --limit 5
 ```
 
-The console script (`stratpoint-crawler`) and `python -m stratpoint_crawler` are equivalent — both call `cli.main`. Use the latter if the script isn't on PATH after install.
+The console script (`stratpoint-crawler`) and `python -m stratpoint_crawl` are equivalent — both call `stratpoint_crawl/cli.py:main`. Use the latter if the script isn't on PATH after install.
 
 `pytest` config lives in `pyproject.toml`: `asyncio_mode = "auto"` (async tests need no `@pytest.mark.asyncio`) and `addopts = "-m 'not integration'"` (the live test is excluded unless explicitly selected).
 
-## Architecture
+## Crawler architecture (`stratpoint_crawl`)
 
-Pipeline, wired together in `cli.py:_run`:
+Pipeline, wired together in `stratpoint_crawl/cli.py:_run`:
 
 ```
 sitemap.discover_page_refs → crawl(fetcher) → extract → storage.Writer → index.jsonl + run_report.json
@@ -67,7 +89,7 @@ sitemap.discover_page_refs → crawl(fetcher) → extract → storage.Writer →
 
 - **`extract._main_html` does NOT take the first `<article>`.** stratpoint.com is Divi (WordPress) with no `<main>` and ~10 small `<article>` related-post cards. The heuristic is: `<main>` → a *single* `<article>` (only when exactly one exists) → `<body>` after chrome stripping. Taking the first `<article>` was a real bug; `tests/fixtures/divi.html` guards against the regression.
 
-- **Incremental mode is live (`--incremental`, `--force`).** `state.should_recrawl()` skips a page when its sitemap `lastmod` equals the value in the prior `index.jsonl`; `--force` recrawls everything. `crawl()` returns a `CrawlSummary` (`results`/`skipped`/`removed`), **not** a list. Un-recrawled pages (skipped *and* removed-from-sitemap) are carried forward verbatim as `status="skipped"`, so the manifest always describes the full corpus. **Corpus invariant: a page is present when `status` is `ok` OR `skipped`; detect change via `content_hash`, never `status == "ok"`.** Removed pages are carried forward and reported, never deleted.
+- **Incremental mode is live (`--incremental`, `--force`).** `state.should_recrawl()` skips a page when its sitemap `lastmod` equals the value in the prior `index.jsonl`; `--force` recrawls everything. `crawl()` returns a `CrawlSummary` (`results`/`skipped`/`removed`), **not** a list. Un-recrawled pages (skipped *and* removed-from-sitemap) are carried forward verbatim as `status="skipped"`, so the manifest always describes the full corpus. **Corpus invariant: a page is present when `status` is `ok` OR `skipped`; detect change via `content_hash`, never `status == "ok"`.** Removed pages are carried forward and reported, never deleted. Downstream RAG ingestion must honor this: index pages with status `ok`/`skipped`, and use `content_hash` to decide what to re-embed.
 
 - **`crawled_at` is stamped once in `cli._run` and threaded through** `crawl → Writer` and `_write_report`, never read from the clock inside `storage`/`state`. This keeps those modules deterministic under test.
 
@@ -83,7 +105,7 @@ The **first** `--incremental` run after a full crawl recrawls everything — a p
 
 ## Process notes
 
-`data/` is gitignored (crawler output). Design spec and implementation plan are in `docs/superpowers/{specs,plans}/` if you need the original requirements/rationale.
+`data/` is gitignored (crawler output). Crawler design spec and implementation plan are in `docs/superpowers/{specs,plans}/` if you need the original requirements/rationale.
 
 ### Session logs
 
