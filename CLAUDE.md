@@ -103,9 +103,11 @@ Unit tests use HTML/XML fixtures in `tests/fixtures/` (`page.html`, `divi.html`,
 
 The **first** `--incremental` run after a full crawl recrawls everything — a pre-feature manifest stores `lastmod` as `null`, so that run seeds it; the *next* run skips unchanged pages. Fast check without a ~5-min crawl: `stratpoint-crawler --incremental --force --limit 3` (proves `--force` overrides the skip). The incremental path is also unit-tested offline by seeding a prior `index.jsonl` and asserting `FakeFetcher.calls` never includes skipped URLs.
 
-## Process notes
+## Deployment target
 
-`data/` is gitignored (crawler output). Crawler design spec and implementation plan are in `docs/superpowers/{specs,plans}/` if you need the original requirements/rationale.
+The project will be hosted on a **Linux container (LXC) managed by Proxmox**: the LXC is the environment that will run the RAG code and the **dockerized local model**. When working on deployment, model serving, or environment config (the `api`/`ui` subpackages, Docker setup, `.env` handling), assume this target rather than cloud hosting.
+
+**`.envexample`** at the repo root is the committed template for `.env` (which is gitignored): container credentials and endpoint — `LCX_ROOT_USERNAME`/`LCX_ROOT_PASSWORD`, `NON_ROOT_USERNAME`/`NON_ROOT_PASSWORD`, `PUBLIC_IP_ADDRESS`, `PORT`. Keep new environment variables mirrored in `.envexample` (values blank) so other groups can reference it. Note the existing `LCX_` spelling (not `LXC_`) — match it.
 
 ### Session logs
 

@@ -19,3 +19,5 @@ Thumbs.db
 # skill-creator eval run artifacts (keep trigger-eval.json, drop run output)
 .claude/skills/*-workspace/results/
 .claude/skills/*-workspace/*.out
+
+.env
