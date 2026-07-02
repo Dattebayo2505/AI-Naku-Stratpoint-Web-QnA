@@ -1,7 +1,7 @@
 import json
 
-from stratpoint_crawler.models import PageContent, PageResult
-from stratpoint_crawler.storage import slugify, Writer
+from stratpoint_crawl.models import PageContent, PageResult
+from stratpoint_crawl.storage import slugify, Writer
 
 
 def test_slugify_paths():

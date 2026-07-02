@@ -1,8 +1,8 @@
 import pytest
 
-from stratpoint_crawler.config import Settings
-from stratpoint_crawler.crawler import PlaywrightFetcher, crawl
-from stratpoint_crawler.models import PageRef
+from stratpoint_crawl.config import Settings
+from stratpoint_crawl.crawler import PlaywrightFetcher, crawl
+from stratpoint_crawl.models import PageRef
 
 
 @pytest.mark.integration

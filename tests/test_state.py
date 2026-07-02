@@ -1,7 +1,7 @@
 import json
 
-from stratpoint_crawler.models import PageRef
-from stratpoint_crawler.state import (
+from stratpoint_crawl.models import PageRef
+from stratpoint_crawl.state import (
     load_last_successful_scrape,
     load_previous,
     resolve_last_successful_scrape,

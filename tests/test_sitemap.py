@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from stratpoint_crawler.config import Settings
-from stratpoint_crawler.sitemap import (
+from stratpoint_crawl.config import Settings
+from stratpoint_crawl.sitemap import (
     parse_sitemap_index,
     parse_urlset,
     filter_refs,

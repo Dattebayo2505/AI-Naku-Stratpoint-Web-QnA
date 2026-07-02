@@ -1,4 +1,4 @@
-from stratpoint_crawler.models import PageRef, PageContent, PageResult
+from stratpoint_crawl.models import PageRef, PageContent, PageResult
 
 
 def test_pageref_lastmod_optional():
@@ -26,7 +26,7 @@ def test_pageresult_carries_lastmod():
 
 
 def test_crawl_summary_holds_results_skipped_removed():
-    from stratpoint_crawler.models import CrawlSummary
+    from stratpoint_crawl.models import CrawlSummary
     s = CrawlSummary(results=[], skipped=3, removed=["https://x/gone/"])
     assert s.skipped == 3
     assert s.removed == ["https://x/gone/"]

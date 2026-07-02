@@ -1,4 +1,4 @@
-from stratpoint_crawler.cli import build_parser, settings_from_args
+from stratpoint_crawl.cli import build_parser, settings_from_args
 
 
 def test_parser_defaults():
@@ -25,8 +25,8 @@ def test_force_flag_parses():
 
 
 def test_write_report_counts(tmp_path):
-    from stratpoint_crawler.cli import _write_report
-    from stratpoint_crawler.models import CrawlSummary, PageContent, PageResult
+    from stratpoint_crawl.cli import _write_report
+    from stratpoint_crawl.models import CrawlSummary, PageContent, PageResult
 
     thin_c = PageContent(url="https://x/t/", title="T", markdown="hi",
                          text_len=2, content_hash="sha256:t", thin=True)
@@ -51,7 +51,7 @@ def test_write_report_counts(tmp_path):
 
 
 def _ok_summary():
-    from stratpoint_crawler.models import CrawlSummary, PageContent, PageResult
+    from stratpoint_crawl.models import CrawlSummary, PageContent, PageResult
 
     return CrawlSummary(results=[
         PageResult(url="https://x/ok/", slug="ok", status="ok",
@@ -61,13 +61,13 @@ def _ok_summary():
 
 
 def _all_skip_summary():
-    from stratpoint_crawler.models import CrawlSummary
+    from stratpoint_crawl.models import CrawlSummary
 
     return CrawlSummary(results=[], skipped=3)
 
 
 def test_write_report_stamps_run_time_and_last_successful_scrape(tmp_path):
-    from stratpoint_crawler.cli import _write_report
+    from stratpoint_crawl.cli import _write_report
 
     report = _write_report(tmp_path, _ok_summary(), 1.0, "2026-06-26T00:00:00Z")
     assert report["run_finished_at"] == "2026-06-26T00:00:00Z"
@@ -75,7 +75,7 @@ def test_write_report_stamps_run_time_and_last_successful_scrape(tmp_path):
 
 
 def test_all_skip_run_carries_last_successful_forward(tmp_path):
-    from stratpoint_crawler.cli import _write_report
+    from stratpoint_crawl.cli import _write_report
 
     # A real scrape happened first...
     _write_report(tmp_path, _ok_summary(), 1.0, "2026-06-26T00:00:00Z")

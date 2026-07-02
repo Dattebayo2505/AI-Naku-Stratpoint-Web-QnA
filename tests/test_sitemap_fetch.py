@@ -2,8 +2,8 @@ import httpx
 import pytest
 import respx
 
-from stratpoint_crawler.config import Settings
-from stratpoint_crawler.sitemap import discover_page_refs, EmptySitemapError
+from stratpoint_crawl.config import Settings
+from stratpoint_crawl.sitemap import discover_page_refs, EmptySitemapError
 
 INDEX = b"""<?xml version="1.0"?>
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from stratpoint_crawler.config import Settings
-from stratpoint_crawler.extract import extract
+from stratpoint_crawl.config import Settings
+from stratpoint_crawl.extract import extract
 
 FIX = Path(__file__).parent / "fixtures"
 

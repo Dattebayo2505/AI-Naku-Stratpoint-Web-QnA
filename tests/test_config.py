@@ -1,4 +1,4 @@
-from stratpoint_crawler.config import Settings
+from stratpoint_crawl.config import Settings
 
 
 def test_defaults_match_spec():
