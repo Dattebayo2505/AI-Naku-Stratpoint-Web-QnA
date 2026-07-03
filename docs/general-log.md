@@ -10,6 +10,57 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-07-04 — Verified retrieval; surfaced a model-sizing constraint
+
+**What we did**
+- Built a verification test suite for the RAG retrieval module (`RAG-UnitTests/`), covering
+  both normal use and failure cases, to give the retrieval pipeline evidence-based reliability
+  for the eval section of the write-up.
+- Began connecting a local language model so the system can turn retrieved Stratpoint content
+  into written, grounded answers.
+- Discovered the selected local model (`gemma4:e2b`) is too large to run on the intended
+  deployment host (needs more memory than available, no GPU), making local answer generation
+  impractically slow.
+
+**What we produced**
+- A retrieval test suite (`RAG-UnitTests/`) confirming the search pipeline returns the right
+  Stratpoint pages with their source links.
+
+**Open / to decide**
+- The chosen model is too large for the intended deployment host — decide between a smaller
+  local model or a cloud model endpoint before relying on local answer generation.
+
+## 2026-07-03 — Planned the RAG and Dockerization modules
+
+**What we did**
+- Worked through a guided Q&A to pin down how Vienn's two owned modules — RAG (retrieval)
+  and Dockerization (packaging/deploy) — should be built, and captured the outcome in a
+  planning document (`docs/plan-rag-dockerization.md`).
+- Settled the RAG approach: store the corpus in an embedded Chroma vector database, split
+  each page into ~800-token overlapping chunks, and answer questions by retrieving the top
+  few most-relevant chunks with their source links so replies cite stratpoint.com pages.
+- Decided the RAG module's job stops at handing back relevant passages (a `retrieve`
+  function the chatbot's agent will call), with a thin throwaway wrapper only so retrieval
+  can be tested and demoed before teammates' agent is ready — keeping module ownership clean.
+- Chose to embed the pages automatically when the app container starts (backed by a
+  re-runnable command that only re-processes pages whose content changed), and to keep the
+  heavy web-crawler out of the deployed image since the app only reads the finished corpus.
+- Left the vector search and page-embedding models designed as swappable between a local
+  (offline, on-container) option and a cloud option, so the group can decide later without
+  reworking the pipeline.
+
+**What we produced**
+- A planning document for the RAG and Dockerization modules (`docs/plan-rag-dockerization.md`)
+  with a decision log, build order, and rubric/presentation talking points.
+
+**Open / to decide**
+- Which model provider to use for generation and for embeddings (local Ollama/gemma vs a
+  cloud endpoint like Google AI Studio or NVIDIA NIM) — both routes documented, group undecided.
+- The final Docker Compose layout (which containers run together) — deferred until the full
+  app is assembled and its behavior on the Proxmox/LXC host is known.
+
+---
+
 ## 2026-06-26 — Added incremental refresh to the crawler
 
 **What we did**
