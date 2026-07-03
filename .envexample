@@ -4,3 +4,14 @@ NON_ROOT_USERNAME=
 NON_ROOT_PASSWORD=
 PUBLIC_IP_ADDRESS=
 PORT=
+
+# RAG — retrieval (defaults in stratpoint_rag/rag/config.py; blank = use default)
+EMBEDDING_PROVIDER=
+EMBEDDING_MODEL=
+CHROMA_DIR=
+CHROMA_COLLECTION=
+
+# RAG — generation LLM (interim default: ollama / gemma4:e2b, provisional)
+LLM_PROVIDER=
+LLM_MODEL=
+OLLAMA_HOST=
