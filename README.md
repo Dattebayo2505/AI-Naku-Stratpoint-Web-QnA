@@ -71,6 +71,35 @@ Output layout (`data/` is gitignored):
 - `data/raw_html/<slug>.html` — only with `--save-html`
 - `data/run_report.json` — summary (succeeded, failed, thin-content, elapsed)
 
+## Usage — RAG retrieval (agent / other modules)
+
+The `stratpoint_rag.rag` package turns the crawled corpus into a searchable vector index and
+exposes retrieval for the ReAct agent and the other chatbot modules.
+
+**One-time setup after cloning** — the vector store is *not* committed; it's rebuilt from `data/`:
+
+```bash
+uv sync                        # installs deps (adds chromadb + sentence-transformers)
+uv run stratpoint-rag-ingest   # embeds data/ into ./chroma_db (downloads a ~130MB model, ~a few min)
+```
+
+Then retrieve from any module:
+
+```python
+from stratpoint_rag.rag.retrieve import retrieve
+
+for c in retrieve("Does Stratpoint do mobile app development?", k=5):
+    print(c.score, c.title, c.url)   # each Chunk has: .text .url .title .score .slug
+```
+
+- `retrieve(query, k)` is the seam the **ReAct agent** calls as a retrieval tool. It needs **no
+  LLM** — only a local embedding model. Grounded answer *generation* is a separate concern.
+- **Gotcha:** if you skip `stratpoint-rag-ingest`, `retrieve()` returns an **empty list** (it does
+  not error) — an empty result usually just means the index was never built.
+- Re-run `stratpoint-rag-ingest` after a fresh crawl; it re-embeds only pages whose content changed.
+
+Full design, config, and the embedding/LLM route options live in `docs/plan-rag-dockerization.md`.
+
 ## Tests
 
 ```bash

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A **RAG chatbot for `stratpoint.com`**, managed with **uv**, Python 3.13. The site is crawled into a per-page Markdown corpus, which feeds a retrieval pipeline and an agentic chatbot served over an API with a Streamlit chat UI.
 
-Only the **crawler** (`stratpoint_crawl`) is implemented so far; the chatbot components exist as scaffolded subpackages under `src/stratpoint_rag/` and are built out incrementally.
+The **crawler** (`stratpoint_crawl`) and the **RAG retrieval** package (`stratpoint_rag.rag`) are implemented; the remaining chatbot components exist as scaffolded subpackages under `src/stratpoint_rag/` and are built out incrementally. RAG exposes `retrieve(query, k)` as the agent-facing seam — build the index once with `uv run stratpoint-rag-ingest` before querying (the `chroma_db/` store is gitignored and regenerated from `data/`; see README "Usage — RAG retrieval").
 
 ## Repository layout
 
@@ -16,7 +16,7 @@ Two top-level packages with a deliberate ownership split:
 src/
 ├── stratpoint_crawl/    # LIVE — sitemap-driven Playwright crawler → data/pages/*.md + index.jsonl
 └── stratpoint_rag/      # the chatbot (one subpackage per component)
-    ├── rag/             # planned — chunking, embeddings, vector store, retrieval
+    ├── rag/             # BUILT — chunking, embeddings, Chroma store, retrieve() seam, ingest CLI
     ├── prompts/         # planned — prompt engineering: system prompts, few-shot, CoT templates
     ├── disambiguation/  # planned — ambiguous-input detection; clarify intent before tool calls
     ├── guardrails/      # planned — input/output guardrails
