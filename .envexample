@@ -11,7 +11,7 @@ EMBEDDING_MODEL=
 CHROMA_DIR=
 CHROMA_COLLECTION=
 
-# RAG — generation LLM (interim default: ollama / gemma4:e2b, provisional)
-LLM_PROVIDER=
+# RAG — generation LLM (NVIDIA-hosted NIM, OpenAI-compatible chat/completions)
 LLM_MODEL=
-OLLAMA_HOST=
+NVIDIA_BASE_URL=
+NVIDIA_API_KEY=
