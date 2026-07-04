@@ -21,3 +21,6 @@ Thumbs.db
 .claude/skills/*-workspace/*.out
 
 .env
+
+# Chroma DB
+chroma_db/

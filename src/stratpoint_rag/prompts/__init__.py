@@ -1,5 +1,9 @@
-"""Prompt engineering (planned): system prompts, few-shot examples, CoT templates.
-
-Keep prompts as data (template files/constants) separate from the code that
-renders them, so they can be reviewed and iterated without touching logic.
+"""Prompt engineering module: schemas, few-shot examples, system prompts, prompt builder, registry, and ablation runner.
 """
+
+from __future__ import annotations
+
+from .builder import build_prompt
+from .schema import Citation, GroundedAnswer
+
+__all__ = ["build_prompt", "Citation", "GroundedAnswer"]

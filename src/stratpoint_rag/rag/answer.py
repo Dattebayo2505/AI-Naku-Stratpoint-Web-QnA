@@ -1,51 +1,73 @@
-"""ponytail: THROWAWAY scaffolding — not the real answer path.
+"""Integrated production prompt-engineered answer path (plan §7.9).
 
-retrieve() + a minimal cloud LLM call, ONLY so RAG can be eval'd/demoed
-standalone before the agent module exists. The ReAct agent REPLACES this as
-retrieve()'s caller (plan §3.5, Option C). Do not build on this or grow it into
-an agent.
-
-Generation runs on the NVIDIA-hosted NIM (OpenAI-compatible chat/completions);
-set NVIDIA_API_KEY in .env.
+Calls the winning variant 'v4_combined_lowtemp' from the prompts package
+and validates its structured JSON response against the Pydantic schema.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import httpx
 
-from . import config
-from .retrieve import retrieve
+from stratpoint_rag.rag import config
+from stratpoint_rag.rag.retrieve import retrieve
+from stratpoint_rag.prompts.builder import build_prompt
+from stratpoint_rag.prompts.schema import GroundedAnswer
 
-_PROMPT = """Answer the question using ONLY the Stratpoint context below. \
-If the answer isn't in the context, say you don't know. Cite the source URLs you used.
-
-Context:
-{context}
-
-Question: {q}
-Answer:"""
+log = logging.getLogger(__name__)
 
 
 def answer(query: str, k: int = 5) -> str:
     key = config.nvidia_api_key()
     if not key:
         raise RuntimeError("NVIDIA_API_KEY is not set (see .envexample)")
+
+    # 1. Retrieve the top-k relevant context chunks
     chunks = retrieve(query, k=k)
-    context = "\n\n".join(f"[{c.title}] ({c.url})\n{c.text}" for c in chunks)
-    prompt = _PROMPT.format(context=context, q=query)
+
+    # 2. Build the system and user prompts for the winning variant
+    system_prompt, user_prompt = build_prompt(
+        query, chunks, variant="v4_combined_lowtemp"
+    )
+
+    # 3. Call the NVIDIA NIM endpoint
     resp = httpx.post(
         f"{config.nvidia_base_url()}/chat/completions",
         headers={"Authorization": f"Bearer {key}"},
         json={
             "model": config.llm_model(),
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 16384,
-            "temperature": 1.0,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": 4096,
+            "temperature": 0.1,
             "top_p": 0.95,
+            "response_format": {"type": "json_object"},
             "stream": False,
-            # ponytail: no enable_thinking — grounded RAG answer wants clean text, not CoT
         },
         timeout=120,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    raw_response = resp.json()["choices"][0]["message"]["content"]
+
+    # 4. Parse and validate the response
+    try:
+        parsed = GroundedAnswer.model_validate_json(raw_response)
+    except Exception as e:
+        log.warning("JSON parsing failed, falling back to raw response: %s", e)
+        return raw_response
+
+    # 5. Format answer and citations
+    text = parsed.answer
+
+    if parsed.citations:
+        citations_list = []
+        for c in parsed.citations:
+            title = c.title if c.title else "Stratpoint"
+            citations_list.append(f"- {title} ({c.url})")
+        citations_str = "\n\nSources used:\n" + "\n".join(citations_list)
+        return f"{text}{citations_str}"
+
+    return text
