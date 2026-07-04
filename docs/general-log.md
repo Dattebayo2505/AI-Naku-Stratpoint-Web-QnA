@@ -16,19 +16,23 @@ refreshes the newest entry below.
 - Built a verification test suite for the RAG retrieval module (`RAG-UnitTests/`), covering
   both normal use and failure cases, to give the retrieval pipeline evidence-based reliability
   for the eval section of the write-up.
-- Began connecting a local language model so the system can turn retrieved Stratpoint content
+- Began connecting a language model so the system can turn retrieved Stratpoint content
   into written, grounded answers.
 - Discovered the selected local model (`gemma4:e2b`) is too large to run on the intended
   deployment host (needs more memory than available, no GPU), making local answer generation
   impractically slow.
+- Resolved that constraint by switching answer generation from the local model to a **cloud
+  model endpoint** (NVIDIA-hosted Gemma), removing the deployment-host sizing limit.
 
 **What we produced**
 - A retrieval test suite (`RAG-UnitTests/`) confirming the search pipeline returns the right
   Stratpoint pages with their source links.
+- A working cloud-backed answer path — the system now generates grounded answers without
+  depending on local hardware.
 
 **Open / to decide**
-- The chosen model is too large for the intended deployment host — decide between a smaller
-  local model or a cloud model endpoint before relying on local answer generation.
+- Decision #1 (generation host) can now be closed in favor of the cloud endpoint — confirm
+  with the group and update the plan/docs that still describe both routes.
 
 ## 2026-07-03 — Planned the RAG and Dockerization modules
 

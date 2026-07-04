@@ -7,6 +7,29 @@ Modules I own: **RAG** (retrieval) and **Dockerization**.
 
 ## 2026-07-04
 
+### Switched generation from local Ollama → NVIDIA cloud endpoint
+
+Killed the local-model dependency for `answer()`. gemma4:e2b was too big for the LXC host,
+so generation now hits the NVIDIA-hosted NIM (OpenAI-compatible `/v1/chat/completions`)
+instead of Ollama's `/api/generate`. No new dep — still the one `httpx.post`.
+
+**Changes:**
+- `rag/answer.py` — POST to `{NVIDIA_BASE_URL}/chat/completions` with `Bearer` auth,
+  single user message, parse `choices[0].message.content`. Guards on missing key
+  (`RuntimeError`). Skipped `enable_thinking` — grounded answer wants clean text, not CoT.
+- `rag/config.py` — `llm_provider` default `ollama`→`nvidia`, `llm_model`→`google/gemma-4-31b-it`;
+  dropped `ollama_host()`, added `nvidia_base_url()` + `nvidia_api_key()`.
+- `.envexample` — `OLLAMA_HOST` → `NVIDIA_BASE_URL` / `NVIDIA_API_KEY` (blank). Real key in
+  gitignored `.env`.
+- `RAG-UnitTests/test_answer.py` — respx now mocks the NVIDIA URL + `choices[...]` shape;
+  added missing-key sad path. **33 passed** (RAG-UnitTests).
+
+**Gotcha:** nothing auto-loads `.env` — must `export NVIDIA_API_KEY` (or `set -a; source .env`)
+per shell before `answer()` sees it.
+
+**Open / next:** implement Dockerization module; cloud route means the compose `ollama` profile
+is now optional-only (no longer the default generation path).
+
 ### 01:36 PST — QA + audit pass, applied fixes, suite fully green (81 passed)
 
 Ran a ponytail over-engineering audit + a high-recall correctness QA over the RAG work.
