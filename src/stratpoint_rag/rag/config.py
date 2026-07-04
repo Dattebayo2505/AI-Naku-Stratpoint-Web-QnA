@@ -24,14 +24,14 @@ def embedding_model() -> str:
     return os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
 
-def llm_provider() -> str:
-    return os.getenv("LLM_PROVIDER", "ollama")
-
-
 def llm_model() -> str:
-    # interim default (provisional) — see plan Decision #1
-    return os.getenv("LLM_MODEL", "gemma4:e2b")
+    # NVIDIA-hosted NIM (cloud) — see plan Decision #1
+    return os.getenv("LLM_MODEL", "google/gemma-4-31b-it")
 
 
-def ollama_host() -> str:
-    return os.getenv("OLLAMA_HOST", "http://localhost:11434")
+def nvidia_base_url() -> str:
+    return os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+
+
+def nvidia_api_key() -> str:
+    return os.getenv("NVIDIA_API_KEY", "")
