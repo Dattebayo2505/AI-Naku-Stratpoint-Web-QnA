@@ -41,7 +41,8 @@ def search_stratpoint(query: str) -> str:
         query: The visitor's question, e.g. 'Do you offer cloud migration?'
     """
     try:
-        return _rag_answer(query)
+        text, _ = _rag_answer(query)
+        return text
     except Exception as ex:  # surfaced as an Observation so the loop can recover
         return f"search_stratpoint error: {type(ex).__name__}: {ex}"
 

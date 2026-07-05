@@ -10,6 +10,34 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-07-05 — Completed guardrails, made NeMo the default backend, fixed false-positive advice blocker
+
+**What we did**
+- Analyzed the existing chatbot pipeline (ReAct agent, API, UI built by teammates) and designed guardrails and disambiguation as non-invasive middleware layers that wrap the agent rather than replacing it — preserving the existing `AgentResult` contract the UI depends on.
+- Built the **guardrails module** (`src/stratpoint_rag/guardrails/`) with an input pipeline (PII redaction, keyword blocking, topic filtering) and an output pipeline (hallucination detection via embedding cosine similarity, PII leak cross-referencing against source documents, and advice blocking for medical/legal/financial content). All checks are heuristic-first; the optional LLM fallback is only invoked when heuristics are inconclusive.
+- Built the **disambiguation module** (`src/stratpoint_rag/disambiguation/`) with a heuristic-first intent classifier (greeting/harmful/off-topic/Stratpoint/needs-clarification), regex-based slot extraction for known entities (OutSystems, Flutter, AWS, projects), and a multi-turn clarification loop (max 3 turns) that asks natural follow-up questions when slots are missing.
+- Integrated **NeMo Guardrails** as the default backend (`src/stratpoint_rag/guardrails/nemo/`) with Colang 2.x flows that wire all five custom actions (PII redaction, topic relevance, output PII check, hallucination check, advice blocking) alongside NeMo's built-in library rails — providing the same guardrail coverage as the built-in pipeline. Falls back gracefully to the built-in pipeline when `nemoguardrails` is not installed.
+- Created a **wrapper function** (`agent/guardrail_agent.py:run_with_guardrails`) that runs input guardrails → disambiguation → answer (fast path: direct LLM call for simple Q&A, ReAct agent only for resource requests) → output guardrails → memory update, then updated the API endpoint to call it. The return type (`AgentResult`) is unchanged, so the Streamlit UI works without modifications.
+- Documented the full architecture (`docs/architecture-flow.md`) with an ASCII flow diagram, module map, guardrails deep-dive, disambiguation deep-dive, and decision log — designed as panel-defense material.
+
+**Key decisions**
+- **Source-aware advice blocker**: Advice patterns are now directive-only (e.g., `` "you should see a doctor" `` instead of raw keyword matching on "diagnosis" or "treatment") and cross-reference against retrieved source chunks — avoiding false positives when Stratpoint's own content mentions healthcare or financial services.
+- **Fast path for simple Q&A**: Queries without resource keywords (PDF/whitepaper/download) bypass the 3-LLM-call ReAct agent and go through a single `rag.answer()` call, cutting typical response time from 60–120s to 15–30s.
+- **NeMo as default toggle**: NeMo Guardrails became the main backend — `use_nemo=True` is now the default on the API, with automatic fallback when the optional dependency is not installed.
+
+**What we produced**
+- Guardrails module: input pipeline (PII redaction, keyword blocking, topic filter), output pipeline (PII checker, hallucination checker, advice blocker), conversation memory, composable pipeline orchestrator (`guardrails/pipeline.py`)
+- Disambiguation module: intent classifier, slot extractor, clarification loop, router (`disambiguation/`)
+- NeMo backend: config, Colang flows (with wired custom actions), topic-bassed disallowed rails, wrapper (`guardrails/nemo/`, `guardrails/nemo_guardrails.py`)
+- Integration wrapper: `agent/guardrail_agent.py`
+- Documentation: `docs/architecture-flow.md`, `docs/MIKHOS_self-log.md`
+- 55 tests covering guardrails, disambiguation, the wrapper, and both NeMo and built-in paths — all offline, no network required
+- All 128 tests pass
+
+**Open / to decide**
+- The Nemmo optional dependencies (`nemoguardrails`, `langchain-community`) are listed in `[project.optional-dependencies] nemo` — install with `uv sync --extra nemo` for the full NeMo backend.
+- The hallucination checker uses bge-small embeddings by default (cosine similarity threshold 0.75) — tune this threshold if eval shows false positives.
+
 ## 2026-07-05 — Designed and built the ReAct agent + API endpoint
 
 **What we did**

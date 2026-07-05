@@ -24,7 +24,7 @@ def test_chat_returns_serialized_agent_result(monkeypatch):
         resources=[],
         trace=[Step(type="answer", content="We do cloud migration.")],
     )
-    monkeypatch.setattr(app_module, "run_agent", lambda message, history=None: canned)
+    monkeypatch.setattr(app_module, "run_with_guardrails", lambda *a, **kw: canned)
     r = client.post("/chat", json={"message": "do you do cloud migration?"})
     assert r.status_code == 200
     body = r.json()
@@ -38,16 +38,16 @@ def test_chat_rejects_missing_message():
 
 
 def test_chat_maps_runtime_error_to_503(monkeypatch):
-    def boom(message, history=None):
+    def boom(*a, **kw):
         raise RuntimeError("NVIDIA_API_KEY is not set")
-    monkeypatch.setattr(app_module, "run_agent", boom)
+    monkeypatch.setattr(app_module, "run_with_guardrails", boom)
     r = client.post("/chat", json={"message": "hi"})
     assert r.status_code == 503
 
 
 def test_chat_maps_upstream_error_to_502(monkeypatch):
-    def boom(message, history=None):
+    def boom(*a, **kw):
         raise ValueError("endpoint exploded")
-    monkeypatch.setattr(app_module, "run_agent", boom)
+    monkeypatch.setattr(app_module, "run_with_guardrails", boom)
     r = client.post("/chat", json={"message": "hi"})
     assert r.status_code == 502

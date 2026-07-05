@@ -1,0 +1,31 @@
+import core
+import llm
+import nemoguardrails.library.self_check.input_check
+import nemoguardrails.library.self_check.output_check
+import nemoguardrails.library.jailbreak_detection
+import nemoguardrails.library.hallucination
+
+flow main
+  activate llm continuation
+
+flow input rails $input_text
+  $input_text = execute check_pii_redaction(text=$input_text)
+  $relevance = execute check_stratpoint_relevance(text=$input_text)
+  if not $relevance
+    bot say "I can only answer questions about Stratpoint — their services, projects, technologies, and company information. Could you ask something related to Stratpoint?"
+  end
+  self check input
+  jailbreak detection heuristics
+
+flow output rails $output_text
+  $output_text = execute check_output_pii(text=$output_text)
+  $advice_ok = execute check_advice_custom(text=$output_text)
+  if not $advice_ok
+    bot say "I can only provide information about Stratpoint's services and technology topics. Please consult a qualified professional for professional advice."
+  end
+  $hallucination_ok = execute check_hallucination_custom(text=$output_text)
+  if not $hallucination_ok
+    bot say "I generated a response, but it failed safety checks. Please rephrase your question or contact our team for assistance."
+  end
+  self check hallucination
+  self check output

@@ -37,7 +37,7 @@ def test_find_resource_reports_when_none(monkeypatch):
 
 
 def test_search_stratpoint_delegates_to_rag_answer(monkeypatch):
-    monkeypatch.setattr(tools, "_rag_answer", lambda q: "grounded answer for " + q)
+    monkeypatch.setattr(tools, "_rag_answer", lambda q: ("grounded answer for " + q, []))
     assert tools.search_stratpoint.invoke("services") == "grounded answer for services"
 
 

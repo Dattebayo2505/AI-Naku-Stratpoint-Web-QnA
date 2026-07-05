@@ -11,6 +11,7 @@ import logging
 import httpx
 
 from stratpoint_rag.rag import config
+from stratpoint_rag.rag.models import Chunk
 from stratpoint_rag.rag.retrieve import retrieve
 from stratpoint_rag.prompts.builder import build_prompt
 from stratpoint_rag.prompts.schema import GroundedAnswer
@@ -18,7 +19,7 @@ from stratpoint_rag.prompts.schema import GroundedAnswer
 log = logging.getLogger(__name__)
 
 
-def answer(query: str, k: int = 5) -> str:
+def answer(query: str, k: int = 5) -> tuple[str, list[Chunk]]:
     key = config.nvidia_api_key()
     if not key:
         raise RuntimeError("NVIDIA_API_KEY is not set (see .envexample)")
@@ -57,7 +58,7 @@ def answer(query: str, k: int = 5) -> str:
         parsed = GroundedAnswer.model_validate_json(raw_response)
     except Exception as e:
         log.warning("JSON parsing failed, falling back to raw response: %s", e)
-        return raw_response
+        return raw_response, chunks
 
     # 5. Format answer and citations
     text = parsed.answer
@@ -68,6 +69,6 @@ def answer(query: str, k: int = 5) -> str:
             title = c.title if c.title else "Stratpoint"
             citations_list.append(f"- {title} ({c.url})")
         citations_str = "\n\nSources used:\n" + "\n".join(citations_list)
-        return f"{text}{citations_str}"
+        return f"{text}{citations_str}", chunks
 
-    return text
+    return text, chunks

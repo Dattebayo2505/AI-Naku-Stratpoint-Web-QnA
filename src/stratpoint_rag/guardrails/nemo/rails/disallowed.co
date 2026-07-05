@@ -1,0 +1,55 @@
+flow user ask about illegal activity
+  user said "How can I hack into a system?"
+  or user said "How do I commit fraud?"
+  or user said "What are illegal ways to make money?"
+  or user said "How can I steal data?"
+
+flow user ask about personal medical advice
+  user said "What medical condition do I have?"
+  or user said "Can you prescribe medication?"
+  or user said "What is my diagnosis?"
+  or user said "I need medical advice."
+
+flow user ask about financial advice
+  user said "Should I invest in this stock?"
+  or user said "What stocks should I buy?"
+  or user said "Give me financial advice."
+  or user said "What cryptocurrency should I invest in?"
+
+flow user ask about legal advice
+  user said "Can I sue my employer?"
+  or user said "Is this contract legally binding?"
+  or user said "I need legal advice."
+  or user said "Can you help me with my legal case?"
+
+flow bot refuse about illegal activity
+  bot say "I'm sorry, but I cannot assist with illegal activities. Stratpoint is a technology consulting company, and I can only answer questions about their services and relevant technology topics."
+
+flow bot refuse about personal medical advice
+  bot say "I'm sorry, but I cannot provide personal medical advice. I am a chatbot designed to answer questions about Stratpoint and technology. Please consult a qualified medical professional."
+
+flow bot refuse about financial advice
+  bot say "I'm sorry, but I cannot provide personal financial advice. I am a chatbot designed to answer questions about Stratpoint and technology. Please consult a qualified financial advisor."
+
+flow bot refuse about legal advice
+  bot say "I'm sorry, but I cannot provide legal advice. I am a chatbot designed to answer questions about Stratpoint and technology. Please consult a qualified legal professional."
+
+@active
+flow ask about illegal activity
+  user ask about illegal activity
+  bot refuse about illegal activity
+
+@active
+flow ask about medical advice
+  user ask about personal medical advice
+  bot refuse about personal medical advice
+
+@active
+flow ask about financial
+  user ask about financial advice
+  bot refuse about financial advice
+
+@active
+flow ask about legal
+  user ask about legal advice
+  bot refuse about legal advice

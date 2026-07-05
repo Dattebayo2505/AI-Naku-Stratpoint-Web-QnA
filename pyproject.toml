@@ -26,6 +26,9 @@ dependencies = [
     "requests>=2.34.2",
 ]
 
+[project.optional-dependencies]
+nemo = ["nemoguardrails>=0.17.0", "langchain>=0.3.0", "langchain-community>=0.3.0"]
+
 [project.scripts]
 stratpoint-crawler = "stratpoint_crawl.cli:main"
 stratpoint-rag-ingest = "stratpoint_rag.rag.ingest:main"
