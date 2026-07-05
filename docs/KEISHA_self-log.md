@@ -23,3 +23,12 @@ Module I own: **Prompt Engineering** (system prompts, few-shot examples, Chain-o
     *   Ignored `chroma_db/` in `.gitignore` to prevent database binary leaks.
 *   **Verification**:
     *   Verified the answering pipeline returns correct answers and clean citations end-to-end, and verified that all 49 existing crawler tests remain green.
+
+## 2026-07-05
+*   **Chat UI Module Implementation**:
+    *   Designed and built the Streamlit frontend (`stratpoint_rag/ui/`) to act as the primary interface for the capstone demo.
+    *   Created `api_client.py` as a robust HTTP wrapper to communicate with the FastAPI backend, complete with timeout handling and error catching.
+    *   Implemented session memory management in `state.py` to maintain multi-turn context via unique session IDs.
+    *   Built an "Under the hood" debug panel (`debug_panel.py`) for every assistant turn that surfaces retrieved citations, the agent's ReAct trace (thoughts/actions/observations), grounding/refusal status, and the raw JSON response payload.
+    *   Used defensive `.get()` programming to ensure the UI gracefully degrades if optional backend modules (like guardrails) are missing.
+    *   Resolved a dependency issue by adding `streamlit` and `requests` to the project's `pyproject.toml` via `uv add` and testing the system end-to-end.
