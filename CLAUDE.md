@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A **RAG chatbot for `stratpoint.com`**, managed with **uv**, Python 3.13. The site is crawled into a per-page Markdown corpus, which feeds a retrieval pipeline and an agentic chatbot served over an API with a Streamlit chat UI.
 
-The **crawler** (`stratpoint_crawl`) and the **RAG retrieval** package (`stratpoint_rag.rag`) are implemented; the remaining chatbot components exist as scaffolded subpackages under `src/stratpoint_rag/` and are built out incrementally. RAG exposes `retrieve(query, k)` as the agent-facing seam — build the index once with `uv run stratpoint-rag-ingest` before querying (the `chroma_db/` store is gitignored and regenerated from `data/`; see README "Usage — RAG retrieval").
+The **crawler** (`stratpoint_crawl`), the **RAG retrieval** package (`stratpoint_rag.rag`), and the **prompt-engineering** package (`stratpoint_rag.prompts`) are implemented; the remaining chatbot components exist as scaffolded subpackages under `src/stratpoint_rag/` and are built out incrementally. RAG exposes `retrieve(query, k)` as the agent-facing seam — build the index once with `uv run stratpoint-rag-ingest` before querying (the `chroma_db/` store is gitignored and regenerated from `data/`; see README "Usage — RAG retrieval").
 
 ## Repository layout
 
@@ -17,7 +17,7 @@ src/
 ├── stratpoint_crawl/    # LIVE — sitemap-driven Playwright crawler → data/pages/*.md + index.jsonl
 └── stratpoint_rag/      # the chatbot (one subpackage per component)
     ├── rag/             # BUILT — chunking, embeddings, Chroma store, retrieve() seam, ingest CLI
-    ├── prompts/         # planned — prompt engineering: system prompts, few-shot, CoT templates
+    ├── prompts/         # BUILT — system-prompt variants (v0–v4), few-shot examples, build_prompt() seam, GroundedAnswer schema
     ├── disambiguation/  # planned — ambiguous-input detection; clarify intent before tool calls
     ├── guardrails/      # planned — input/output guardrails
     ├── agent/           # planned — ReAct agent orchestrating retrieval + tools
@@ -102,6 +102,17 @@ Unit tests use HTML/XML fixtures in `tests/fixtures/` (`page.html`, `divi.html`,
 ### Verifying incremental
 
 The **first** `--incremental` run after a full crawl recrawls everything — a pre-feature manifest stores `lastmod` as `null`, so that run seeds it; the *next* run skips unchanged pages. Fast check without a ~5-min crawl: `stratpoint-crawler --incremental --force --limit 3` (proves `--force` overrides the skip). The incremental path is also unit-tested offline by seeding a prior `index.jsonl` and asserting `FakeFetcher.calls` never includes skipped URLs.
+
+## Prompt engineering (`stratpoint_rag.prompts`)
+
+Grounded-answer prompting, structured so the system prompt is the only thing that varies across experiments. Layout:
+
+- **`schema.py`** — `GroundedAnswer` (Pydantic): the structured-JSON contract the LLM must return — `reasoning`, `answer`, `citations: list[Citation]`, `is_grounded`, `confidence`. This is the public output type; `Citation` and `GroundedAnswer` are re-exported from `prompts/__init__.py`.
+- **`system_prompts.py`** + **`few_shot_examples.py`** — five system-prompt templates (`V0_ZEROSHOT`, `V1_FEWSHOT`, `V2_COT`, `V3_ROLE_STRUCTURED`, `V4_COMBINED`); the V2–V4 templates embed the schema via a `{schema_format}` placeholder that `builder.py` fills with `GroundedAnswer.model_json_schema()`.
+- **`registry.py`** — `PROMPT_VARIANTS`: six named `VariantConfig`s (the five above plus `v4_combined_hightemp`) pinning `use_schema`/`temperature`/`top_p` per experiment.
+- **`builder.py`** — `build_prompt(query, chunks, variant) -> (system_prompt, user_prompt)` is the seam. **The user prompt (context blocks + question) is held byte-identical across every variant** so the system prompt is the sole independent variable — preserve that when adding variants.
+
+`rag/answer.py` is now the **real** answer path (no longer throwaway scaffolding): it calls `build_prompt(..., variant="v4_combined_lowtemp")` — the winning variant — sends `response_format={"type": "json_object"}` at `temperature=0.1`, validates the reply with `GroundedAnswer.model_validate_json`, and falls back to the raw string on parse failure. This means `rag` imports `prompts` (allowed); `prompts` must not import `rag` except under `TYPE_CHECKING` (it does this for the `Chunk` type). `config.py` now calls `load_dotenv()` at import so `.env` is read without an external shell export.
 
 ## Deployment target
 
