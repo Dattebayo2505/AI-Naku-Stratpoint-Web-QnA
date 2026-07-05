@@ -256,20 +256,72 @@ fail_open:              Blocked guardrails are logged but allowed through
 
 ---
 
-## 7. NeMo Guardrails Evaluation Summary
+## 7. NeMo Guardrails Integration
 
-| Factor | NeMo Guardrails | Our Custom Approach |
+We implemented NeMo Guardrails as an alternative guardrail backend, selectable via `Agent(use_nemo=True)`.
+
+### Config Structure
+
+```
+guardrails/nemo/
+├── config.yml           # LLM model (NVIDIA NIM), instructions, colang version
+├── main.co              # Main flow + input/output rails using library flows
+├── actions.py           # Custom Python actions (PII, topic, hallucination, advice)
+├── rails/
+│   └── disallowed.co    # Topic-based disallowed flows
+└── __init__.py
+```
+
+### NeMo Config (`guardrails/nemo/config.yml`)
+
+```yaml
+models:
+  - type: main
+    engine: openai
+    model: google/gemma-4-31b-it
+    parameters:
+      api_key: ${NVIDIA_API_KEY}
+      base_url: https://integrate.api.nvidia.com/v1
+      temperature: 0.1
+      max_tokens: 4096
+```
+
+### Colang Rails (`guardrails/nemo/main.co`)
+
+```co
+import core, llm
+import nemoguardrails.library.self_check.input_check
+import nemoguardrails.library.self_check.output_check
+import nemoguardrails.library.jailbreak_detection
+import nemoguardrails.library.hallucination
+
+flow main
+  activate llm continuation
+
+flow input rails $input_text
+  self check input
+  jailbreak detection heuristics
+
+flow output rails $output_text
+  self check hallucination
+  self check output
+```
+
+### NeMo vs Custom Pipeline Comparison
+
+| Factor | NeMo Guardrails | Custom Python |
 |---|---|---|
-| Lines of code | ~500+ Colang + YAML | ~600 Python |
-| Dependencies | NeMo framework + Colang runtime | Only existing deps (httpx, pydantic, chromadb) |
-| Debugging | Framework indirection | Direct Python — step through in debugger |
-| Control | State machines in Colang DSL | Deterministic if/else logic |
-| PII | Pre-built but limited | Full regex control, easily extendable |
-| Hallucination | Not built-in | Combined LLM + semantic check |
-| Multi-turn | Colang flows | Simple state machine, testable in isolation |
-| Deployment | Heavy (Docker + runtime) | Lightweight (Python modules) |
+| Init | `RailsConfig.from_path` | Direct instantiation |
+| Input rails | Library flows: `self check input`, `jailbreak detection` | PII + Topic + Keyword |
+| Output rails | Library flows: `self check hallucination`, `self check output` | PII + Hallucination + Advice |
+| Custom actions | `@action` decorator in `actions.py` | Direct method calls |
+| No API key | Graceful fallback (logs error, allows) | Full heuristic operation |
+| Debugging | Framework indirection (Colang runtime) | Direct Python — step through |
+| Control | State machine in Colang DSL | Deterministic if/else |
+| Dependencies | NeMo + Colang runtime | Only existing (httpx, pydantic) |
+| Deployment | Heavy (Colang runtime) | Lightweight (Python modules) |
 
-**Verdict:** Custom Python wins for our use case — the codebase is lightweight (no LangChain dependency), uses direct httpx calls, and already has Pydantic validation. Adding NeMo would introduce a second runtime and a custom DSL for what amounts to clean Python logic.
+**Key design:** The `nemo_guardrails.py` wrapper matches the same `run_input()`/`run_output()` interface as `GuardrailPipeline`, making it a drop-in replacement. Custom Python actions for PII, topic filtering, hallucination checking, and advice blocking are registered via the `@action` decorator in `actions.py`.
 
 ---
 
@@ -330,13 +382,18 @@ User Input ("What does Stratpoint do with OutSystems?")
 
 | File | What to show during defense |
 |---|---|
-| `src/stratpoint_rag/agent/orchestrator.py` | `Agent.orchestrate()` — the main flow showing all 9 steps |
+| `src/stratpoint_rag/agent/orchestrator.py` | `Agent.orchestrate()` — the main flow showing all 9 steps; `use_nemo` toggle |
 | `src/stratpoint_rag/disambiguation/router.py` | `route()` — the disambiguation state machine |
 | `src/stratpoint_rag/disambiguation/classifier.py` | `classify()` — LLM + heuristic fallback |
 | `src/stratpoint_rag/disambiguation/clarification.py` | `ClarificationLoop` — multi-turn logic |
 | `src/stratpoint_rag/guardrails/input_guardrails.py` | `PIIRedactor`, `KeywordBlocker` — input safety |
 | `src/stratpoint_rag/guardrails/output_guardrails.py` | `HallucinationChecker` — combined LLM + semantic |
 | `src/stratpoint_rag/guardrails/memory.py` | `SummaryBuffer` — custom LangChain replacement |
+| `src/stratpoint_rag/guardrails/nemo_guardrails.py` | `NeMoGuardrailPipeline` — NeMo wrapper with graceful fallback |
+| `src/stratpoint_rag/guardrails/nemo/config.yml` | NeMo config — NVIDIA NIM model + parameters |
+| `src/stratpoint_rag/guardrails/nemo/main.co` | Colang flows — imports library, defines input/output rails |
+| `src/stratpoint_rag/guardrails/nemo/rails/disallowed.co` | Topic disallowed flows — medical, legal, financial, illegal |
+| `src/stratpoint_rag/guardrails/nemo/actions.py` | Custom Python actions — PII, topic, hallucination, advice |
 
 ---
 

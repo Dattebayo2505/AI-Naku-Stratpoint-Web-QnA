@@ -6,9 +6,7 @@ import logging
 import httpx
 
 from stratpoint_rag.disambiguation.router import route
-from stratpoint_rag.guardrails.input_guardrails import InputPipeline
 from stratpoint_rag.guardrails.memory import ConversationMemory
-from stratpoint_rag.guardrails.output_guardrails import OutputPipeline
 from stratpoint_rag.guardrails.pipeline import GuardrailPipeline
 from stratpoint_rag.guardrails.schemas import GuardrailConfig, GuardrailResult
 from stratpoint_rag.prompts.builder import build_prompt
@@ -36,9 +34,15 @@ class Agent:
     def __init__(
         self,
         guardrail_config: GuardrailConfig | None = None,
+        use_nemo: bool = False,
     ):
         self.guardrail_config = guardrail_config or GuardrailConfig()
-        self.guardrails = GuardrailPipeline(self.guardrail_config)
+        self.use_nemo = use_nemo
+        if use_nemo:
+            from stratpoint_rag.guardrails.nemo_guardrails import NeMoGuardrailPipeline
+            self.guardrails = NeMoGuardrailPipeline(self.guardrail_config)
+        else:
+            self.guardrails = GuardrailPipeline(self.guardrail_config)
         self._memories: dict[str, ConversationMemory] = {}
 
     def orchestrate(

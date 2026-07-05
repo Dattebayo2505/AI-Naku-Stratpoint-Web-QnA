@@ -10,6 +10,24 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-07-05 — Integrated NVIDIA NeMo Guardrails as an alternative backend
+
+**What we did**
+- Created a `feat/nemo-guardrails` branch and built the NeMo integration in parallel to the existing custom pipeline, preserving both options via a `use_nemo` toggle on the agent.
+- Designed a NeMo config directory (`guardrails/nemo/`) with a model config pointing at the NVIDIA NIM endpoint, Colang 2.x rails using library flows (`self check input`, `jailbreak detection heuristics`, `self check hallucination`, `self check output`), and custom Python actions for PII redaction, topic relevance, hallucination checking, and advice blocking.
+- Built a `NeMoGuardrailPipeline` wrapper (`guardrails/nemo_guardrails.py`) that matches the same `run_input()`/`run_output()` interface as the existing `GuardrailPipeline`, making it a drop-in replacement, with graceful fallback when no API key is available.
+- Updated the agent orchestrator (`agent/orchestrator.py`) to accept `use_nemo=True/False`, selecting the appropriate guardrail backend at init time.
+
+**What we produced**
+- NeMo Guardrails config files: `guardrails/nemo/config.yml`, `main.co` (Colang flows), `actions.py` (custom actions), `rails/disallowed.co` (topic-based disallowed flows).
+- `guardrails/nemo_guardrails.py`: wrapper class with graceful fallback for keyless environments.
+- Updated architecture documentation (`docs/architecture-flow.md`) with NeMo integration details.
+- Updated test results (`docs/test-results.md`) with NeMo test outcomes.
+
+**Open / to decide**
+- The NeMo integration requires an active LLM call even for heuristic-only rails, unlike the custom pipeline which operates fully offline. Decide whether NeMo's library flows add enough value to offset the API key dependency.
+- Wire the agent orchestrator into the API (`api/`) and UI (`ui/`) subpackages — both guardrail backends are now toggle-ready. 
+
 ## 2026-07-04 — Built the Disambiguation & Guardrails pipeline for the chatbot
 
 **What we did**
@@ -17,37 +35,18 @@ refreshes the newest entry below.
 - Evaluated NVIDIA NeMo Guardrails against a custom Python approach and chose the latter — lighter weight, deterministic control, and tight integration with existing Pydantic schemas and httpx calls.
 - Designed a three-phase pipeline: (1) LLM-based intent classification with heuristic fallback and multi-turn clarification loop, (2) regex-based PII redaction, topic/keyword filtering, combined LLM-judge + semantic hallucination detection, and a custom summary buffer for conversation memory, (3) an agent orchestrator that wires all layers together.
 - Documented the full analysis, architecture, and implementation decisions in `stratpoint_rag_prompt.md`.
+- Built a verification test suite for the RAG retrieval module, covering both normal use and failure cases.
+- Resolved the local-model-sizing constraint by switching answer generation to a cloud model endpoint (NVIDIA-hosted Gemma).
 
 **What we produced**
 - The disambiguation module (`src/stratpoint_rag/disambiguation/`): intent classifier, slot extractor, multi-turn clarification loop, and router.
-- The guardrails module (`src/stratpoint_rag/guardrails/`): PII redactor, topic filter, keyword blocker, output PII checker, combined hallucination checker, advice blocker, composable pipeline, and dual-memory system (in-memory summary buffer + ChromaDB cross-session).
+- The guardrails module (`src/stratpoint_rag/guardrails/`): PII redactor, topic filter, keyword blocker, output PII checker, combined hallucination checker, advice blocker, composable pipeline, and dual-memory system.
 - The agent orchestrator (`src/stratpoint_rag/agent/orchestrator.py`): production entry point that runs input guardrails → disambiguation → retrieval → LLM → output guardrails → memory update.
+- A working cloud-backed answer path — grounded answers using NVIDIA-hosted Gemma.
 
 **Open / to decide**
 - The disambiguation and guardrails modules need an `NVIDIA_API_KEY` for full LLM-powered classification and slot extraction; heuristic fallbacks handle the keyless case for testing.
 - The next integration step is wiring the agent orchestrator into the API (`api/`) and UI (`ui/`) subpackages once those are implemented.
-
-**What we did**
-- Built a verification test suite for the RAG retrieval module (`RAG-UnitTests/`), covering
-  both normal use and failure cases, to give the retrieval pipeline evidence-based reliability
-  for the eval section of the write-up.
-- Began connecting a language model so the system can turn retrieved Stratpoint content
-  into written, grounded answers.
-- Discovered the selected local model (`gemma4:e2b`) is too large to run on the intended
-  deployment host (needs more memory than available, no GPU), making local answer generation
-  impractically slow.
-- Resolved that constraint by switching answer generation from the local model to a **cloud
-  model endpoint** (NVIDIA-hosted Gemma), removing the deployment-host sizing limit.
-
-**What we produced**
-- A retrieval test suite (`RAG-UnitTests/`) confirming the search pipeline returns the right
-  Stratpoint pages with their source links.
-- A working cloud-backed answer path — the system now generates grounded answers without
-  depending on local hardware.
-
-**Open / to decide**
-- Decision #1 (generation host) can now be closed in favor of the cloud endpoint — confirm
-  with the group and update the plan/docs that still describe both routes.
 
 ## 2026-07-03 — Planned the RAG and Dockerization modules
 

@@ -1,0 +1,19 @@
+models:
+  - type: main
+    engine: openai
+    model: google/gemma-4-31b-it
+    parameters:
+      api_key: ${NVIDIA_API_KEY}
+      base_url: https://integrate.api.nvidia.com/v1
+      temperature: 0.1
+      max_tokens: 4096
+
+instructions:
+  - type: general
+    content: |
+      Below is a conversation between a user and a bot called the Stratpoint Bot.
+      The bot is designed to answer questions about Stratpoint, a digital solutions company.
+      The bot only answers questions related to Stratpoint, software development, and technology consulting.
+      If the bot does not know the answer, it truthfully says it does not know.
+
+colang_version: "2.x"

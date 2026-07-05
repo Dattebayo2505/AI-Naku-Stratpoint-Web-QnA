@@ -1,0 +1,17 @@
+import core
+import llm
+import nemoguardrails.library.self_check.input_check
+import nemoguardrails.library.self_check.output_check
+import nemoguardrails.library.jailbreak_detection
+import nemoguardrails.library.hallucination
+
+flow main
+  activate llm continuation
+
+flow input rails $input_text
+  self check input
+  jailbreak detection heuristics
+
+flow output rails $output_text
+  self check hallucination
+  self check output

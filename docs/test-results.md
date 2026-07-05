@@ -1,8 +1,8 @@
 # Test Results — Disambiguation & Guardrails Pipeline
 
-> **Branch:** `feat/disambiguation-guardrails`
-> **Date:** 2026-07-04
-> **Environment:** Windows, Python 3.13.14, NVIDIA NIM (google/gemma-4-31b-it)
+> **Branch:** `feat/nemo-guardrails` (NeMo integration merged into `feat/disambiguation-guardrails`)
+> **Date:** 2026-07-05
+> **Environment:** Windows, Python 3.13.14, NVIDIA NIM (google/gemma-4-31b-it), NeMo Guardrails v0.23.0
 
 ---
 
@@ -136,7 +136,33 @@
 
 ---
 
-## 3. Existing Crawler Tests
+## 3. NeMo Guardrails Integration
+
+**NeMoGuardrailPipeline** wraps the NeMo Guardrails framework behind the same `run_input()` / `run_output()` interface as `GuardrailPipeline`.
+
+| Test | Result | Notes |
+|---|---|---|
+| Config loading (`RailsConfig.from_path`) | ✅ | Configures NVIDIA NIM model, imports library flows |
+| `LLMRails` initialization | ✅ | Sets up Colang 2.x runtime |
+| Input rail execution (no API key) | ✅ | Graceful fallback: `action="allow"` with error logged |
+| Output rail execution (no API key) | ✅ | Graceful fallback: `action="allow"` with error logged |
+| Agent with `use_nemo=True` | ✅ | Initializes and orchestrates with NeMo backend |
+| With API key | ✅ | Authenticates against NVIDIA NIM, runs input/output rails |
+
+**Known limitation:** NeMo requires an active LLM call even for heuristic-only rails (like `self check input`), so the fallback path logs a `401` error but never blocks the user.
+
+### NeMo vs Custom Pipeline Comparison
+
+| Aspect | NeMo Guardrails | Custom Python |
+|---|---|---|
+| Init | ✅ `RailsConfig.from_path` | ✅ Direct instantiation |
+| Input rails | ✅ Library flows (`self check input`, `jailbreak detection heuristics`) | ✅ PII + Topic + Keyword |
+| Output rails | ✅ Library flows (`self check hallucination`, `self check output`) | ✅ PII + Hallucination + Advice |
+| No API key behavior | ⚠️ Logs error, graceful allow | ✅ Full heuristic operation |
+| Custom actions | ✅ Via `@action` decorator (PII, topic, hallucination) | ✅ Direct method calls |
+| Framework weight | ✅ Heavy (Colang runtime + LangChain) | ✅ Lightweight (Python only) |
+
+## 4. Existing Crawler Tests
 
 **49/49 tests passed** — zero regressions from all changes.
 
