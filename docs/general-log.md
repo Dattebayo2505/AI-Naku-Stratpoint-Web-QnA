@@ -10,7 +10,22 @@ refreshes the newest entry below.
 
 ---
 
-## 2026-07-04 — Verified retrieval; surfaced a model-sizing constraint
+## 2026-07-04 — Built the Disambiguation & Guardrails pipeline for the chatbot
+
+**What we did**
+- Analyzed the full codebase architecture — `rag/` and `prompts/` are built, while `disambiguation/`, `guardrails/`, and `agent/` were empty scaffolds awaiting implementation.
+- Evaluated NVIDIA NeMo Guardrails against a custom Python approach and chose the latter — lighter weight, deterministic control, and tight integration with existing Pydantic schemas and httpx calls.
+- Designed a three-phase pipeline: (1) LLM-based intent classification with heuristic fallback and multi-turn clarification loop, (2) regex-based PII redaction, topic/keyword filtering, combined LLM-judge + semantic hallucination detection, and a custom summary buffer for conversation memory, (3) an agent orchestrator that wires all layers together.
+- Documented the full analysis, architecture, and implementation decisions in `stratpoint_rag_prompt.md`.
+
+**What we produced**
+- The disambiguation module (`src/stratpoint_rag/disambiguation/`): intent classifier, slot extractor, multi-turn clarification loop, and router.
+- The guardrails module (`src/stratpoint_rag/guardrails/`): PII redactor, topic filter, keyword blocker, output PII checker, combined hallucination checker, advice blocker, composable pipeline, and dual-memory system (in-memory summary buffer + ChromaDB cross-session).
+- The agent orchestrator (`src/stratpoint_rag/agent/orchestrator.py`): production entry point that runs input guardrails → disambiguation → retrieval → LLM → output guardrails → memory update.
+
+**Open / to decide**
+- The disambiguation and guardrails modules need an `NVIDIA_API_KEY` for full LLM-powered classification and slot extraction; heuristic fallbacks handle the keyless case for testing.
+- The next integration step is wiring the agent orchestrator into the API (`api/`) and UI (`ui/`) subpackages once those are implemented.
 
 **What we did**
 - Built a verification test suite for the RAG retrieval module (`RAG-UnitTests/`), covering
