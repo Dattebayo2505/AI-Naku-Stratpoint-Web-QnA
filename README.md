@@ -100,6 +100,46 @@ for c in retrieve("Does Stratpoint do mobile app development?", k=5):
 
 Full design, config, and the embedding/LLM route options live in `docs/plan-rag-dockerization.md`.
 
+## Usage — Agent + API
+
+The `stratpoint_rag.agent` package is a ReAct agent (LangChain `create_react_agent` over the
+NVIDIA NIM endpoint) with two tools — `search_stratpoint` (grounded Q&A) and `find_resource`
+(downloadable PDFs from the corpus). `stratpoint_rag.api` serves it over HTTP.
+
+Build the retrieval index first (one-time; regenerated from `data/`):
+
+```bash
+uv run stratpoint-rag-ingest
+```
+
+Serve the chatbot API (requires `NVIDIA_API_KEY` in `.env`):
+
+```bash
+uv run uvicorn stratpoint_rag.api.app:app --port 8000
+```
+
+Then POST a message and read the reply. The response shape is:
+`{ "answer", "citations": [{title,url}], "resources": [{title,url}], "trace": [...] }`.
+
+**Linux / macOS (bash/zsh)** — capture once, then pull fields with [`jq`](https://jqlang.github.io/jq/):
+
+```bash
+curl -s http://localhost:8000/chat -H "Content-Type: application/json" -d '{"message":"Do you have a downloadable PDF report about business process automation?"}' > reply.json
+jq -r '.answer' reply.json                                # the answer text
+jq -r '.resources[] | "- \(.title): \(.url)"' reply.json  # downloadable resources
+```
+
+**PowerShell**   
+Capture the
+object into `$r`, then access properties directly — `Format-List` truncates long strings, so
+`$r.answer` prints the full text:
+
+```powershell
+$r = Invoke-RestMethod -Uri http://localhost:8000/chat -Method Post -ContentType 'application/json' -Body '{"message":"Do you have a downloadable PDF report about business process automation?"}'
+$r.answer                                          # full answer text (untruncated)
+$r.resources | Format-Table title, url -AutoSize   # downloadable resources
+```
+
 ## Tests
 
 ```bash

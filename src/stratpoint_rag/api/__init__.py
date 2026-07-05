@@ -1,3 +1,4 @@
-"""API endpoint (planned): HTTP interface (e.g. FastAPI) exposing the chatbot
-to clients, including the Streamlit UI.
-"""
+"""HTTP API exposing the chatbot (FastAPI)."""
+from stratpoint_rag.api.app import app
+
+__all__ = ["app"]

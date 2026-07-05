@@ -10,6 +10,41 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-07-05 — Designed and built the ReAct agent + API endpoint
+
+**What we did**
+- Brainstormed the design for the two owned components — the **ReAct agent** and the **HTTP
+  API** — scoped to a stratpoint.com customer-support bot, and captured it in a design spec
+  (`docs/superpowers/specs/2026-07-05-react-agent-api-design.md`).
+- Framed the bot's use case around two capabilities: answering visitor questions grounded in
+  the site corpus (reusing the existing grounded-answer path), and surfacing **downloadable
+  resources** (PDFs/whitepapers already linked in Stratpoint's pages) when a visitor wants
+  something to read. Deferred a lead-capture / callback capability to a later increment.
+- Confirmed the cloud model (NVIDIA-hosted Gemma) supports native tool calling, which cleared
+  the way to build the agent with LangChain's standard ReAct agent rather than a hand-written
+  loop — chosen because it matches the course material and NVIDIA's own documented integration.
+- Turned the spec into a step-by-step implementation plan
+  (`docs/superpowers/plans/2026-07-05-agent-and-api-integration.md`) and built against it.
+- Clarified the chatbot's prompt architecture: kept the agent's **tool-orchestration** prompt
+  (which decides which tool to use) as a separate layer from the teammate-owned
+  **grounded-answer** prompt engineering (how a cited answer is written). The two are already
+  connected through the agent's search tool, so they were deliberately kept separate rather
+  than merged into one.
+
+**What we produced**
+- A working ReAct customer-support agent and a `/chat` HTTP API that serves it, documented in
+  the README (`README.md`, "Usage — Agent + API"). Verified end-to-end against the running
+  service: the bot answers grounded questions and, on request, hands back a real downloadable
+  report — e.g. surfacing the *WEF Future of Jobs 2023* PDF from Stratpoint's digital-maturity
+  blog post.
+
+**Open / to decide**
+- Resource-finding reliability depends on how the question is phrased (the search matches
+  source wording), so it can miss a document when the request is very terse. A **curated list
+  of key downloadable resources** is the deferred, more dependable option — decide whether to add it.
+- Lead capture / "have someone contact me" was deferred — decide whether it's in scope.
+- The agent + API work sits on its own branch pending a decision on how to integrate it.
+
 ## 2026-07-04 — Verified retrieval; surfaced a model-sizing constraint
 
 **What we did**

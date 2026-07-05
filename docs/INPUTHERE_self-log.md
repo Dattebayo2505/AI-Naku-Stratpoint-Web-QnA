@@ -6,6 +6,10 @@
 
 ---
 
+[2026-07-15] Made an agentic API design spec for the ReAct agent using NVIDIA NIM integrated langchain development. Two tools were made, `search_stratpoint` and `find_resource`. The `find_resource` tool finds files embedded in the RAG corpus and returns them to the agent for the user. This does not however cover cases where files are removed from the actual links themselves. 
+To implement:
+- Possible file downloading for user.  
+
 [2026-06-26] Applied incremental mode to the crawler (Replacing old scraped web pages with more recent if applicable). Not thoroughly tested yet.
 
 
