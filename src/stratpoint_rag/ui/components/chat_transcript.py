@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from stratpoint_rag.ui.components import debug_panel
 
@@ -10,7 +11,14 @@ def render():
         role = msg.get("role", "user")
         content = msg.get("content", "")
         
-        with st.chat_message(role):
+        # Use custom SVG files for avatars
+        ui_dir = os.path.dirname(os.path.dirname(__file__))
+        if role == "user":
+            avatar = os.path.join(ui_dir, "user_avatar.svg")
+        else:
+            avatar = os.path.join(ui_dir, "bot_avatar.svg")
+            
+        with st.chat_message(role, avatar=avatar):
             st.markdown(content)
             
             # If it's an assistant message and we have raw response data, show the debug panel

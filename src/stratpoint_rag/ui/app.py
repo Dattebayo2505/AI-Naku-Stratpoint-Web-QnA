@@ -1,10 +1,11 @@
+import os
 import streamlit as st
 from stratpoint_rag.ui import state, api_client
 from stratpoint_rag.ui.components import chat_transcript
 from stratpoint_rag.ui.components import debug_panel
 
 # Page config must be the first Streamlit command
-st.set_page_config(page_title="Stratpoint RAG Chatbot", layout="centered")
+st.set_page_config(page_title="Stratpoint Client Q&A Chatbot", layout="centered")
 
 def main():
     # Initialize session state (messages, session_id)
@@ -31,7 +32,7 @@ def main():
         st.markdown("*Theme: edit `.streamlit/config.toml`*")
 
     # --- Main Chat Area ---
-    st.title("Stratpoint RAG Chatbot")
+    st.title("Stratpoint Client Q&A Chatbot")
     
     # Render transcript
     chat_transcript.render()
@@ -42,11 +43,12 @@ def main():
         st.session_state.messages.append({"role": "user", "content": prompt})
         
         # Show the user's message immediately
-        with st.chat_message("user"):
+        ui_dir = os.path.dirname(__file__)
+        with st.chat_message("user", avatar=os.path.join(ui_dir, "user_avatar.svg")):
             st.markdown(prompt)
             
         # Call the API
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar=os.path.join(ui_dir, "bot_avatar.svg")):
             with st.spinner("Thinking..."):
                 try:
                     # Construct history for the API (only user/assistant roles, exclude the current prompt)
