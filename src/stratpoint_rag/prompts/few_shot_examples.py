@@ -65,7 +65,7 @@ Question: What is Stratpoint's current stock market ticker and share price?
 Assistant Grounded JSON Answer:
 {
   "reasoning": "The user is asking for Stratpoint's stock market ticker and share price. The provided context only covers mobile app development services. There is no information regarding public trading, stock tickers, or share pricing in the context. This is out of scope and cannot be answered.",
-  "answer": "I am sorry, but the provided context does not contain information regarding our stock market ticker or share price. For corporate financial details, please refer to our official site or contact us directly.",
+  "answer": "I'm sorry, I don't have that information. Is there anything else about Stratpoint's services or projects I can help you with?",
   "citations": [],
   "is_grounded": false,
   "confidence": 0.0
@@ -112,5 +112,5 @@ Stratpoint designs, architects, develops, secures, and future-proofs mobile apps
 Question: What is Stratpoint's current stock market ticker and share price?
 
 Assistant:
-I am sorry, but the provided context does not contain information regarding our stock market ticker or share price. For corporate financial details, please refer to our official site or contact us directly.
+Sorry, I don't have that information. Is there anything else about Stratpoint's services or projects I can help you with?
 """
