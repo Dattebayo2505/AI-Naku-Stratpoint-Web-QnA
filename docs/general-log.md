@@ -10,6 +10,56 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-07-07 — Built, ran, and verified the Dockerization module
+
+**What we did**
+- Reviewed the now-assembled app to ground the packaging work in what actually runs, and
+  wrote a focused planning document for the Dockerization module
+  (`docs/plan-dockerization.md`). It supersedes the dockerization section of the earlier
+  combined plan (`docs/plan-rag-dockerization.md` §4), which was written before the app was
+  built and left key choices open.
+- Confirmed the deployment picture had simplified since that earlier plan: because answer
+  generation now runs on a **cloud model endpoint** (NVIDIA-hosted Gemma) rather than a local
+  model, the container setup needs **no model container and no GPU** — a smaller, more reliable
+  build. Embeddings still run locally inside the image.
+- Chose a **two-service, one-image** layout: the same image runs both the API and the chat UI,
+  with the UI reaching the API over the internal network. This maps directly onto the
+  assignment's "accessible via a web UI *and* an API endpoint" requirement while keeping a
+  single build to maintain.
+- Ran a quality-assurance pass over the container setup, then **built and ran the whole app in
+  Docker end-to-end for the first time** — a single `docker compose up` command brought both the
+  API and the chat UI online and answered questions. This satisfies the assignment's core
+  requirement that the app "builds and runs cleanly with a single command."
+- Confirmed the LLMOps monitoring module is no longer part of the project, so it was dropped
+  from the container design entirely.
+
+**Key decisions**
+- **Run on a single machine via Docker**: the team will demo by running the containerized app on
+  one computer, so the run instructions were simplified to a single `docker compose up` and the
+  earlier notes about alternative host setups were removed.
+- **Cloud model → no local model container**: the earlier plan's interim local-model option is
+  retired; the packaged app calls the cloud endpoint, removing the GPU/host-sizing constraint.
+- **Corpus stays outside the image**: the finished site corpus is mounted read-only at run time
+  and the web crawler is kept out of the image, since the app only reads the corpus.
+- **Vectors built on first start and reused**: the app embeds the corpus the first time it runs
+  and persists it, so later starts are fast.
+
+**What we produced**
+- Planning document: `docs/plan-dockerization.md` (decisions, build order, run instructions,
+  and presentation talking points), plus a pointer added to the superseded section of
+  `docs/plan-rag-dockerization.md`.
+- A complete, **verified-working** container setup — `Dockerfile`, `docker-compose.yml`, startup
+  script (`docker/entrypoint.sh`), and build-context exclusions (`.dockerignore`) — that runs the
+  whole chatbot (API + UI) with a single `docker compose up --build`, confirmed serving live.
+- Documentation: a "Usage — Docker" section in the `README.md` with prerequisites and the
+  single-command run, and the environment template (`.envexample`) updated so a fresh clone has
+  every setting it needs.
+
+**Open / to decide**
+- The very first container start is a one-time slow step (it downloads the embedding stack and
+  embeds all 371 pages). The vectors then persist between runs, so before a live demo the app
+  should be booted once in advance so the graded run starts instantly.
+
 ## 2026-07-05 — Completed guardrails, made NeMo the default backend, fixed false-positive advice blocker
 
 **What we did**

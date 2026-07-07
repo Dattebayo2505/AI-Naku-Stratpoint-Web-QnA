@@ -5,6 +5,66 @@ Modules I own: **RAG** (retrieval) and **Dockerization**.
 
 ---
 
+## 2026-07-07
+
+### Dockerization module — planned, built, QA'd, and first working `docker compose up`
+
+Implemented my second module. Wrote a focused plan (`docs/plan-dockerization.md`) that supersedes
+§4 of the RAG plan — old §4 assumed interim Ollama + a deferred Compose topology. Reality now:
+NVIDIA cloud LLM (no model container, no GPU), local bge embeddings (torch ships in the image),
+two processes (FastAPI + Streamlit).
+
+**Files:**
+- `Dockerfile` — multi-stage (`deps` → `app`), `python:3.13-slim` + uv. deps stage runs
+  `uv sync --no-dev --extra nemo --no-install-project` so the torch layer (~1GB) caches
+  independent of app-code edits; app stage copies the **whole `src/`** (NeMo's `.co`/`.yml` rails
+  config is loaded by path — a wheel-only install would drop it) then `uv sync --extra nemo`.
+  `UV_FROZEN=1`.
+- `docker-compose.yml` — one image `stratpoint-rag:local`, run twice: `api` (uvicorn :8000, mounts
+  `./data:ro` + `chroma`/`hf-cache` volumes, runs the auto-ingest entrypoint) and `ui`
+  (streamlit :8501, `RUN_INGEST=0`, `STRATPOINT_API_URL=http://api:8000`).
+- `docker/entrypoint.sh` — hash-gated `stratpoint-rag-ingest` then `exec "$@"`; `RUN_INGEST` guard
+  so only `api` ingests.
+- `.dockerignore` — keeps `.venv`/`.git`/`chroma_db`/`data`/logs out of the build context.
+
+**Verified the risky assumptions BEFORE building** (so I wasn't debugging a 30-min build blind):
+- uv installs the project **editable** (`.pth` → `src/`), so `nemo/config.yml` resolves at runtime ✅
+- `uv.lock` already contains the nemo extra, so `--frozen --extra nemo` won't fail the build ✅
+- torch 2.12.1 has cp313 wheels ✅
+
+**QA pass — 5 findings, every one took the config-only fix (zero app code changed):**
+1. Health gate too strict for the cold ingest → loosened `ui.depends_on` to `service_started`
+   (the UI already polls `/health` itself and shows Unreachable→Connected).
+2. Streamlit → added `--server.headless true`.
+3. Double image build → shared `image: stratpoint-rag:local`, build once.
+4. Missing `NVIDIA_API_KEY` → docs only; the clear 503 guard already lives in `agent.py:87`,
+   so a preflight would've just re-implemented it.
+5. Bare `docker run` = empty corpus → doc note "use Compose."
+
+**First `docker compose up --build` — it works.** Build ~32 min (torch download + slow layer
+export on this box, one-time). Both containers came up; `ui` served immediately. `api` ran the
+first ingest — model loaded instantly, but embedding all 371 pages on CPU inside the slim
+container pinned 99% CPU for 16+ min. That's one-time: it writes into the persisted `chroma`
+volume, so every later boot skips it (hash-gate) and starts in seconds. `api` reads `(unhealthy)`
+during ingest — harmless, nothing gates on it (exactly why I loosened the depends_on in QA #1).
+This closes the audit's finding #4 and the assignment's "builds and runs cleanly with a single
+command."
+
+**Scope simplification:** group will just run Docker on one PC, so I stripped the
+LXC/bare-metal/allotted-ports/`PUBLIC_IP` notes from the README + plan — one machine, one
+`docker compose up`.
+
+**Gotcha:** `uv run` at container start re-reconciles the venv ("Installed 6 packages") — a few
+seconds each boot. Could point the entrypoint/commands at `.venv/bin/...` directly to skip it.
+Low priority. Also the harmless `pull access denied stratpoint-rag:local` line is just Compose
+trying to pull the local-only tag before building — silence later with `pull_policy: build`.
+
+**Open / next:**
+- Warm the `chroma` volume once before demo day (it's already warm now — just don't
+  `docker compose down -v`).
+- Push the Docker files: `Dockerfile`, `docker-compose.yml`, `docker/`, `.dockerignore`,
+  `.envexample`, `README.md`, `docs/plan-dockerization.md`.
+
 ## 2026-07-04
 
 ### Switched generation from local Ollama → NVIDIA cloud endpoint
