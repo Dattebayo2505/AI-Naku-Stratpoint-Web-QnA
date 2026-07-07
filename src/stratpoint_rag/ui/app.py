@@ -6,7 +6,7 @@ from stratpoint_rag.ui.components import debug_panel
 from stratpoint_rag.ui.components import resource_downloads
 
 # Page config must be the first Streamlit command
-st.set_page_config(page_title="Stratpoint Client Q&A Chatbot", layout="centered")
+st.set_page_config(page_title="A.I. Naku: Stratpoint Chatbot", layout="centered")
 
 def main():
     # Initialize session state (messages, session_id)
@@ -33,7 +33,7 @@ def main():
         st.markdown("*Theme: edit `.streamlit/config.toml`*")
 
     # --- Main Chat Area ---
-    st.title("Stratpoint Client Q&A Chatbot")
+    st.title("A.I. Naku: Stratpoint Chatbot")
     
     # Render transcript
     chat_transcript.render()
