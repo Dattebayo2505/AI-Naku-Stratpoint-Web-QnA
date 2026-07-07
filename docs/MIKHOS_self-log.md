@@ -67,9 +67,10 @@ Modules I own: **Guardrails, Disambiguation, NeMo Integration, and Architecture 
 
 *   **Broader Stratpoint keyword matching for general questions**:
     *   Added `"what do you do"`, `"what do you"`, `"who are you"`, `"tell me about yourself"`, `"what is this"`, `"what is stratpoint"` to `_STRATPOINT_KEYWORDS` in `classifier.py` so that company-about queries without explicit "Stratpoint" mention route directly to ASK_STRATPOINT instead of falling through to the clarification loop.
+    *   Added `"where are you"`, `"where is"`, `"how do i"`, `"contact"`, `"location"`, `"address"`, `"phone"`, `"email"` to `_STRATPOINT_KEYWORDS` so that contact/location queries (e.g. "Where are you located?") are classified as Stratpoint questions.
+    *   Added `"Contact / Location"` topic pattern to `_TOPIC_PATTERNS` in `slots.py` matching `contact|email|phone|address|locat|office|reach|find` — so "How do I contact Stratpoint?" extracts `topic` successfully and skips the clarification loop.
 
 *   **Documentation**:
-    *   Updated `docs/architecture-flow.md` input guardrails section to show the NeMo → KeywordBlocker → PII layered architecture.
     *   Updated this self-log.
 
 ---
