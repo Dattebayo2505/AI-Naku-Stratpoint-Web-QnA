@@ -118,7 +118,7 @@ def test_output_pii_allows_clean_response():
 def test_output_pii_redacts_leaked_pii_not_in_source():
     checker = OutputPIIChecker()
     result = checker.check(
-        "Contact me at john@stratpoint.com",
+        "Contact me at john@personal.com",
         [Chunk(id="1", slug="s", url="u", title="T", text="Cloud services info")],
     )
     assert not result.passed
@@ -134,6 +134,16 @@ def test_output_pii_allows_pii_present_in_source():
     )
     assert result.passed
     assert result.action == "allow"
+
+
+def test_output_pii_allows_stratpoint_domain():
+    checker = OutputPIIChecker()
+    result = checker.check(
+        "Contact us at contact@stratpoint.com",
+        [Chunk(id="1", slug="s", url="u", title="T", text="Cloud services")],
+    )
+    assert result.passed
+    assert "[EMAIL]" not in (result.modified_output or result.message)
 
 
 # --- HallucinationChecker ---
@@ -233,7 +243,7 @@ def test_output_pipeline_blocks_advice():
 def test_output_pipeline_redacts_pii():
     pipe = OutputPipeline()
     output, results = pipe.run(
-        "Contact me at john@stratpoint.com",
+        "Contact me at john@personal.com",
         [Chunk(id="1", slug="s", url="u", title="T", text="Cloud services")],
     )
     assert any(r.action == "redact" for r in results)

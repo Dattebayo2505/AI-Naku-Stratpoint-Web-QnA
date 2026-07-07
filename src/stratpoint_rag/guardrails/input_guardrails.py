@@ -29,15 +29,36 @@ class PIIRedactor:
         ),
     ]
 
-    def __init__(self, rules: list[RedactionRule] | None = None):
+    def __init__(
+        self,
+        rules: list[RedactionRule] | None = None,
+        allowed_email_domains: set[str] | None = None,
+    ):
         self.rules = rules or list(self.DEFAULT_RULES)
+        self._allowed_email_domains = allowed_email_domains or set()
         self._compiled = [(re.compile(r.pattern), r) for r in self.rules]
 
     def redact(self, text: str) -> tuple[str, list[RedactionRule]]:
         modified = text
         matched_rules: list[RedactionRule] = []
         for compiled, rule in self._compiled:
-            if compiled.search(modified):
+            if not compiled.search(modified):
+                continue
+            if rule.entity_type == "email" and self._allowed_email_domains:
+                redacted_count = 0
+
+                def _replacer(m: re.Match) -> str:
+                    nonlocal redacted_count
+                    domain = m.group(0).split("@")[-1]
+                    if domain.lower() in self._allowed_email_domains:
+                        return m.group(0)
+                    redacted_count += 1
+                    return rule.replacement
+
+                modified = compiled.sub(_replacer, modified)
+                if redacted_count > 0:
+                    matched_rules.append(rule)
+            else:
                 matched_rules.append(rule)
                 modified = compiled.sub(rule.replacement, modified)
         return modified, matched_rules

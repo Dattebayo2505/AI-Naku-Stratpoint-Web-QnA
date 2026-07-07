@@ -27,5 +27,3 @@ flow output rails $output_text
   if not $hallucination_ok
     bot say "I generated a response, but it failed safety checks. Please rephrase your question or contact our team for assistance."
   end
-  self check hallucination
-  self check output

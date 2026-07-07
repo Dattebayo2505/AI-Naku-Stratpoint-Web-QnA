@@ -108,15 +108,19 @@ def _run_output_guardrails(
             text, results = nemo.run_output(text, source_chunks)
             for r in results:
                 if r.action in ("block", "escalate"):
+                    log.warning("NeMo output rail blocked: %s", r.message)
                     return text, r.message
+                log.info("NeMo output rail passed: %s", r.message)
         except ImportError:
-            pass
+            log.info("NeMo not available; skipping NeMo output rails")
 
     builtin = GuardrailPipeline(config)
     text, results = builtin.run_output(text, source_chunks)
     for r in results:
         if r.action in ("block", "escalate"):
+            log.warning("Built-in output rail blocked: %s", r.message)
             return text, r.message
+        log.info("Built-in output rail passed: %s", r.message)
 
     return text, None
 

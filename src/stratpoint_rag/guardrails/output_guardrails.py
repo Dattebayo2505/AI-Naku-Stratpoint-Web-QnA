@@ -30,8 +30,10 @@ ADVICE_PATTERNS: list[tuple[re.Pattern, str]] = [
 
 
 class OutputPIIChecker:
+    ALLOWED_BUSINESS_DOMAINS = {"stratpoint.com"}
+
     def __init__(self):
-        self.redactor = PIIRedactor()
+        self.redactor = PIIRedactor(allowed_email_domains=self.ALLOWED_BUSINESS_DOMAINS)
 
     def check(self, response: str, source_chunks: list[Chunk]) -> GuardrailResult:
         source_text = " ".join(c.text for c in source_chunks)
@@ -65,7 +67,7 @@ class OutputPIIChecker:
 
 
 class HallucinationChecker:
-    def __init__(self, similarity_threshold: float = 0.75):
+    def __init__(self, similarity_threshold: float = 0.6):
         self.threshold = similarity_threshold
         self._embedder = None
 
