@@ -140,6 +140,34 @@ $r.answer                                          # full answer text (untruncat
 $r.resources | Format-Table title, url -AutoSize   # downloadable resources
 ```
 
+## Usage — Docker (whole app, single command)
+
+Runs the API and the chat UI together via Docker Compose on one machine. Cloud LLM (NVIDIA NIM)
+means no model container or GPU is needed; embeddings run locally inside the image.
+
+**Prerequisites:** `data/` present (owner-run crawl) and a `.env` filled from `.envexample` —
+at minimum set `NVIDIA_API_KEY`.
+
+```bash
+docker compose up --build     # builds the image, auto-ingests the corpus, then serves
+# UI  -> http://localhost:8501
+# API -> http://localhost:8000   (POST /chat, GET /health)
+```
+
+- **First boot is the slow one** — it embeds the 371-page corpus into a persisted `chroma`
+  volume and caches the embedding model. Both persist, so later boots are fast. **Warm the
+  volume once during setup** so a live demo never boots cold.
+- The `api` service auto-ingests on start (`content_hash`-gated, so it's a near-instant no-op
+  once the volume is warm); the `ui` talks to it over the compose network at `http://api:8000`.
+  While the API is still ingesting on a cold boot, the UI comes up immediately and shows
+  "API: Unreachable" in its sidebar, then flips to "Connected" once the API is ready.
+- Corpus is bind-mounted **read-only** (`./data`); the crawler and Playwright are not in the image.
+- **Run via Compose, not a bare `docker run`** — the corpus and vector volumes are wired up by
+  `docker-compose.yml`. A plain `docker run` has no corpus mounted, so retrieval silently returns
+  nothing and answers come back ungrounded.
+
+Design and decisions for this setup live in `docs/plan-dockerization.md`.
+
 ## Tests
 
 ```bash
