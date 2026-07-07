@@ -262,11 +262,13 @@ User Input
     ├─ Off-topic keyword? → off_topic (0.95)
     ├─ Stratpoint keyword? → ask_stratpoint (0.80)
     ├─ Too short (<5 chars)? → needs_clarification (0.55)
-    ├─ Question without keywords? → off_topic (0.60)
+    ├─ Question (has ? or starts with question word)? → ask_stratpoint (0.70)
     └─ Default → ask_stratpoint (0.50) → LLM fallback
 ```
 
-If heuristic confidence < 0.7 AND an NVIDIA API key is available, the LLM reclassifies with a structured prompt. The higher-confidence result wins.
+The heuristic only invokes the LLM fallback when confidence < 0.7 AND the NVIDIA API key is available. Since questions now default to 0.7, the LLM fallback is almost never triggered for questions — the RAG pipeline handles ambiguity downstream, and the grounded-answer prompt naturally says "I don't know" when the corpus has no relevant content.
+
+**Router confidence demotion**: The router previously demoted any query with confidence < 0.7 to `NEEDS_CLARIFICATION`. Now it skips demotion for structured questions (has `?` or starts with a question word). Only short/shapeless inputs without question structure go to clarification — this means queries like "Where are you located?" proceed directly to answer even without an explicit Stratpoint keyword match.
 
 **Note**: The classifier's harmful check is the third defensive layer — NeMo and the KeywordBlocker should catch most harmful inputs before they reach the classifier. The classifier keyword set serves as a final regex safety net.
 
