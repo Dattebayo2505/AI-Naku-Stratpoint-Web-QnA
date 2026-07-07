@@ -62,6 +62,12 @@ Modules I own: **Guardrails, Disambiguation, NeMo Integration, and Architecture 
 *   **Edge-case "what is stratpoint" routing**:
     *   Fixed the general-topic slot pattern in `slots.py` from `what.*do` to `what\s+(?:is|are|does|do)` so that "What is Stratpoint?" matches the "General" topic slot.
 
+*   **Conversational guardrail blocks**:
+    *   Added `_user_facing_block()` to `guardrail_agent.py` that converts internal block reasons (e.g. `"Blocked: matched 'harmful_request'"`) into conversational user-facing messages. The technical reason stays in `guardrail_reason` for the debug panel, while the user sees friendly text: `"I'm sorry, I can't help with that."` for harmful content and `"I can only answer questions about Stratpoint."` for injection/jailbreak attempts.
+
+*   **Broader Stratpoint keyword matching for general questions**:
+    *   Added `"what do you do"`, `"what do you"`, `"who are you"`, `"tell me about yourself"`, `"what is this"`, `"what is stratpoint"` to `_STRATPOINT_KEYWORDS` in `classifier.py` so that company-about queries without explicit "Stratpoint" mention route directly to ASK_STRATPOINT instead of falling through to the clarification loop.
+
 *   **Documentation**:
     *   Updated `docs/architecture-flow.md` input guardrails section to show the NeMo → KeywordBlocker → PII layered architecture.
     *   Updated this self-log.
