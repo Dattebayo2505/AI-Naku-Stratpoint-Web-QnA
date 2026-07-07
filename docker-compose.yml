@@ -1,0 +1,40 @@
+# Single command to run the whole chatbot: `docker compose up --build`.
+# Two services off one image — api (FastAPI :8000) + ui (Streamlit :8501).
+# Chroma is embedded in-process (no DB service); LLM is cloud NVIDIA NIM (no model service).
+
+services:
+  api:
+    image: stratpoint-rag:local              # build once here; ui reuses the same image
+    build: .
+    command: uv run uvicorn stratpoint_rag.api.app:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    volumes:
+      - ./data:/app/data:ro                  # corpus, read-only (produced offline by the crawler)
+      - chroma:/app/chroma_db                # persisted vectors — entrypoint auto-ingest writes here
+      - hf-cache:/root/.cache/huggingface    # embedding model cache (avoid re-download every boot)
+    ports:
+      - "8000:8000"
+    healthcheck:                             # observability only — the UI is NOT gated on it (it polls /health itself)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  ui:
+    image: stratpoint-rag:local              # same image as api — no second build
+    command: uv run streamlit run src/stratpoint_rag/ui/app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+    environment:
+      STRATPOINT_API_URL: http://api:8000    # reach the API by compose service name
+      RUN_INGEST: "0"                         # ui doesn't own the vectors — skip ingest on this service
+    env_file: .env
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_started           # start once api's container is up; the UI's own health polling
+                                             # handles the cold-ingest window (shows "Unreachable" -> "Connected")
+
+volumes:
+  chroma: {}
+  hf-cache: {}

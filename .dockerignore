@@ -1,0 +1,14 @@
+# Keep the build context lean — none of this belongs in the image.
+.git
+.venv
+venv
+chroma_db/          # regenerated in-container by the auto-ingest entrypoint
+data/               # bind-mounted read-only at runtime, not baked in
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.env
+tests/
+RAG-UnitTests/
+*.log

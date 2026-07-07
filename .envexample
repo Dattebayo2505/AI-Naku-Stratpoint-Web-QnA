@@ -2,6 +2,7 @@ LCX_ROOT_USERNAME=
 LCX_ROOT_PASSWORD=
 NON_ROOT_USERNAME=
 NON_ROOT_PASSWORD=
+# Host + the 2 ports the group is allotted on the LXC (bare-metal run: 1 for the API/BE, 1 for the UI/FE)
 PUBLIC_IP_ADDRESS=
 PORT=
 
@@ -15,3 +16,6 @@ CHROMA_COLLECTION=
 LLM_MODEL=
 NVIDIA_BASE_URL=
 NVIDIA_API_KEY=
+
+# UI — base URL of the API (blank = http://localhost:8000; docker-compose sets http://api:8000)
+STRATPOINT_API_URL=
