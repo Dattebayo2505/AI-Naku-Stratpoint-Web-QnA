@@ -10,6 +10,54 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-07-07 — Connected the chatbot's parts, added in-chat file downloads, and fixed a corpus-retrieval gap
+
+**What we did**
+- Audited how the separately-built pieces of the chatbot fit together (chat UI, disambiguation,
+  and guardrails built by teammates; the ReAct agent and API are the owned parts), and connected
+  the agent's sources, reasoning trace, and grounding/refusal status through to the chat UI's
+  "under the hood" debug panel — which had been designed to display that information but wasn't
+  actually receiving it.
+- Added a new capability: when the bot surfaces a downloadable resource (a PDF or whitepaper),
+  the visitor can now **download the file directly in the chat**, not just follow a link.
+- Diagnosed and fixed a retrieval-quality gap: the bot was replying that information wasn't in
+  its knowledge base even when the exact text existed in the site corpus — reproduced with a
+  Nucleus Research cloud-adoption statistic and a World Economic Forum infrastructure reference,
+  both of which the bot failed to find.
+
+**Key decisions**
+- **Smaller retrieval chunks (the fix).** Root cause: each page was split into large chunks, so a
+  single valuable sentence was diluted among the surrounding text and ranked too low to be
+  retrieved. Halved the chunk size so individual facts stand out, and correspondingly retrieve
+  more chunks per question to keep each answer's supporting context full. This also directly
+  improves the "terse questions miss a document" reliability concern raised in the 2026-07-05
+  agent entry.
+- **In-chat downloads fetched app-side, with the top result ready instantly.** The suggested file
+  downloads immediately; any additional files download on click. Because the linked files live on
+  third-party sites, the download path validates each target before fetching to avoid pulling from
+  unsafe or internal addresses.
+
+**What we produced**
+- A more fully connected chatbot: the chat UI now shows the agent's sources, reasoning trace, and
+  grounding/guardrail status that the interface was built to display.
+- An in-chat file-download feature for downloadable resources.
+- A verified retrieval fix: the two example questions that previously failed now return the
+  correct page and hand back the right downloadable report (the Nucleus cloud-adoption PDF and the
+  WEF Global Risks Report).
+- A handoff document capturing this session's state for the next contributor
+  (`docs/handoff-rag-integration-and-retrieval-fix.md`).
+
+**Open / to decide**
+- The retrieval fix requires **rebuilding the search index once** before a demo (the page contents
+  didn't change, only how they're split, so a normal rebuild skips the work) — boot it in advance
+  or it keeps the old, coarser splitting.
+- Decide whether the ReAct agent should handle **all** questions or only resource requests —
+  currently simple questions bypass it and only resource-style requests go through the full agent.
+- The in-chat download feature has been checked in isolation but **not yet exercised in the fully
+  running app** — verify it live before relying on it in a demo.
+- Growing a small retrieval "answer-quality" test set (seeded with the two now-fixed cases) would
+  catch future retrieval regressions — decide whether to build it out.
+
 ## 2026-07-07 — Built, ran, and verified the Dockerization module
 
 **What we did**
