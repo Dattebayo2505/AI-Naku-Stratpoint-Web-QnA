@@ -3,6 +3,7 @@ import streamlit as st
 from stratpoint_rag.ui import state, api_client
 from stratpoint_rag.ui.components import chat_transcript
 from stratpoint_rag.ui.components import debug_panel
+from stratpoint_rag.ui.components import resource_downloads
 
 # Page config must be the first Streamlit command
 st.set_page_config(page_title="Stratpoint Client Q&A Chatbot", layout="centered")
@@ -65,8 +66,16 @@ def main():
                     
                     answer = response_data.get("answer", "No answer provided.")
                     st.markdown(answer)
-                    
-                    # Render the debug panel immediately 
+
+                    # Download controls (top result eager, rest lazy). The
+                    # assistant message is appended just below, so its index
+                    # will be the current messages length.
+                    resource_downloads.render(
+                        response_data,
+                        key_prefix=f"msg{len(st.session_state.messages)}",
+                    )
+
+                    # Render the debug panel immediately
                     debug_panel.render(response_data)
                     
                     # Append assistant response to state

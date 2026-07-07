@@ -1,17 +1,23 @@
 """Split page markdown into overlapping chunks (plan §3.1).
 
-ponytail: char-budgeted, not token-exact. ~450-token target ≈ 1600 chars at
-~3.6 chars/token; bge-small truncates at 512 tokens as a hard backstop, so a
-token-dense chunk that overflows just clips its tail. Upgrade to model-tokenizer
-counting only if truncation shows up in eval.
+ponytail: char-budgeted, not token-exact. bge-small truncates at 512 tokens as
+a hard backstop, so a token-dense chunk that overflows just clips its tail.
+Upgrade to model-tokenizer counting only if truncation shows up in eval.
+
+Chunk size is deliberately well below the model cap: at ~1600 chars (near the
+512-token ceiling) a single high-value sentence is averaged into ~1500 chars of
+surrounding prose, diluting its embedding so much that a near-verbatim query
+ranks the chunk below dozens of topically-generic ones. Measured: isolating the
+same sentence into a ~800-char chunk moved it from retrieval rank ~16/40+ to #0.
+Keep chunks small enough that one fact stays a meaningful share of its chunk.
 """
 
 from __future__ import annotations
 
 from .models import Chunk
 
-CHARS_PER_CHUNK = 1600  # ~450 tokens
-OVERLAP = 300  # ~80 tokens
+CHARS_PER_CHUNK = 800  # ~220 tokens — small enough to avoid single-fact dilution
+OVERLAP = 150  # ~40 tokens
 
 
 def split_text(text: str, size: int = CHARS_PER_CHUNK, overlap: int = OVERLAP) -> list[str]:

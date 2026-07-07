@@ -17,16 +17,6 @@ def render(raw_response: Dict[str, Any]):
             
         st.divider()
 
-        # 1b. Downloadable resources (find_resource tool output)
-        resources = raw_response.get("resources", [])
-        if resources:
-            st.markdown("**Downloadable resources**")
-            for idx, resource in enumerate(resources, 1):
-                title = resource.get("title", "Untitled")
-                url = resource.get("url", "#")
-                st.markdown(f"{idx}. [{title}]({url})")
-            st.divider()
-
         # 2. Agent trace
         st.markdown("**Agent trace**")
         trace = raw_response.get("trace", [])

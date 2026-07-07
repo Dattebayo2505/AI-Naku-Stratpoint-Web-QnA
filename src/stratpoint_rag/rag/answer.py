@@ -19,7 +19,13 @@ from stratpoint_rag.prompts.schema import GroundedAnswer
 log = logging.getLogger(__name__)
 
 
-def answer(query: str, k: int = 5) -> tuple[str, list[Chunk]]:
+# Chunks were halved (1600->800 chars) to stop single-fact dilution, so k is
+# raised to keep the LLM's context budget ~constant (8*800 ~= the old 5*1600)
+# and to give retrieval ranking margin for near-verbatim fact lookups.
+_DEFAULT_K = 8
+
+
+def answer(query: str, k: int = _DEFAULT_K) -> tuple[str, list[Chunk]]:
     """Backward-compatible 2-tuple seam (used by agent tools).
 
     Delegates to answer_grounded and drops the parsed GroundedAnswer.
@@ -29,7 +35,7 @@ def answer(query: str, k: int = 5) -> tuple[str, list[Chunk]]:
 
 
 def answer_grounded(
-    query: str, k: int = 5
+    query: str, k: int = _DEFAULT_K
 ) -> tuple[str, list[Chunk], GroundedAnswer | None]:
     """Like answer(), but also returns the parsed GroundedAnswer (or None on
     parse-failure fallback) so callers can surface is_grounded/confidence.
