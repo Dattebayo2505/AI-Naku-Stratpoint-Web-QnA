@@ -77,7 +77,29 @@ Modules I own: **Guardrails, Disambiguation, NeMo Integration, and Architecture 
 *   **Configurable LLM timeout**:
     *   Added `LLM_TIMEOUT` env var (default 300s) to `rag/config.py` and `.envexample`. All four external LLM call sites (`answer_grounded`, classifier LLM fallback, TopicFilter LLM check, hallucination LLM judge) now use it instead of hardcoded 15s/30s/120s values.
 
+*   **PIIRedactor `allowed_email_domains` + OutputPIIChecker exemption**:
+    *   `PIIRedactor.__init__` now accepts `allowed_email_domains: set[str] | None` parameter. Emails whose domain matches the allowlist are left untouched instead of redacted.
+    *   `OutputPIIChecker.ALLOWED_BUSINESS_DOMAINS = {"stratpoint.com"}` — all `@stratpoint.com` addresses in answers bypass output PII redaction, since they're legitimate company contact info from the corpus.
+
+*   **`matched_keyword` field wired through slot extraction and router**:
+    *   Added `matched_keyword: str | None` to `SlotQuery` and `RouteResult` schemas.
+    *   `extract_slots()` now captures which topic pattern matched the query, passing it through the pipeline so downstream components can use it.
+
+*   **Advice blocker: directive-only + source-aware**:
+    *   Refined advice blocker patterns to only match directive language (`"you should"`, `"I recommend"`, etc.) — not descriptive text. The blocker cross-references matched text against retrieved source chunks: if the text exists in Stratpoint content, it's allowed (descriptive, not generated advice).
+
+*   **HallucinationChecker threshold lowered to 0.6**:
+    *   Reduced from 0.75 to 0.6 to reduce false positives for short factual answers (e.g., "Mandaluyong City" — a 2-word answer can't reach 0.75 cosine sim but is perfectly grounded).
+
+*   **NeMo `main.co` output rails trimmed**:
+    *   Removed both `self check hallucination` and `self check output` from `main.co` output flow. Our custom `check_hallucination_custom` action (embedding cosine sim) is sufficient — NeMo's LLM-based versions added latency and occasional false positives without catching anything the custom check missed.
+
+*   **Contact/Location retrieval augmentation**:
+    *   For Contact/Location queries, retrieval now queries Chroma with `where_document={"$contains": "office"}` to surface relevant pages (workspace/office locations), then expands the query using matched slug names to boost the right results. No hardcoded content — purely data-driven from Chroma metadata.
+
 *   **Documentation**:
     *   Updated this self-log.
+
+---
 
 ---

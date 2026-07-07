@@ -81,11 +81,9 @@ A RAG (Retrieval-Augmented Generation) chatbot for `stratpoint.com` that answers
 │                                                                              │
 │  ┌──────────────────────────────────────────────────────────────────────┐    │
 │  │  NeMo (default):                                                     │    │
-│  │   • Output PII check (cross-reference source)                        │    │
-│  │   • Advice blocker (medical/legal/financial directive patterns)       │    │
-│  │   • Hallucination checker (embedding cosine sim)                     │    │
-│  │   • Self-check hallucination (NeMo LLM-based)                        │    │
-│  │   • Self-check output (NeMo LLM-based)                               │    │
+│  │  • Output PII check (cross-reference source)                        │    │
+│  │  • Advice blocker (medical/legal/financial directive patterns)       │    │
+│  │  • Hallucination checker (embedding cosine sim)                     │    │
 │  │                                                                      │    │
 │  │  Built-in (fallback):                                                │    │
 │  │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐           │    │
@@ -177,10 +175,8 @@ Runs `InputPipeline` with all three checks:
 
 When using NeMo (default), output guardrails run via Colang 2.x flows in `nemo/main.co`:
 1. **Output PII redaction** — checks against source docs via custom action; only redacts PII not found in source
-2. **Advice blocking** — directive-only patterns for medical, legal, financial advice via custom action
-3. **Custom hallucination check** — embedding cosine similarity (threshold 0.75) via custom action
-4. **Self-check hallucination** — NeMo LLM-based hallucination detection
-5. **Self-check output** — NeMo LLM-based output moderation
+2. **Advice blocking** — directive-only, source-aware patterns for medical, legal, financial advice via custom action
+3. **Custom hallucination check** — embedding cosine similarity (threshold 0.6) via custom action
 
 When NeMo is unavailable, the built-in `OutputPipeline` runs:
 
@@ -189,15 +185,15 @@ When NeMo is unavailable, the built-in `OutputPipeline` runs:
    - If PII appears ONLY in the response → redacted (potential data leak)
 
 2. **HallucinationChecker** — Verifies response grounding:
-   - **Primary**: Embedding cosine similarity between the response and source chunks using the same embedder (bge-small-en-v1.5) used for retrieval. Threshold: 0.75.
+   - **Primary**: Embedding cosine similarity between the response and source chunks using the same embedder (bge-small-en-v1.5) used for retrieval. Threshold: 0.6.
    - **Fallback**: Optional LLM judge for borderline cases.
    - If similarity is too low, the response is flagged as a potential hallucination.
 
-3. **AdviceBlocker** — Directive-only keyword patterns for:
+3. **AdviceBlocker** — Directive-only, source-aware keyword patterns for:
    - Medical advice ("you should see a doctor")
    - Legal advice ("you should contact a lawyer")
    - Financial advice ("you should invest in this stock", stock picks, market tips)
-   - **Source-aware**: if the matched phrase exists in the retrieved source chunks, it's allowed (descriptive Stratpoint content, not generated advice).
+   - **Source-aware**: if the matched phrase exists in the retrieved source chunks, it's allowed (descriptive Stratpoint content, not generated advice). The blocker only matches directive language (e.g. "you should", "I recommend") — descriptive text from the corpus that happens to mention medical/legal/financial topics is not blocked.
    Blocked responses are replaced with a disclaimer redirecting to qualified professionals.
 
 ### GuardrailPipeline Composition
@@ -228,7 +224,7 @@ NeMo Guardrails is the **default** guardrail backend. When `nemoguardrails` is i
 **Custom actions wired in `main.co`:**
 ```
 Input:  PII redact → relevance check → self_check input → jailbreak detection
-Output: PII redact → advice check → hallucination check → self_check hallucination → self_check output
+Output: PII redact → advice check (source-aware) → hallucination check (cosine sim threshold 0.6)
 ```
 
 **How to toggle:**
@@ -281,6 +277,8 @@ For `ask_stratpoint` intents, regex patterns extract:
 
 Missing required slots trigger a clarification loop (max 3 turns) that asks natural follow-up questions.
 
+When a `matched_keyword` is captured during slot extraction, it's threaded through the `RouteResult` and down to `guardrail_agent.py` — the answer phase uses it to decide on retrieval strategy. For Contact/Location queries (matched via `contact|email|phone|address|locat|office|reach|find`), the agent augments retrieval by querying Chroma with `where_document={"$contains": "office"}` and expanding the query with matched slug names — ensuring the workspace/office pages surface in top results without hardcoded content.
+
 ## Integration with Existing Code
 
 The guardrails and disambiguation modules are designed as **non-invasive middleware**:
@@ -297,7 +295,7 @@ The guardrails and disambiguation modules are designed as **non-invasive middlew
 |---|---|---|
 | Guardrail approach | NeMo (default) + custom Python fallback | NeMo provides LLM-powered rails and Colang flows. Falls back to lightweight built-in pipeline when `nemoguardrails` not installed. |
 | Classification priority | Heuristic-first, LLM fallback | 90%+ of inputs (greetings, Stratpoint questions, harmful) are caught by regex without a network call |
-| PII strategy | Regex patterns, cross-reference sources | Simple, fast, no ML dependency. Cross-referencing prevents false positives on legitimate content |
-| Hallucination detection | Embedding cosine similarity | Uses the same embedder as retrieval (bge-small). No extra model downloads. Threshold at 0.75 |
+| PII strategy | Regex patterns, cross-reference sources, `allowed_email_domains` allowlist | Simple, fast, no ML dependency. Cross-referencing prevents false positives on legitimate content. `@stratpoint.com` emails exempted from redaction |
+| Hallucination detection | Embedding cosine similarity | Uses the same embedder as retrieval (bge-small). No extra model downloads. Threshold at 0.6 |
 | Memory | Summary buffer (last 6 turns) | Customer service queries are self-contained. LLM summarization adds cost/latency for marginal benefit |
 | API key requirement | Only needed for LLM calls | Heuristic guardrails, disambiguation, slot extraction all work offline without any API key |
