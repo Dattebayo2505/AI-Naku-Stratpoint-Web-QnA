@@ -53,6 +53,7 @@ def answer_grounded(
     )
 
     # 3. Call the NVIDIA NIM endpoint
+    llm_timeout = config.llm_timeout()
     resp = httpx.post(
         f"{config.nvidia_base_url()}/chat/completions",
         headers={"Authorization": f"Bearer {key}"},
@@ -68,7 +69,7 @@ def answer_grounded(
             "response_format": {"type": "json_object"},
             "stream": False,
         },
-        timeout=120,
+        timeout=llm_timeout,
     )
     resp.raise_for_status()
     raw_response = resp.json()["choices"][0]["message"]["content"]

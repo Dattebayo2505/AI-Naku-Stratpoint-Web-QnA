@@ -38,8 +38,8 @@ def test_classifier_detects_short_input():
 
 def test_classifier_off_topic_no_keywords():
     result = classify("What is the meaning of life? 42?")
-    # heuristic says off_topic; LLM may raise confidence if available
-    assert result.intent == IntentCategory.OFF_TOPIC
+    # heuristic now defaults to ASK_STRATPOINT for questions — RAG decides relevance
+    assert result.intent == IntentCategory.ASK_STRATPOINT
 
 
 def test_classifier_off_topic_medical_keyword():

@@ -47,3 +47,11 @@ def nvidia_api_key() -> str:
     val = os.getenv("NVIDIA_API_KEY")
     return val.strip() if val else ""
 
+
+def llm_timeout() -> int:
+    val = os.getenv("LLM_TIMEOUT")
+    try:
+        return int(val) if val else 300
+    except ValueError:
+        return 300
+

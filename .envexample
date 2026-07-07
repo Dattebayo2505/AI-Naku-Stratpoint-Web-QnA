@@ -16,6 +16,7 @@ CHROMA_COLLECTION=
 LLM_MODEL=
 NVIDIA_BASE_URL=
 NVIDIA_API_KEY=
+LLM_TIMEOUT=300
 
 # UI — base URL of the API (blank = http://localhost:8000; docker-compose sets http://api:8000)
 STRATPOINT_API_URL=

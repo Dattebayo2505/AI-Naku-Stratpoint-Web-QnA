@@ -150,7 +150,7 @@ class HallucinationChecker:
                     "response_format": {"type": "json_object"},
                     "stream": False,
                 },
-                timeout=30,
+                timeout=config.llm_timeout(),
             )
             resp.raise_for_status()
             data = json.loads(resp.json()["choices"][0]["message"]["content"])

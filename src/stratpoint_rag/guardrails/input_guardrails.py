@@ -107,7 +107,7 @@ class TopicFilter:
                     "response_format": {"type": "json_object"},
                     "stream": False,
                 },
-                timeout=15,
+                timeout=config.llm_timeout(),
             )
             resp.raise_for_status()
             data = json.loads(resp.json()["choices"][0]["message"]["content"])

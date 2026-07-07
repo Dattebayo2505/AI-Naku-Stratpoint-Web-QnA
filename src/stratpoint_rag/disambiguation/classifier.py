@@ -130,7 +130,7 @@ def _heuristic_classify(user_input: str, context: str | None = None) -> IntentQu
 
     if "?" in text or text.startswith(_QUESTION_STARTERS):
         return IntentQuery(
-            intent=IntentCategory.OFF_TOPIC, confidence=0.6, reasoning="Question without Stratpoint keywords"
+            intent=IntentCategory.ASK_STRATPOINT, confidence=0.7, reasoning="Question — let RAG decide relevance"
         )
 
     return IntentQuery(
@@ -160,7 +160,7 @@ def _llm_classify(text: str) -> IntentQuery | None:
                 "response_format": {"type": "json_object"},
                 "stream": False,
             },
-            timeout=15,
+            timeout=config.llm_timeout(),
         )
         resp.raise_for_status()
         data = json.loads(resp.json()["choices"][0]["message"]["content"])

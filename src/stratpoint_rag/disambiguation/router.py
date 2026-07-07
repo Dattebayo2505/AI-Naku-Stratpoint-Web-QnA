@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from stratpoint_rag.guardrails.memory import ConversationMemory
 
@@ -19,6 +20,8 @@ _HARMFUL_RESPONSE = "I can't process that request. Please ask a question about S
 
 _DEFAULT_CLARIFY = "I'm not sure I understand. Could you tell me what you'd like to know about Stratpoint?"
 
+_QUESTION_PATTERN = re.compile(r"^(what|how|why|when|where|which|who|does|do|is|are|can|could|would)", re.IGNORECASE)
+
 
 def route(
     user_input: str,
@@ -33,7 +36,9 @@ def route(
     intent_query = classify(user_input, conversation_context=context)
 
     if intent_query.confidence < 0.7 and intent_query.intent != IntentCategory.NEEDS_CLARIFICATION:
-        intent_query.intent = IntentCategory.NEEDS_CLARIFICATION
+        is_question = "?" in user_input or bool(_QUESTION_PATTERN.search(user_input))
+        if not is_question:
+            intent_query.intent = IntentCategory.NEEDS_CLARIFICATION
 
     if intent_query.intent == IntentCategory.HARMFUL:
         return RouteResult(
