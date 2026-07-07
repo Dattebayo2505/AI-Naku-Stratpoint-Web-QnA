@@ -70,6 +70,13 @@ Modules I own: **Guardrails, Disambiguation, NeMo Integration, and Architecture 
     *   Added `"where are you"`, `"where is"`, `"how do i"`, `"contact"`, `"location"`, `"address"`, `"phone"`, `"email"` to `_STRATPOINT_KEYWORDS` so that contact/location queries (e.g. "Where are you located?") are classified as Stratpoint questions.
     *   Added `"Contact / Location"` topic pattern to `_TOPIC_PATTERNS` in `slots.py` matching `contact|email|phone|address|locat|office|reach|find` — so "How do I contact Stratpoint?" extracts `topic` successfully and skips the clarification loop.
 
+*   **Default all questions to ASK_STRATPOINT — no more keyword whack-a-mole**:
+    *   Changed the default for any question without a Stratpoint keyword from `OFF_TOPIC (0.6)` to `ASK_STRATPOINT (0.7)`. The off-topic keyword pre-filter (fever, weather, sports) still catches clearly irrelevant stuff at 0.95 before reaching this point. Everything else goes to RAG — if the corpus has nothing relevant, the grounded-answer LLM naturally says "I don't know."
+    *   Updated the router to skip confidence demotion for structured questions (has `?` or starts with a question word). Short or shapeless inputs still go to clarification.
+
+*   **Configurable LLM timeout**:
+    *   Added `LLM_TIMEOUT` env var (default 300s) to `rag/config.py` and `.envexample`. All four external LLM call sites (`answer_grounded`, classifier LLM fallback, TopicFilter LLM check, hallucination LLM judge) now use it instead of hardcoded 15s/30s/120s values.
+
 *   **Documentation**:
     *   Updated this self-log.
 
