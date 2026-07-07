@@ -28,6 +28,12 @@ class AgentResult(BaseModel):
     citations: list[Link] = []
     resources: list[Link] = []
     trace: list[Step] = []
+    # Grounding + guardrail metadata surfaced to the UI debug panel. Optional so
+    # the ReAct path (which has no grounding score) and existing callers/tests
+    # keep working; populated by run_with_guardrails on the RAG path.
+    is_grounded: bool | None = None
+    confidence: float | None = None
+    guardrail_reason: str | None = None
 
 
 _LINK_LINE = re.compile(r"^- (.+?) \((https?://[^)]+)\)\s*$", re.MULTILINE)

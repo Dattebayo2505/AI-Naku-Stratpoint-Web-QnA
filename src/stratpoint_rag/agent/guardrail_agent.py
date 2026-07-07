@@ -3,13 +3,13 @@ from __future__ import annotations
 import logging
 import re
 
-from stratpoint_rag.agent.agent import AgentResult, run_agent
+from stratpoint_rag.agent.agent import AgentResult, Link, run_agent
 from stratpoint_rag.disambiguation.router import route
 from stratpoint_rag.disambiguation.schemas import IntentCategory
 from stratpoint_rag.guardrails.memory import ConversationMemory
 from stratpoint_rag.guardrails.pipeline import GuardrailPipeline
 from stratpoint_rag.guardrails.schemas import GuardrailConfig
-from stratpoint_rag.rag.answer import answer as rag_answer
+from stratpoint_rag.rag.answer import answer_grounded
 
 log = logging.getLogger(__name__)
 
@@ -66,14 +66,15 @@ def run_with_guardrails(
             log.info("Input blocked: %s", r.message)
             memory.add_turn("user", message)
             memory.add_turn("assistant", r.message)
-            return AgentResult(answer=r.message)
+            return AgentResult(answer=r.message, guardrail_reason=r.message)
 
     route_result = route(processed_input, session_memory=memory)
 
     if route_result.intent in (IntentCategory.HARMFUL, IntentCategory.OFF_TOPIC):
+        reason = route_result.rejection_reason or ""
         memory.add_turn("user", message)
-        memory.add_turn("assistant", route_result.rejection_reason or "")
-        return AgentResult(answer=route_result.rejection_reason or "")
+        memory.add_turn("assistant", reason)
+        return AgentResult(answer=reason, guardrail_reason=reason)
 
     if route_result.intent == IntentCategory.GREETING:
         memory.add_turn("user", message)
@@ -87,10 +88,19 @@ def run_with_guardrails(
 
     source_chunks: list = []
     if _wants_resource(message):
+        # ReAct path: run_agent already fills citations/resources/trace; it has
+        # no grounding score, so is_grounded/confidence stay None.
         result = run_agent(message, history=history, agent=agent)
     else:
-        raw, source_chunks = rag_answer(message)
+        raw, source_chunks, grounded = answer_grounded(message)
         result = AgentResult(answer=raw)
+        if grounded is not None:
+            result.citations = [
+                Link(title=c.title or "Stratpoint", url=c.url)
+                for c in grounded.citations
+            ]
+            result.is_grounded = grounded.is_grounded
+            result.confidence = grounded.confidence
 
     final_output, output_results = guardrails.run_output(result.answer, source_chunks)
 
@@ -102,6 +112,7 @@ def run_with_guardrails(
                     "I generated a response, but it failed safety checks. "
                     "Please rephrase your question or contact our team for assistance."
                 )
+                result.guardrail_reason = r.message or "Output failed safety checks."
                 return result
 
     if final_output != result.answer:

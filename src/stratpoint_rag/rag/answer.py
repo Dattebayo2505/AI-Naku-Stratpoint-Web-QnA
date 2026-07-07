@@ -20,6 +20,20 @@ log = logging.getLogger(__name__)
 
 
 def answer(query: str, k: int = 5) -> tuple[str, list[Chunk]]:
+    """Backward-compatible 2-tuple seam (used by agent tools).
+
+    Delegates to answer_grounded and drops the parsed GroundedAnswer.
+    """
+    text, chunks, _ = answer_grounded(query, k)
+    return text, chunks
+
+
+def answer_grounded(
+    query: str, k: int = 5
+) -> tuple[str, list[Chunk], GroundedAnswer | None]:
+    """Like answer(), but also returns the parsed GroundedAnswer (or None on
+    parse-failure fallback) so callers can surface is_grounded/confidence.
+    """
     key = config.nvidia_api_key()
     if not key:
         raise RuntimeError("NVIDIA_API_KEY is not set (see .envexample)")
@@ -58,7 +72,7 @@ def answer(query: str, k: int = 5) -> tuple[str, list[Chunk]]:
         parsed = GroundedAnswer.model_validate_json(raw_response)
     except Exception as e:
         log.warning("JSON parsing failed, falling back to raw response: %s", e)
-        return raw_response, chunks
+        return raw_response, chunks, None
 
     # 5. Format answer and citations
     text = parsed.answer
@@ -69,6 +83,6 @@ def answer(query: str, k: int = 5) -> tuple[str, list[Chunk]]:
             title = c.title if c.title else "Stratpoint"
             citations_list.append(f"- {title} ({c.url})")
         citations_str = "\n\nSources used:\n" + "\n".join(citations_list)
-        return f"{text}{citations_str}", chunks
+        return f"{text}{citations_str}", chunks, parsed
 
-    return text, chunks
+    return text, chunks, parsed
