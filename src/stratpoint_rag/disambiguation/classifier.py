@@ -49,6 +49,8 @@ _STRATPOINT_KEYWORDS = [
     "capstone", "stratmega", "integrated", "solutions",
     "what do you do", "what do you", "who are you", "tell me about yourself",
     "what is this", "what is stratpoint",
+    "where are you", "where is", "how do i", "contact", "location",
+    "address", "phone", "email",
 ]
 
 _QUESTION_STARTERS = ("what", "where", "when", "why", "how", "who", "which", "do", "does", "is", "are", "can", "could", "would", "should", "tell", "give", "show", "list", "explain", "describe")

@@ -38,6 +38,7 @@ _TOPIC_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"career|job|hire|intern", re.IGNORECASE), "Careers"),
     (re.compile(r"service", re.IGNORECASE), "Services Overview"),
     (re.compile(r"overview|about|what\s+(?:is|are|does|do)|tell me|introduce|company", re.IGNORECASE), "General"),
+    (re.compile(r"contact|email|phone|address|locat|office|reach|find", re.IGNORECASE), "Contact / Location"),
 ]
 
 _SERVICE_PATTERNS: list[tuple[re.Pattern, str]] = [

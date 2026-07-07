@@ -131,6 +131,12 @@ def test_slots_extract_general_what_is():
     assert "topic" not in query.missing_slots
 
 
+def test_slots_extract_contact():
+    query = extract_slots("Where are you located?", IntentCategory.ASK_STRATPOINT)
+    assert query.slots.get("topic") == "Contact / Location"
+    assert "topic" not in query.missing_slots
+
+
 def test_slots_greeting_returns_empty():
     query = extract_slots("Hello", IntentCategory.GREETING)
     assert query.slots == {}
