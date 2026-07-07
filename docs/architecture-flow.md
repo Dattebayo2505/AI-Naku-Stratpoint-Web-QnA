@@ -17,25 +17,31 @@ A RAG (Retrieval-Augmented Generation) chatbot for `stratpoint.com` that answers
 │  run_with_guardrails(message, history, session_id, use_nemo=True) → AgentResult│
 └──────────────────────────┬──────────────────────────────────────────────────┘
                            │
-                     ┌─────┴─────┐
-                     │ use_nemo? │
-                     └──┬───┬────┘
-                        │   │
-              ┌─────────┘   └──────────┐
-              ▼                        ▼
+                      ┌─────┴─────┐
+                      │ use_nemo? │
+                      └──┬───┬────┘
+                         │   │
+               ┌─────────┘   └──────────┐
+               ▼                        ▼
 ┌─────────────────────┐   ┌──────────────────────────┐
 │  NeMoGuardrail      │   │  GuardrailPipeline       │
-│  Pipeline           │   │  (fallback)              │
+│  Pipeline           │   │  (NeMo unavailable)      │
 │  (nemo_guardrails   │   │  (pipeline.py)           │
 │   .py → main.co)    │   │                          │
 │  Colang 2.x flows:  │   │  InputPipeline:          │
-│  • PII redact       │   │  • PIIRedactor           │
-│  • Relevance check  │   │  • KeywordBlocker        │
+│  • PII redact       │   │  • KeywordBlocker        │
+│  • Relevance check  │   │  • PIIRedactor           │
 │  • Self-check input │   │  • TopicFilter           │
 │  • Jailbreak detect │   │                          │
 └──────────┬──────────┘   └──────────┬───────────────┘
-           │                         │ cleaned input
+           │                         │
+           │  When NeMo is active, a supplementary    │
+           │  KeywordBlocker + PIIRedactor pass runs   │
+           │  AFTER NeMo (no TopicFilter — handled     │
+           │  downstream by the classifier).           │
+           │                         │
            └──────────┬──────────────┘
+                      ▼ cleaned input
                       ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  Phase 2: DISAMBIGUATION (disambiguation/)                                    │
@@ -123,14 +129,31 @@ A RAG (Retrieval-Augmented Generation) chatbot for `stratpoint.com` that answers
 
 ### Input Guardrails (before the answer)
 
-When using NeMo (default), input guardrails run via Colang 2.x flows in `nemo/main.co`:
-1. **PII redaction** — regex-based via custom action (same patterns as built-in)
-2. **Stratpoint relevance check** — heuristic keyword matching via custom action; blocks off-topic input
-3. **Self-check input** — NeMo LLM-based input moderation
-4. **Jailbreak detection** — NeMo heuristic pattern matching
+**Multi-layer architecture**: When NeMo is the default backend, input guardrails run in two layers. NeMo's Colang 2.x flows run first (providing LLM-powered detection via jailbreak detection, self-check input, and relevance check), then the built-in `KeywordBlocker` and `PIIRedactor` run as a supplementary regex pass — catching patterns NeMo's LLM-driven rails might miss (e.g., "help me hack into your system" without "how to" prefix). The `TopicFilter` is intentionally skipped in the supplementary pass because the disambiguation classifier handles relevance downstream — avoids an unnecessary LLM call per query.
 
-When NeMo is unavailable, the built-in `InputPipeline` runs:
-1. **PIIRedactor** — Regex-based detection of:
+When NeMo is unavailable (not installed), the built-in `GuardrailPipeline` runs all three checks: `KeywordBlocker`, `PIIRedactor`, and `TopicFilter`.
+
+#### NeMo Input Flow (default)
+The flow is defined in `nemo/main.co`:
+1. **PII redaction** — custom action (same regex patterns as built-in)
+2. **Stratpoint relevance check** — custom action keyword matching
+3. **Self-check input** — NeMo LLM-based input moderation
+4. **Jailbreak detection** — NeMo heuristic + LLM pattern matching
+
+When a NeMo rail fires (e.g., jailbreak detected), it appends an assistant message to the response. The wrapper (`nemo_guardrails.py`) now detects this by checking for extra messages in the result, not just exceptions — making NeMo's built-in rails actually effective.
+
+#### Built-in Supplementary Pass (NeMo active)
+Runs after NeMo to catch regex patterns NeMo might miss:
+1. **KeywordBlocker** — No PII, no relevance check; only regex blocking for:
+   - Prompt injection ("ignore previous instructions")
+   - Jailbreak attempts ("DAN", "bypass")
+   - Harmful content ("hack", "exploit", "malware", "ransomware", "DDoS", "crack password")
+   - Attack patterns ("SQL injection", "XSS")
+
+2. **PIIRedactor** — SSN, credit card, email, phone redaction
+
+#### Built-in Input Pipeline (NeMo unavailable)
+Runs `InputPipeline` with all three checks:
    - SSNs (`XXX-XX-XXXX`)
    - Credit card numbers (16-digit patterns)
    - Email addresses
@@ -244,6 +267,8 @@ User Input
 ```
 
 If heuristic confidence < 0.7 AND an NVIDIA API key is available, the LLM reclassifies with a structured prompt. The higher-confidence result wins.
+
+**Note**: The classifier's harmful check is the third defensive layer — NeMo and the KeywordBlocker should catch most harmful inputs before they reach the classifier. The classifier keyword set serves as a final regex safety net.
 
 ### Slot Extraction
 

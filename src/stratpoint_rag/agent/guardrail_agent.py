@@ -38,6 +38,73 @@ def clear_memory(session_id: str | None = None) -> None:
     _memories.pop(sid, None)
 
 
+def _run_input_guardrails(
+    message: str,
+    config: GuardrailConfig,
+    use_nemo: bool,
+) -> tuple[str, str | None]:
+    """Run all available input guardrails (NeMo → keyword/PII supplement),
+    returning (processed_input, block_reason).  block_reason is None if allowed.
+
+    The supplementary pass only does regex blocking and PII redaction — the
+    TopicFilter (which can call the LLM) is skipped because the disambiguation
+    classifier handles relevance downstream.
+    """
+    text = message
+
+    if use_nemo:
+        try:
+            from stratpoint_rag.guardrails.nemo_guardrails import NeMoGuardrailPipeline
+            nemo = NeMoGuardrailPipeline(config)
+            text, results = nemo.run_input(text)
+            for r in results:
+                if r.action == "block":
+                    return text, r.message
+        except ImportError:
+            pass
+
+    from stratpoint_rag.guardrails.input_guardrails import KeywordBlocker, PIIRedactor
+
+    blocker = KeywordBlocker()
+    br = blocker.check(text)
+    if not br.passed:
+        return text, br.message
+
+    redactor = PIIRedactor()
+    text, _ = redactor.redact(text)
+
+    return text, None
+
+
+def _run_output_guardrails(
+    text: str,
+    source_chunks: list,
+    config: GuardrailConfig,
+    use_nemo: bool,
+) -> tuple[str, str | None]:
+    """Run all available output guardrails (NeMo → built-in), returning
+    (modified_text, block_reason)."""
+
+    if use_nemo:
+        try:
+            from stratpoint_rag.guardrails.nemo_guardrails import NeMoGuardrailPipeline
+            nemo = NeMoGuardrailPipeline(config)
+            text, results = nemo.run_output(text, source_chunks)
+            for r in results:
+                if r.action in ("block", "escalate"):
+                    return text, r.message
+        except ImportError:
+            pass
+
+    builtin = GuardrailPipeline(config)
+    text, results = builtin.run_output(text, source_chunks)
+    for r in results:
+        if r.action in ("block", "escalate"):
+            return text, r.message
+
+    return text, None
+
+
 def run_with_guardrails(
     message: str,
     history: list[dict] | None = None,
@@ -48,48 +115,42 @@ def run_with_guardrails(
     use_nemo: bool = True,
 ) -> AgentResult:
     memory = _get_memory(session_id)
+    config = guardrail_config or GuardrailConfig()
 
-    if use_nemo:
-        try:
-            from stratpoint_rag.guardrails.nemo_guardrails import NeMoGuardrailPipeline
-            guardrails = NeMoGuardrailPipeline(guardrail_config or GuardrailConfig())
-        except ImportError:
-            log.warning("NeMo not available, falling back to built-in guardrails")
-            guardrails = GuardrailPipeline(guardrail_config or GuardrailConfig())
-    else:
-        guardrails = GuardrailPipeline(guardrail_config or GuardrailConfig())
+    # ── Input guardrails (NeMo → built-in) ────────────────────────────
+    processed_input, block_reason = _run_input_guardrails(message, config, use_nemo)
+    if block_reason:
+        log.info("Input blocked: %s", block_reason)
+        memory.add_turn("user", message)
+        memory.add_turn("assistant", block_reason)
+        return AgentResult(answer=block_reason, guardrail_reason=block_reason)
 
-    processed_input, input_results = guardrails.run_input(message)
-
-    for r in input_results:
-        if r.action == "block":
-            log.info("Input blocked: %s", r.message)
-            memory.add_turn("user", message)
-            memory.add_turn("assistant", r.message)
-            return AgentResult(answer=r.message, guardrail_reason=r.message)
-
+    # ── Disambiguation ────────────────────────────────────────────────
     route_result = route(processed_input, session_memory=memory)
 
     if route_result.intent in (IntentCategory.HARMFUL, IntentCategory.OFF_TOPIC):
-        reason = route_result.rejection_reason or ""
+        reason = route_result.rejection_reason or "I can't process that request."
         memory.add_turn("user", message)
         memory.add_turn("assistant", reason)
         return AgentResult(answer=reason, guardrail_reason=reason)
 
     if route_result.intent == IntentCategory.GREETING:
+        reply = route_result.rejection_reason or ""
         memory.add_turn("user", message)
-        memory.add_turn("assistant", route_result.rejection_reason or "")
-        return AgentResult(answer=route_result.rejection_reason or "")
+        memory.add_turn("assistant", reply)
+        return AgentResult(answer=reply, guardrail_reason="Greeting detected")
 
     if route_result.clarification_question:
         memory.add_turn("user", message)
         memory.add_turn("assistant", route_result.clarification_question)
-        return AgentResult(answer=route_result.clarification_question)
+        return AgentResult(
+            answer=route_result.clarification_question,
+            guardrail_reason=f"Needed clarification: {route_result.intent.value}",
+        )
 
+    # ── Answer ────────────────────────────────────────────────────────
     source_chunks: list = []
     if _wants_resource(message):
-        # ReAct path: run_agent already fills citations/resources/trace; it has
-        # no grounding score, so is_grounded/confidence stay None.
         result = run_agent(message, history=history, agent=agent)
     else:
         raw, source_chunks, grounded = answer_grounded(message)
@@ -102,21 +163,19 @@ def run_with_guardrails(
             result.is_grounded = grounded.is_grounded
             result.confidence = grounded.confidence
 
-    final_output, output_results = guardrails.run_output(result.answer, source_chunks)
-
-    for r in output_results:
-        if r.action in ("block", "escalate"):
-            log.warning("Output blocked: %s", r.message)
-            if guardrail_config and guardrail_config.mode == "fail_closed":
-                result.answer = (
-                    "I generated a response, but it failed safety checks. "
-                    "Please rephrase your question or contact our team for assistance."
-                )
-                result.guardrail_reason = r.message or "Output failed safety checks."
-                return result
-
-    if final_output != result.answer:
-        result.answer = final_output
+    # ── Output guardrails (NeMo → built-in) ──────────────────────────
+    safe_text, out_block = _run_output_guardrails(result.answer, source_chunks, config, use_nemo)
+    if out_block:
+        log.warning("Output blocked: %s", out_block)
+        if config.mode == "fail_closed":
+            result.answer = (
+                "I generated a response, but it failed safety checks. "
+                "Please rephrase your question or contact our team for assistance."
+            )
+            result.guardrail_reason = out_block
+            return result
+    elif safe_text != result.answer:
+        result.answer = safe_text
 
     memory.add_turn("user", message)
     memory.add_turn("assistant", result.answer)

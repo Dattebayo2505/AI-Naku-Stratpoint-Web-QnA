@@ -75,6 +75,7 @@ def test_guardrail_agent_uses_nemo_when_flag_set(monkeypatch):
 def test_guardrail_agent_nemo_with_query(monkeypatch):
     """NeMo path with a real query — uses mocked rag_answer."""
     from stratpoint_rag.guardrails.schemas import GuardrailResult
+    from stratpoint_rag.rag.models import Chunk
 
     class FakeNeMoPipeline:
         def __init__(self, config=None):
@@ -88,10 +89,11 @@ def test_guardrail_agent_nemo_with_query(monkeypatch):
     monkeypatch.setattr(ng, "NeMoGuardrailPipeline", FakeNeMoPipeline)
 
     import stratpoint_rag.agent.guardrail_agent as ga
+    chunks = [Chunk(id="c1", slug="dev", url="https://stratpoint.com/dev", title="Dev", text="Stratpoint offers software development services.")]
     monkeypatch.setattr(
         ga,
         "answer_grounded",
-        lambda q: ("Stratpoint offers software development services.", [], None),
+        lambda q: ("Stratpoint offers software development services.", chunks, None),
     )
 
     result = run_with_guardrails("What services does Stratpoint offer?", use_nemo=True)
@@ -122,8 +124,10 @@ def test_guardrail_agent_surfaces_grounding_metadata(monkeypatch):
         is_grounded=True,
         confidence=0.9,
     )
+    from stratpoint_rag.rag.models import Chunk
+    chunks = [Chunk(id="c1", slug="cloud", url="https://stratpoint.com/cloud", title="Cloud", text="Stratpoint offers cloud and data services.")]
     import stratpoint_rag.agent.guardrail_agent as ga
-    monkeypatch.setattr(ga, "answer_grounded", lambda q: (grounded.answer, [], grounded))
+    monkeypatch.setattr(ga, "answer_grounded", lambda q: (grounded.answer, chunks, grounded))
 
     result = run_with_guardrails("What services does Stratpoint offer?", use_nemo=True)
     assert result.is_grounded is True

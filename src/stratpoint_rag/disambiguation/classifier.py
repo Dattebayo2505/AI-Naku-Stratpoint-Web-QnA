@@ -16,9 +16,11 @@ _GREETINGS = {"hello", "hi", "hey", "thanks", "thank you", "ty", "good morning",
 _HARMFUL_KEYWORDS = [
     "ignore previous", "ignore all", "system prompt", "you are now",
     "dan", "jailbreak", "bypass", "override",
-    "how to hack", "how to crack", "how to exploit", "hack a",
+    "how to hack", "how to crack", "how to exploit", "hack a", "help me hack",
     "reveal secret", "show system prompt", "leak", "malicious",
     "ignore your", "forget your", "disregard",
+    "malware", "ransomware", "trojan", "virus",
+    "ddos", "sql injection", "xss",
 ]
 
 _OFF_TOPIC_KEYWORDS = {

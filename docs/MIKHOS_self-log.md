@@ -41,7 +41,29 @@ Modules I own: **Guardrails, Disambiguation, NeMo Integration, and Architecture 
 *   **Slot extraction fix — "what is stratpoint" routing**:
     *   Fixed the general-topic slot pattern in `slots.py` from `what.*do` to `what\s+(?:is|are|does|do)` so that "What is Stratpoint?", "What are your services", etc. match the "General" topic slot. Previously these queries fell through to the clarification loop ("I'm not sure I understand...") because `what.*do` required the word "do" after "what". Now they route directly to the RAG answer path.
 
+## 2026-07-07
+
+*   **NeMo input rail detection fix**:
+    *   Fixed `nemo_guardrails.py:run_input()` and `run_output()` to properly check NeMo's actual response content for blocking signals, not just exceptions. When NeMo's jailbreak detection or self-check input fires, it inserts an assistant message into the response — the wrapper now detects this and treats it as a block. Previously, NeMo's built-in rails (jailbreak detection, self-check input) were effectively silent because only `result.exception` was checked.
+
+*   **Multi-layer guardrail architecture**:
+    *   Restructured `guardrail_agent.py` to run NeMo first, then supplement with the built-in KeywordBlocker and PIIRedactor as a secondary pass. The TopicFilter is skipped in the supplement because the disambiguation classifier handles relevance downstream — avoids an unnecessary LLM call per query. This means NeMo handles LLM-level safety (jailbreak, self-check) while the built-in regex layer catches patterns NeMo might miss.
+
+*   **Broadened harmful pattern coverage**:
+    *   Added `\bhack\b`, `\bexploit\b`, `\bmalware\b`, `\bransomware\b`, `\bcrack\s+(software|password|account|system|code)\b`, `\bDDoS\b` to `BLOCKED_PATTERNS` in `input_guardrails.py` — catches "help me hack into your system" without requiring "how to" prefix.
+    *   Added `"help me hack"`, `"malware"`, `"ransomware"`, `"trojan"`, `"virus"`, `"ddos"`, `"sql injection"`, `"xss"` to `_HARMFUL_KEYWORDS` in `classifier.py` for broader safety net in the disambiguation layer.
+
+*   **`guardrail_reason` always populated**:
+    *   `guardrail_reason` is now set on ALL non-standard return paths (greeting, clarification, blocked) in `guardrail_agent.py` — the debug panel always shows why a response was routed the way it was.
+    *   Greeting: `"Greeting detected"`
+    *   Clarification: `"Needed clarification: {intent}"`
+    *   Blocked: the blocking reason from the guardrail
+
+*   **Edge-case "what is stratpoint" routing**:
+    *   Fixed the general-topic slot pattern in `slots.py` from `what.*do` to `what\s+(?:is|are|does|do)` so that "What is Stratpoint?" matches the "General" topic slot.
+
 *   **Documentation**:
-    *   Created `docs/architecture-flow.md` with the full system architecture showing the end-to-end flow, module responsibilities, and explanation for the panel defense.
-    *   Updated the classification flow diagram to include the off-topic keyword pre-filter step.
-    *   Created this self-log.
+    *   Updated `docs/architecture-flow.md` input guardrails section to show the NeMo → KeywordBlocker → PII layered architecture.
+    *   Updated this self-log.
+
+---

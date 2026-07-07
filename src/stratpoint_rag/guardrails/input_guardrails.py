@@ -128,6 +128,12 @@ BLOCKED_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bbypass\s+(rules?|filter|restrictions?|security)", re.IGNORECASE), "bypass_attempt"),
     (re.compile(r"(reveal|show|give|output|print|display|leak)\s+(the )?(secret|hidden|internal|private)", re.IGNORECASE), "info_leak_request"),
     (re.compile(r"how\s+(to\s+)?(hack|crack|exploit|scam)", re.IGNORECASE), "harmful_request"),
+    (re.compile(r"\bhack\b", re.IGNORECASE), "harmful_request"),
+    (re.compile(r"\bexploit\b", re.IGNORECASE), "harmful_request"),
+    (re.compile(r"\bmalware\b", re.IGNORECASE), "harmful_request"),
+    (re.compile(r"\bransomware\b", re.IGNORECASE), "harmful_request"),
+    (re.compile(r"\bcrack\s+(software|password|account|system|code)", re.IGNORECASE), "harmful_request"),
+    (re.compile(r"\bDDoS\b", re.IGNORECASE), "harmful_request"),
     (re.compile(r"(SQL|NoSQL|XSS|CSRF)\s+injection", re.IGNORECASE), "attack_pattern"),
 ]
 

@@ -57,6 +57,27 @@ class NeMoGuardrailPipeline:
                         message=f"NeMo input blocked: {result.exception.message}",
                     )
                 ]
+
+            # NeMo inserts an assistant message when a rail fires (jailbreak,
+            # self-check input, etc.).  If the response has more than the
+            # original user message, treat it as blocked.
+            if result.response and len(result.response) > len(messages):
+                assistant_msgs = [
+                    m for m in result.response if m.get("role") == "assistant"
+                ]
+                reason = (
+                    assistant_msgs[-1].get("content", "NeMo blocked this input")
+                    if assistant_msgs
+                    else "NeMo blocked this input"
+                )
+                return user_input, [
+                    GuardrailResult(
+                        passed=False,
+                        action="block",
+                        message=f"NeMo input blocked: {reason[:200]}",
+                    )
+                ]
+
             return user_input, [
                 GuardrailResult(passed=True, action="allow", message="NeMo input rails passed")
             ]
@@ -83,6 +104,24 @@ class NeMoGuardrailPipeline:
                         message=f"NeMo output blocked: {result.exception.message}",
                     )
                 ]
+
+            if result.response and len(result.response) > len(messages):
+                assistant_msgs = [
+                    m for m in result.response if m.get("role") == "assistant"
+                ]
+                reason = (
+                    assistant_msgs[-1].get("content", "NeMo blocked this response")
+                    if assistant_msgs
+                    else "NeMo blocked this response"
+                )
+                return llm_response, [
+                    GuardrailResult(
+                        passed=False,
+                        action="block",
+                        message=f"NeMo output blocked: {reason[:200]}",
+                    )
+                ]
+
             return llm_response, [
                 GuardrailResult(passed=True, action="allow", message="NeMo output rails passed")
             ]
