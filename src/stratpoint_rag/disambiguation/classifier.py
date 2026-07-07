@@ -47,6 +47,8 @@ _STRATPOINT_KEYWORDS = [
     "healthcare", "finance", "startup", "enterprise",
     "data", "analytics", "machine learning", "artificial intelligence",
     "capstone", "stratmega", "integrated", "solutions",
+    "what do you do", "what do you", "who are you", "tell me about yourself",
+    "what is this", "what is stratpoint",
 ]
 
 _QUESTION_STARTERS = ("what", "where", "when", "why", "how", "who", "which", "do", "does", "is", "are", "can", "could", "would", "should", "tell", "give", "show", "list", "explain", "describe")

@@ -21,6 +21,22 @@ _RESOURCE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_HARMFUL_BLOCK = "I'm sorry, I can't help with that. Please ask me about Stratpoint's services or projects instead."
+
+_INJECTION_BLOCK = "I can only answer questions about Stratpoint — their services, projects, technologies, and company information. Could you ask something related to Stratpoint?"
+
+
+def _user_facing_block(reason: str) -> str:
+    """Convert an internal guardrail reason into a conversational user-facing message."""
+    if "NeMo" in reason:
+        return reason
+    lower = reason.lower()
+    if any(kw in lower for kw in ("harmful", "attack", "malware", "hack", "exploit")):
+        return _HARMFUL_BLOCK
+    if any(kw in lower for kw in ("injection", "jailbreak", "bypass", "leak", "override", "info")):
+        return _INJECTION_BLOCK
+    return reason
+
 
 def _wants_resource(message: str) -> bool:
     return bool(_RESOURCE_PATTERNS.search(message))
@@ -122,8 +138,8 @@ def run_with_guardrails(
     if block_reason:
         log.info("Input blocked: %s", block_reason)
         memory.add_turn("user", message)
-        memory.add_turn("assistant", block_reason)
-        return AgentResult(answer=block_reason, guardrail_reason=block_reason)
+        memory.add_turn("assistant", _user_facing_block(block_reason))
+        return AgentResult(answer=_user_facing_block(block_reason), guardrail_reason=block_reason)
 
     # ── Disambiguation ────────────────────────────────────────────────
     route_result = route(processed_input, session_memory=memory)
