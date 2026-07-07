@@ -94,7 +94,7 @@ def test_guardrail_agent_nemo_with_query(monkeypatch):
     monkeypatch.setattr(
         ga,
         "answer_grounded",
-        lambda q: ("Stratpoint offers software development services.", chunks, None),
+        lambda q, k=8: ("Stratpoint offers software development services.", chunks, None),
     )
 
     result = run_with_guardrails("What services does Stratpoint offer?", use_nemo=True)
@@ -128,7 +128,7 @@ def test_guardrail_agent_surfaces_grounding_metadata(monkeypatch):
     from stratpoint_rag.rag.models import Chunk
     chunks = [Chunk(id="c1", slug="cloud", url="https://stratpoint.com/cloud", title="Cloud", text="Stratpoint offers cloud and data services.")]
     import stratpoint_rag.agent.guardrail_agent as ga
-    monkeypatch.setattr(ga, "answer_grounded", lambda q: (grounded.answer, chunks, grounded))
+    monkeypatch.setattr(ga, "answer_grounded", lambda q, k=8: (grounded.answer, chunks, grounded))
 
     result = run_with_guardrails("What services does Stratpoint offer?", use_nemo=True)
     assert result.is_grounded is True

@@ -32,6 +32,7 @@ class SlotQuery(BaseModel):
     intent: IntentCategory
     slots: dict[str, Any] = {}
     missing_slots: list[str] = []
+    matched_keyword: str | None = None
 
 
 class ClarificationTurn(BaseModel):
@@ -56,3 +57,4 @@ class RouteResult(BaseModel):
     rejection_reason: str | None = None
     clarification_question: str | None = None
     clarification_session: ClarificationSession | None = None
+    matched_keyword: str | None = None

@@ -68,6 +68,7 @@ def extract_slots(
         return SlotQuery(intent=intent, slots={}, missing_slots=[])
 
     slots: dict[str, str | None] = {}
+    matched_keyword: str | None = None
 
     # Check project patterns first so specific names aren't consumed by topic
     for pattern, project in _PROJECT_PATTERNS:
@@ -76,8 +77,10 @@ def extract_slots(
             break
 
     for pattern, topic in _TOPIC_PATTERNS:
-        if pattern.search(user_input):
+        m = pattern.search(user_input)
+        if m:
             slots["topic"] = topic
+            matched_keyword = m.group(0).lower()
             break
 
     for pattern, service in _SERVICE_PATTERNS:
@@ -104,4 +107,4 @@ def extract_slots(
 
     missing = [s for s in missing if s not in cleaned]
 
-    return SlotQuery(intent=intent, slots=cleaned, missing_slots=missing)
+    return SlotQuery(intent=intent, slots=cleaned, missing_slots=missing, matched_keyword=matched_keyword)

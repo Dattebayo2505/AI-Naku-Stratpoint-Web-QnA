@@ -173,7 +173,15 @@ def run_with_guardrails(
     if _wants_resource(message):
         result = run_agent(message, history=history, agent=agent)
     else:
-        raw, source_chunks, grounded = answer_grounded(message)
+        query = message
+        if route_result.slots and route_result.slots.get("topic") == "Contact / Location" and route_result.matched_keyword:
+            from stratpoint_rag.rag.store import VectorStore
+            store = VectorStore()
+            got = store.col.get(where_document={"$contains": "office"}, include=["metadatas"])
+            slugs = [m["slug"].replace("_", " ") for m in (got.get("metadatas") or [])]
+            if slugs:
+                query = f"{message} {' '.join(slugs[:10])}"
+        raw, source_chunks, grounded = answer_grounded(query, k=8)
         result = AgentResult(answer=raw)
         if grounded is not None:
             result.citations = [

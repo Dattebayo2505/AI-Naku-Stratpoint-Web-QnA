@@ -101,6 +101,7 @@ def route(
             should_retrieve=False,
             clarification_question=question,
             clarification_session=loop.session,
+            matched_keyword=slot_query.matched_keyword,
         )
 
     return RouteResult(
@@ -109,4 +110,5 @@ def route(
         query=user_input,
         slots=slot_query.slots,
         should_retrieve=True,
+        matched_keyword=slot_query.matched_keyword,
     )
