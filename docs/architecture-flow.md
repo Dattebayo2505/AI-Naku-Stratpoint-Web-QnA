@@ -21,28 +21,31 @@ A RAG (Retrieval-Augmented Generation) chatbot for `stratpoint.com` that answers
                       │ use_nemo? │
                       └──┬───┬────┘
                          │   │
-               ┌─────────┘   └──────────┐
-               ▼                        ▼
-┌─────────────────────┐   ┌──────────────────────────┐
-│  NeMoGuardrail      │   │  GuardrailPipeline       │
-│  Pipeline           │   │  (NeMo unavailable)      │
-│  (nemo_guardrails   │   │  (pipeline.py)           │
-│   .py → main.co)    │   │                          │
-│  Colang 2.x flows:  │   │  InputPipeline:          │
-│  • PII redact       │   │  • KeywordBlocker        │
-│  • Relevance check  │   │  • PIIRedactor           │
-│  • Self-check input │   │  • TopicFilter           │
-│  • Jailbreak detect │   │                          │
-└──────────┬──────────┘   └──────────┬───────────────┘
-           │                         │
-           │  When NeMo is active, a supplementary    │
-           │  KeywordBlocker + PIIRedactor pass runs   │
-           │  AFTER NeMo (no TopicFilter — handled     │
-           │  downstream by the classifier).           │
-           │                         │
-           └──────────┬──────────────┘
-                      ▼ cleaned input
-                      ▼
+                ┌─────────┘   └──────────┐
+                ▼                        ▼
+ ┌──────────────────────────┐   ┌─────────────────────┐
+ │  GuardrailPipeline       │   │  NeMoGuardrail      │
+ │  (pipeline.py)           │   │  Pipeline            │
+ │                          │   │  (when use_nemo)     │
+ │  InputPipeline:          │   │  (nemo_guardrails    │
+ │  • KeywordBlocker        │   │   .py → main.co)    │
+ │  • PIIRedactor           │   │                     │
+ │  • TopicFilter           │   │  Colang 2.x flows:  │
+ │                          │   │  • PII redact       │
+ │                          │   │  • Relevance check  │
+ │                          │   │  • Self-check input │
+ │                          │   │  • Jailbreak detect │
+ └──────────┬───────────────┘   └──────────┬──────────┘
+            │                              │
+            │  Built-in keyword/PII checks │
+            │  run first (fast, zero API   │
+            │  cost). NeMo runs second as  │
+            │  an LLM-powered safety net   │
+            │  for nuanced cases.          │
+            │                              │
+            └──────────┬───────────────────┘
+                       ▼ cleaned input
+                       ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  Phase 2: DISAMBIGUATION (disambiguation/)                                    │
 │                                                                               │
@@ -127,28 +130,28 @@ A RAG (Retrieval-Augmented Generation) chatbot for `stratpoint.com` that answers
 
 ### Input Guardrails (before the answer)
 
-**Multi-layer architecture**: When NeMo is the default backend, input guardrails run in two layers. NeMo's Colang 2.x flows run first (providing LLM-powered detection via jailbreak detection, self-check input, and relevance check), then the built-in `KeywordBlocker` and `PIIRedactor` run as a supplementary regex pass — catching patterns NeMo's LLM-driven rails might miss (e.g., "help me hack into your system" without "how to" prefix). The `TopicFilter` is intentionally skipped in the supplementary pass because the disambiguation classifier handles relevance downstream — avoids an unnecessary LLM call per query.
+**Two-layer architecture**: Input guardrails always run built-in checks first, then NeMo (if enabled). The built-in `KeywordBlocker` and `PIIRedactor` run first — they catch obvious injection patterns in microseconds with zero API cost. If those pass, NeMo's Colang 2.x flows run as a more thorough LLM-powered second layer — catching nuanced cases regex patterns might miss (e.g., a creatively phrased social engineering attempt). The `TopicFilter` is intentionally skipped during the built-in pass because the disambiguation classifier handles relevance downstream — avoids an unnecessary LLM call per query.
 
-When NeMo is unavailable (not installed), the built-in `GuardrailPipeline` runs all three checks: `KeywordBlocker`, `PIIRedactor`, and `TopicFilter`.
+When NeMo is unavailable (not installed), only the built-in `GuardrailPipeline` runs: `KeywordBlocker`, `PIIRedactor`, and `TopicFilter`.
 
-#### NeMo Input Flow (default)
-The flow is defined in `nemo/main.co`:
-1. **PII redaction** — custom action (same regex patterns as built-in)
-2. **Stratpoint relevance check** — custom action keyword matching
-3. **Self-check input** — NeMo LLM-based input moderation
-4. **Jailbreak detection** — NeMo heuristic + LLM pattern matching
-
-When a NeMo rail fires (e.g., jailbreak detected), it appends an assistant message to the response. The wrapper (`nemo_guardrails.py`) now detects this by checking for extra messages in the result, not just exceptions — making NeMo's built-in rails actually effective.
-
-#### Built-in Supplementary Pass (NeMo active)
-Runs after NeMo to catch regex patterns NeMo might miss:
-1. **KeywordBlocker** — No PII, no relevance check; only regex blocking for:
+#### Built-in Pass (always runs first)
+Runs fast regex checks before any LLM call:
+1. **KeywordBlocker** — Regex blocking for:
    - Prompt injection ("ignore previous instructions")
    - Jailbreak attempts ("DAN", "bypass")
    - Harmful content ("hack", "exploit", "malware", "ransomware", "DDoS", "crack password")
    - Attack patterns ("SQL injection", "XSS")
 
 2. **PIIRedactor** — SSN, credit card, email, phone redaction
+
+#### NeMo Input Flow (runs second, if enabled)
+If the built-in checks pass and `use_nemo=True`, NeMo's Colang flows run as a more thorough second pass. Defined in `nemo/main.co`:
+1. **PII redaction** — custom action (same regex patterns as built-in)
+2. **Stratpoint relevance check** — custom action keyword matching
+3. **Self-check input** — NeMo LLM-based input moderation
+4. **Jailbreak detection** — NeMo heuristic + LLM pattern matching
+
+When a NeMo rail fires (e.g., jailbreak detected), it appends an assistant message to the response. The wrapper (`nemo_guardrails.py`) detects this by checking for extra messages in the result, not just exceptions — making NeMo's built-in rails actually effective.
 
 #### Built-in Input Pipeline (NeMo unavailable)
 Runs `InputPipeline` with all three checks:
@@ -173,13 +176,10 @@ Runs `InputPipeline` with all three checks:
 
 ### Output Guardrails (after the answer)
 
-When using NeMo (default), output guardrails run via Colang 2.x flows in `nemo/main.co`:
-1. **Output PII redaction** — checks against source docs via custom action; only redacts PII not found in source
-2. **Advice blocking** — directive-only, source-aware patterns for medical, legal, financial advice via custom action
-3. **Custom hallucination check** — embedding cosine similarity (threshold 0.6) via custom action
+Output guardrails always run built-in checks first, then NeMo (if enabled).
 
-When NeMo is unavailable, the built-in `OutputPipeline` runs:
-
+#### Built-in Output Pipeline (always runs first)
+Fast, no extra API cost:
 1. **OutputPIIChecker** — Detects PII in the LLM response and **cross-references against source documents**:
    - If PII exists in both the response AND the source text → allowed (it's legitimate content from Stratpoint)
    - If PII appears ONLY in the response → redacted (potential data leak)
@@ -196,6 +196,12 @@ When NeMo is unavailable, the built-in `OutputPipeline` runs:
    - **Source-aware**: if the matched phrase exists in the retrieved source chunks, it's allowed (descriptive Stratpoint content, not generated advice). The blocker only matches directive language (e.g. "you should", "I recommend") — descriptive text from the corpus that happens to mention medical/legal/financial topics is not blocked.
    Blocked responses are replaced with a disclaimer redirecting to qualified professionals.
 
+#### NeMo Output Flow (runs second, if enabled)
+If built-in checks pass and `use_nemo=True`, NeMo's Colang flows run as a more thorough second pass:
+1. **Output PII redaction** — checks against source docs via custom action; only redacts PII not found in source
+2. **Advice blocking** — directive-only, source-aware patterns for medical, legal, financial advice via custom action
+3. **Custom hallucination check** — embedding cosine similarity (threshold 0.6) via custom action
+
 ### GuardrailPipeline Composition
 
 The `GuardrailPipeline` class composites input and output checks:
@@ -211,9 +217,11 @@ Each check returns a `GuardrailResult` with:
 - `message: str` — human-readable explanation
 - `modified_input/output: str | None` — sanitized version if applicable
 
-### NeMo Guardrails (Default Backend)
+### NeMo Guardrails (LLM-Powered Second Layer)
 
-NeMo Guardrails is the **default** guardrail backend. When `nemoguardrails` is installed, all input and output checks run through Colang 2.x flows. The built-in Python pipeline serves as a **graceful fallback** when `nemoguardrails` is not available.
+NeMo Guardrails is an **optional LLM-powered second layer** on top of the built-in pipeline. When `nemoguardrails` is installed, NeMo's Colang 2.x flows run **after** the built-in keyword/PII checks. The built-in pipeline always runs first and handles the fast regex checks; NeMo catches nuanced cases the regex might miss.
+
+When `nemoguardrails` is not available, only the built-in `GuardrailPipeline` runs — no functionality is lost, just the extra LLM-powered layer.
 
 **Architecture:**
 - **config.yml**: Points at the same NVIDIA NIM endpoint, model, and API key as the main app (set dynamically from `rag.config.llm_model()` at runtime)
@@ -228,8 +236,8 @@ Output: PII redact → advice check (source-aware) → hallucination check (cosi
 ```
 
 **How to toggle:**
-- `use_nemo=True` (default) in `ChatRequest` or `run_with_guardrails()` — uses NeMo if installed
-- `use_nemo=False` — explicitly uses the built-in `GuardrailPipeline`
+- `use_nemo=True` (default) in `ChatRequest` or `run_with_guardrails()` — uses built-in first, then NeMo as a second pass
+- `use_nemo=False` — only uses the built-in `GuardrailPipeline`
 - Falls back gracefully if `nemoguardrails` is not installed
 
 ## Disambiguation Deep-Dive
@@ -287,13 +295,13 @@ The guardrails and disambiguation modules are designed as **non-invasive middlew
 2. **Minimal change** to `api/app.py` — swapped `run_agent` → `run_with_guardrails`, added `session_id` and `use_nemo` fields
 3. **Same response type** — `AgentResult` is preserved, so the UI/API contract remains identical
 4. **Graceful degradation** — all guardrail checks use try/except and default to permissive behavior on error; NeMo falls back to built-in if `nemoguardrails` not installed
-5. **NeMo default** — NeMo Guardrails is the default backend; toggle via `use_nemo` flag for explicit fallback
+5. **Built-in first, NeMo second** — fast regex checks run first (zero API cost); NeMo runs as an LLM-powered second pass for nuanced cases; toggle via `use_nemo` flag
 
 ## Key Decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Guardrail approach | NeMo (default) + custom Python fallback | NeMo provides LLM-powered rails and Colang flows. Falls back to lightweight built-in pipeline when `nemoguardrails` not installed. |
+| Guardrail order | Built-in (fast regex) first → NeMo (LLM-powered) second | Built-in catches obvious patterns in microseconds with zero API cost. NeMo catches nuanced cases the regex might miss. Neither is a single point of failure. |
 | Classification priority | Heuristic-first, LLM fallback | 90%+ of inputs (greetings, Stratpoint questions, harmful) are caught by regex without a network call |
 | PII strategy | Regex patterns, cross-reference sources, `allowed_email_domains` allowlist | Simple, fast, no ML dependency. Cross-referencing prevents false positives on legitimate content. `@stratpoint.com` emails exempted from redaction |
 | Hallucination detection | Embedding cosine similarity | Uses the same embedder as retrieval (bge-small). No extra model downloads. Threshold at 0.6 |

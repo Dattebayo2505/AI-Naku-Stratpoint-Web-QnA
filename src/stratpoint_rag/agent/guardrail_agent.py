@@ -60,14 +60,26 @@ def _run_input_guardrails(
     config: GuardrailConfig,
     use_nemo: bool,
 ) -> tuple[str, str | None]:
-    """Run all available input guardrails (NeMo → keyword/PII supplement),
+    """Run all available input guardrails (built-in keyword/PII → NeMo),
     returning (processed_input, block_reason).  block_reason is None if allowed.
 
-    The supplementary pass only does regex blocking and PII redaction — the
-    TopicFilter (which can call the LLM) is skipped because the disambiguation
-    classifier handles relevance downstream.
+    Built-in regex blocking and PII redaction run first — they catch obvious
+    patterns in microseconds with zero API cost.  NeMo runs second as a more
+    thorough LLM-powered fallback for nuanced cases the regex missed.
+    The TopicFilter is skipped during the built-in pass because the
+    disambiguation classifier handles relevance downstream.
     """
     text = message
+
+    from stratpoint_rag.guardrails.input_guardrails import KeywordBlocker, PIIRedactor
+
+    blocker = KeywordBlocker()
+    br = blocker.check(text)
+    if not br.passed:
+        return text, br.message
+
+    redactor = PIIRedactor()
+    text, _ = redactor.redact(text)
 
     if use_nemo:
         try:
@@ -80,16 +92,6 @@ def _run_input_guardrails(
         except ImportError:
             pass
 
-    from stratpoint_rag.guardrails.input_guardrails import KeywordBlocker, PIIRedactor
-
-    blocker = KeywordBlocker()
-    br = blocker.check(text)
-    if not br.passed:
-        return text, br.message
-
-    redactor = PIIRedactor()
-    text, _ = redactor.redact(text)
-
     return text, None
 
 
@@ -99,8 +101,22 @@ def _run_output_guardrails(
     config: GuardrailConfig,
     use_nemo: bool,
 ) -> tuple[str, str | None]:
-    """Run all available output guardrails (NeMo → built-in), returning
-    (modified_text, block_reason)."""
+    """Run all available output guardrails (built-in → NeMo), returning
+    (modified_text, block_reason).
+
+    Built-in checks (AdviceBlocker, HallucinationChecker, OutputPIIChecker)
+    run first — they use fast regex and embedding comparisons with zero
+    extra API cost.  NeMo runs second as an LLM-powered policy gate for
+    nuanced cases the built-in checks might miss.
+    """
+
+    builtin = GuardrailPipeline(config)
+    text, results = builtin.run_output(text, source_chunks)
+    for r in results:
+        if r.action in ("block", "escalate"):
+            log.warning("Built-in output rail blocked: %s", r.message)
+            return text, r.message
+        log.info("Built-in output rail passed: %s", r.message)
 
     if use_nemo:
         try:
@@ -114,14 +130,6 @@ def _run_output_guardrails(
                 log.info("NeMo output rail passed: %s", r.message)
         except ImportError:
             log.info("NeMo not available; skipping NeMo output rails")
-
-    builtin = GuardrailPipeline(config)
-    text, results = builtin.run_output(text, source_chunks)
-    for r in results:
-        if r.action in ("block", "escalate"):
-            log.warning("Built-in output rail blocked: %s", r.message)
-            return text, r.message
-        log.info("Built-in output rail passed: %s", r.message)
 
     return text, None
 
@@ -139,7 +147,7 @@ def run_with_guardrails(
     memory = _get_memory(session_id)
     config = guardrail_config or GuardrailConfig()
 
-    # ── Input guardrails (NeMo → built-in) ────────────────────────────
+    # ── Input guardrails (built-in keyword/PII → NeMo) ────────────────
     processed_input, block_reason = _run_input_guardrails(message, config, use_nemo)
     if block_reason:
         log.info("Input blocked: %s", block_reason)
@@ -214,7 +222,7 @@ def run_with_guardrails(
             result.is_grounded = grounded.is_grounded
             result.confidence = grounded.confidence
 
-    # ── Output guardrails (NeMo → built-in) ──────────────────────────
+    # ── Output guardrails (built-in → NeMo) ──────────────────────────
     safe_text, out_block = _run_output_guardrails(result.answer, source_chunks, config, use_nemo)
     if out_block:
         log.warning("Output blocked: %s", out_block)
