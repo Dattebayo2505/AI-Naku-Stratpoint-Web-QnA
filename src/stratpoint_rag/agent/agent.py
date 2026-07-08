@@ -34,6 +34,9 @@ class AgentResult(BaseModel):
     is_grounded: bool | None = None
     confidence: float | None = None
     guardrail_reason: str | None = None
+    # Native model reasoning (NIM enable_thinking), when requested. Populated by
+    # the RAG path (from answer_grounded) and the agent path (from _build_result).
+    reasoning: str | None = None
 
 
 _LINK_LINE = re.compile(r"^- (.+?) \((https?://[^)]+)\)\s*$", re.MULTILINE)
@@ -49,6 +52,7 @@ def _build_result(messages: list[Any]) -> AgentResult:
     trace: list[Step] = []
     citations: list[Link] = []
     resources: list[Link] = []
+    reasonings: list[str] = []
     answer = ""
 
     for m in messages:
@@ -57,6 +61,11 @@ def _build_result(messages: list[Any]) -> AgentResult:
         content = getattr(m, "content", "") or ""
 
         if mtype == "ai":
+            ak = getattr(m, "additional_kwargs", {}) or {}
+            rc = ak.get("reasoning_content") or ak.get("reasoning")
+            if rc:
+                reasonings.append(rc)
+                trace.append(Step(type="reasoning", content=rc))
             if content and tool_calls:
                 trace.append(Step(type="thought", content=content))
             elif content:
@@ -72,7 +81,13 @@ def _build_result(messages: list[Any]) -> AgentResult:
             elif name == "find_resource":
                 resources.extend(_parse_link_lines(content))
 
-    return AgentResult(answer=answer, citations=citations, resources=resources, trace=trace)
+    return AgentResult(
+        answer=answer,
+        citations=citations,
+        resources=resources,
+        trace=trace,
+        reasoning="\n\n".join(reasonings) if reasonings else None,
+    )
 
 
 from stratpoint_rag.rag import config
@@ -84,10 +99,11 @@ SYSTEM_PROMPT = (
     "wording (keep their figures and years); do not shorten the topic to keywords.\n"
 )
 
-_agent = None
+# One compiled agent per reasoning flag (thinking-on vs off), built lazily.
+_agents: dict[bool, object] = {}
 
 
-def _build_agent():
+def _build_agent(enable_reasoning: bool = False):
     key = config.nvidia_api_key()
     if not key:
         raise RuntimeError("NVIDIA_API_KEY is not set (see .envexample)")
@@ -103,24 +119,33 @@ def _build_agent():
         # latency is ~40s (several NIM round-trips per turn), so a transient
         # spike would 502. Match rag.answer's 120s for comfortable headroom.
         timeout=120,
+        # LIVE-CONFIRMED: pass as a constructor kwarg (transfers to model_kwargs
+        # with a harmless warning); extra_body fails silently. Enables NIM's
+        # native thinking and populates additional_kwargs["reasoning_content"].
+        chat_template_kwargs={"enable_thinking": enable_reasoning},
     )
     return create_agent(llm, TOOLS, system_prompt=SYSTEM_PROMPT)
 
 
-def _get_agent():
-    global _agent
-    if _agent is None:
-        _agent = _build_agent()
-    return _agent
+def _get_agent(enable_reasoning: bool = False):
+    if enable_reasoning not in _agents:
+        _agents[enable_reasoning] = _build_agent(enable_reasoning)
+    return _agents[enable_reasoning]
 
 
-def run_agent(message: str, history: list[dict] | None = None, *, agent=None) -> AgentResult:
+def run_agent(
+    message: str,
+    history: list[dict] | None = None,
+    *,
+    agent=None,
+    enable_reasoning: bool = False,
+) -> AgentResult:
     """Run one turn of the ReAct agent and return a structured AgentResult.
 
-    `agent` is an injection seam for tests; production uses the lazy singleton.
+    `agent` is an injection seam for tests; production uses the per-flag cache.
     """
     if agent is None:
-        agent = _get_agent()
+        agent = _get_agent(enable_reasoning)
     msgs: list = [(h["role"], h["content"]) for h in (history or [])]
     msgs.append(("user", message))
     state = agent.invoke({"messages": msgs}, config={"recursion_limit": 8})

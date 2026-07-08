@@ -35,7 +35,7 @@ You must output your response in JSON format conforming exactly to the following
 {schema_format}
 
 Instructions:
-1. First, perform a grounding check inside the "reasoning" field. Outline the facts needed to answer and verify if they exist in the context.
+1. First, perform a grounding check: outline the facts needed to answer and verify they exist in the context before writing the answer.
 2. In the "answer" field, formulate your response using ONLY facts explicitly stated in the context. When referring to Stratpoint, ALWAYS use first-person pronouns ('we', 'us', 'our'). Never use third-person pronouns ('they', 'them').
 3. In the "citations" field, add the titles and URLs of the pages you used.
 4. Set "is_grounded" to true if you were able to answer the question, or false if the context does not contain enough information.
@@ -71,7 +71,7 @@ You must output your response in JSON format conforming exactly to the following
 {schema_format}
 
 Instructions:
-1. Perform a step-by-step grounding check inside the "reasoning" field to ensure everything in your final answer is backed by the retrieved context.
+1. Perform a step-by-step grounding check to ensure everything in your final answer is backed by the retrieved context.
 2. In the "answer" field, write your grounded response. Do not use outside information or make assumptions. When referring to Stratpoint, ALWAYS use first-person pronouns ('we', 'us', 'our'). Never use third-person pronouns ('they', 'them').
 3. In the "citations" field, include the URL and title of the source pages you used.
 4. If the context does not contain the answer, you must set "is_grounded" to false and "citations" to []. In the "answer" field, politely say you don't have that information and offer to help with Stratpoint-related questions instead.

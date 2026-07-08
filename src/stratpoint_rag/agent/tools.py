@@ -92,7 +92,7 @@ def search_stratpoint(query: str) -> str:
         query: The visitor's question, e.g. 'Do you offer cloud migration?'
     """
     try:
-        text, chunks, grounded = _rag_answer_grounded(query)
+        text, chunks, grounded, _ = _rag_answer_grounded(query)
         _record_chunks(chunks)
         _record_grounded(grounded)
         return text

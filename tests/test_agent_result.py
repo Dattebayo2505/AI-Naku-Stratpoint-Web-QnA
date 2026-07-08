@@ -40,6 +40,26 @@ def test_build_result_captures_answer_trace_citations_resources():
     ]
 
 
+def test_build_result_captures_reasoning_from_additional_kwargs():
+    messages = [
+        HumanMessage(content="services?"),
+        AIMessage(
+            content="We build software.",
+            additional_kwargs={"reasoning_content": "The context lists software services."},
+        ),
+    ]
+    result = agent._build_result(messages)
+    assert result.answer == "We build software."
+    assert result.reasoning == "The context lists software services."
+    assert any(s.type == "reasoning" for s in result.trace)
+
+
+def test_build_result_reasoning_none_when_absent():
+    messages = [AIMessage(content="Hello.")]
+    result = agent._build_result(messages)
+    assert result.reasoning is None
+
+
 def test_build_result_tool_free_answer():
     messages = [
         HumanMessage(content="hi"),

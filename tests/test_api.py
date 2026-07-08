@@ -45,6 +45,30 @@ def test_chat_maps_runtime_error_to_503(monkeypatch):
     assert r.status_code == 503
 
 
+def test_chat_forwards_enable_reasoning(monkeypatch):
+    seen = {}
+
+    def fake(message, history=None, session_id=None, use_nemo=True, enable_reasoning=False):
+        seen["enable_reasoning"] = enable_reasoning
+        return AgentResult(answer="ok", reasoning="thinking...")
+
+    monkeypatch.setattr(app_module, "run_with_guardrails", fake)
+    r = client.post("/chat", json={"message": "hi", "enable_reasoning": True})
+    assert r.status_code == 200
+    assert seen["enable_reasoning"] is True
+    assert r.json()["reasoning"] == "thinking..."
+
+
+def test_chat_enable_reasoning_defaults_false(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        app_module, "run_with_guardrails",
+        lambda *a, **kw: seen.update(kw) or AgentResult(answer="ok"),
+    )
+    client.post("/chat", json={"message": "hi"})
+    assert seen.get("enable_reasoning") is False
+
+
 def test_chat_maps_upstream_error_to_502(monkeypatch):
     def boom(*a, **kw):
         raise ValueError("endpoint exploded")

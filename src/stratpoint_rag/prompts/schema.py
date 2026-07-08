@@ -12,10 +12,6 @@ class Citation(BaseModel):
 
 
 class GroundedAnswer(BaseModel):
-    reasoning: str = Field(
-        ...,
-        description="Step-by-step thinking checking if the context contains the facts needed to answer, identifying gaps.",
-    )
     answer: str = Field(
         ...,
         description="The grounded answer to the question using ONLY provided context. If is_grounded is false, explain what is missing.",

@@ -94,7 +94,7 @@ def test_guardrail_agent_nemo_with_query(monkeypatch):
     monkeypatch.setattr(
         ga,
         "answer_grounded",
-        lambda q, k=8: ("Stratpoint offers software development services.", chunks, None),
+        lambda q, k=8, enable_reasoning=False: ("Stratpoint offers software development services.", chunks, None, None),
     )
 
     result = run_with_guardrails("What services does Stratpoint offer?", use_nemo=True)
@@ -119,7 +119,6 @@ def test_guardrail_agent_surfaces_grounding_metadata(monkeypatch):
     monkeypatch.setattr(ng, "NeMoGuardrailPipeline", FakeNeMoPipeline)
 
     grounded = GroundedAnswer(
-        reasoning="context has it",
         answer="Stratpoint offers cloud and data services.",
         citations=[Citation(url="https://stratpoint.com/cloud", title="Cloud")],
         is_grounded=True,
@@ -128,7 +127,7 @@ def test_guardrail_agent_surfaces_grounding_metadata(monkeypatch):
     from stratpoint_rag.rag.models import Chunk
     chunks = [Chunk(id="c1", slug="cloud", url="https://stratpoint.com/cloud", title="Cloud", text="Stratpoint offers cloud and data services.")]
     import stratpoint_rag.agent.guardrail_agent as ga
-    monkeypatch.setattr(ga, "answer_grounded", lambda q, k=8: (grounded.answer, chunks, grounded))
+    monkeypatch.setattr(ga, "answer_grounded", lambda q, k=8, enable_reasoning=False: (grounded.answer, chunks, grounded, None))
 
     result = run_with_guardrails("What services does Stratpoint offer?", use_nemo=True)
     assert result.is_grounded is True
@@ -189,7 +188,7 @@ def test_resource_query_answer_survives_output_guardrails(monkeypatch):
         title="QA", text=grounded_answer, score=0.9,
     )
 
-    def fake_run_agent(message, history=None, *, agent=None):
+    def fake_run_agent(message, history=None, *, agent=None, enable_reasoning=False):
         # Emulate a tool recording its chunks during the agent run.
         agent_tools._record_chunks([chunk])
         return AgentResult(answer=grounded_answer)
@@ -215,11 +214,11 @@ def test_resource_query_surfaces_grounding_metadata(monkeypatch):
     answer_text = "Stratpoint offers QA test automation services."
     chunk = Chunk(id="c1", slug="qa", url="https://stratpoint.com/qa", title="QA", text=answer_text, score=0.9)
     grounded = GroundedAnswer(
-        reasoning="context has it", answer=answer_text, citations=[],
+        answer=answer_text, citations=[],
         is_grounded=True, confidence=0.9,
     )
 
-    def fake_run_agent(message, history=None, *, agent=None):
+    def fake_run_agent(message, history=None, *, agent=None, enable_reasoning=False):
         agent_tools._record_chunks([chunk])
         agent_tools._record_grounded(grounded)
         return AgentResult(answer=answer_text)
@@ -230,6 +229,29 @@ def test_resource_query_surfaces_grounding_metadata(monkeypatch):
     result = run_with_guardrails("Provide me a document about QA services", use_nemo=True)
     assert result.is_grounded is True
     assert result.confidence == 0.9
+
+
+def test_enable_reasoning_flag_reaches_run_agent(monkeypatch):
+    """The resource (agent) path forwards enable_reasoning to run_agent and
+    surfaces the returned reasoning on the AgentResult."""
+    _fake_nemo(monkeypatch)
+    from stratpoint_rag.agent import tools as agent_tools
+    from stratpoint_rag.agent.agent import AgentResult
+    import stratpoint_rag.agent.guardrail_agent as ga
+
+    seen = {}
+
+    def fake_run_agent(message, history=None, *, agent=None, enable_reasoning=False):
+        seen["enable_reasoning"] = enable_reasoning
+        agent_tools._record_chunks([])
+        return AgentResult(answer="ok", reasoning="thought" if enable_reasoning else None)
+
+    monkeypatch.setattr(ga, "run_agent", fake_run_agent)
+    result = run_with_guardrails(
+        "Provide me a document about QA services", use_nemo=True, enable_reasoning=True
+    )
+    assert seen["enable_reasoning"] is True
+    assert result.reasoning == "thought"
 
 
 @pytest.mark.integration

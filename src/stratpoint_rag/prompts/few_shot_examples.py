@@ -17,7 +17,6 @@ Question: Does Stratpoint do mobile app development?
 
 Assistant Grounded JSON Answer:
 {
-  "reasoning": "The user is asking if Stratpoint does mobile app development. The context for the page 'Deliverwinning value' with URL 'https://stratpoint.com/mobileappdev/' explicitly states that 'Stratpoint designs, architects, develops, secures, and future-proofs mobile apps.' It also mentions UI/UX design and development. Therefore, this is fully answerable from the context.",
   "answer": "Yes, we offer comprehensive mobile app development services. We design, architect, develop, secure, and future-proof mobile applications, which includes both UI/UX design and core development.",
   "citations": [
     {
@@ -42,7 +41,6 @@ Question: What retail-related projects has Stratpoint done, and how much did the
 
 Assistant Grounded JSON Answer:
 {
-  "reasoning": "The user asks two things: 1) retail-related projects Stratpoint has done, and 2) how much they cost. Looking at the context, Stratpoint has worked on 'SM Malls Online' (a project to manage store item inventory for administrators, tenants, and the commerce team) and 'Aeroworx E-Commerce' (AWS Cloud migration). However, there is no pricing or cost information mentioned anywhere in the context. Therefore, I can answer the projects portion but must refuse/declare lack of info for the cost portion.",
   "answer": "We have worked on retail-related projects including SM Malls Online, which helps manage store item inventory for mall administrators, tenants, and digital commerce teams, and Aeroworx E-Commerce, where we performed AWS Cloud migration. However, there is no information in the provided context regarding the cost of these projects.",
   "citations": [
     {
@@ -64,7 +62,6 @@ Question: What is Stratpoint's current stock market ticker and share price?
 
 Assistant Grounded JSON Answer:
 {
-  "reasoning": "The user is asking for Stratpoint's stock market ticker and share price. The provided context only covers mobile app development services. There is no information regarding public trading, stock tickers, or share pricing in the context. This is out of scope and cannot be answered.",
   "answer": "I'm sorry, I don't have that information. Is there anything else about Stratpoint's services or projects I can help you with?",
   "citations": [],
   "is_grounded": false,

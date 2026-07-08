@@ -31,6 +31,8 @@ def render(raw_response: Dict[str, Any]):
                 elif step_type == "observation":
                     with st.expander(f"Observation: {step.get('tool', 'unknown')}"):
                         st.text(step.get('content', ''))
+                elif step_type == "reasoning":
+                    st.markdown(f"**Reasoning:** {step.get('content', '')}")
                 elif step_type == "answer":
                     st.markdown(f"**Answer generated.**")
                 else:
@@ -39,8 +41,18 @@ def render(raw_response: Dict[str, Any]):
             st.markdown("*Not available*")
             
         st.divider()
-        
-        # 3. Grounding / guardrail status
+
+        # 3. Reasoning (native model thinking, when enabled)
+        st.markdown("**Reasoning**")
+        reasoning = raw_response.get("reasoning")
+        if reasoning:
+            st.markdown(reasoning)
+        else:
+            st.markdown("*Not available*")
+
+        st.divider()
+
+        # 4. Grounding / guardrail status
         st.markdown("**Grounding / guardrail status**")
         is_grounded = raw_response.get("is_grounded")
         confidence = raw_response.get("confidence")

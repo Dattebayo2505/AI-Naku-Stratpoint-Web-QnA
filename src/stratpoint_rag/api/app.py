@@ -18,6 +18,7 @@ class ChatRequest(BaseModel):
     history: list[dict] | None = None
     session_id: str | None = None
     use_nemo: bool = True
+    enable_reasoning: bool = False
 
 
 @app.get("/health")
@@ -33,6 +34,7 @@ def chat(req: ChatRequest) -> AgentResult:
             history=req.history,
             session_id=req.session_id,
             use_nemo=req.use_nemo,
+            enable_reasoning=req.enable_reasoning,
         )
     except RuntimeError as ex:  # config problems (e.g. missing API key)
         raise HTTPException(status_code=503, detail=str(ex))

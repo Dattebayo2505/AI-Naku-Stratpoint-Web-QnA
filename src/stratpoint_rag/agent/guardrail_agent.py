@@ -134,6 +134,7 @@ def run_with_guardrails(
     session_id: str | None = None,
     guardrail_config: GuardrailConfig | None = None,
     use_nemo: bool = True,
+    enable_reasoning: bool = False,
 ) -> AgentResult:
     memory = _get_memory(session_id)
     config = guardrail_config or GuardrailConfig()
@@ -177,7 +178,9 @@ def run_with_guardrails(
         # (otherwise the hallucination check sees no source and blocks it).
         agent_tools.begin_capture()
         try:
-            result = run_agent(message, history=history, agent=agent)
+            result = run_agent(
+                message, history=history, agent=agent, enable_reasoning=enable_reasoning
+            )
             source_chunks = agent_tools.captured_chunks()
             grounded_list = agent_tools.captured_grounded()
         finally:
@@ -200,8 +203,9 @@ def run_with_guardrails(
             slugs = [m["slug"].replace("_", " ") for m in (got.get("metadatas") or [])]
             if slugs:
                 query = f"{message} {' '.join(slugs[:10])}"
-        raw, source_chunks, grounded = answer_grounded(query, k=8)
+        raw, source_chunks, grounded, reasoning = answer_grounded(query, k=8, enable_reasoning=enable_reasoning)
         result = AgentResult(answer=raw)
+        result.reasoning = reasoning
         if grounded is not None:
             result.citations = [
                 Link(title=c.title or "Stratpoint", url=c.url)

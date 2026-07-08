@@ -28,7 +28,13 @@ def main():
         if st.button("Reset conversation"):
             state.reset_conversation()
             st.rerun()
-            
+
+        enable_reasoning = st.toggle(
+            "Enable reasoning",
+            value=False,
+            help="Let the model think step-by-step before answering (slower, more thorough).",
+        )
+
         st.markdown("---")
         st.markdown("*Theme: edit `.streamlit/config.toml`*")
 
@@ -61,7 +67,8 @@ def main():
                     response_data = api_client.send_message(
                         session_id=st.session_state.session_id,
                         message=prompt,
-                        history=history
+                        history=history,
+                        enable_reasoning=enable_reasoning,
                     )
                     
                     answer = response_data.get("answer", "No answer provided.")

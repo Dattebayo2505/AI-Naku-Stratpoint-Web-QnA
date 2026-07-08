@@ -16,11 +16,12 @@ def health_check() -> bool:
     except requests.RequestException:
         return False
 
-def send_message(session_id: str, message: str, history: list[dict] = None) -> Dict[str, Any]:
+def send_message(session_id: str, message: str, history: list[dict] = None, enable_reasoning: bool = False) -> Dict[str, Any]:
     """Send a message to the chat API and return the parsed JSON response."""
     payload = {
         "message": message,
-        "session_id": session_id
+        "session_id": session_id,
+        "enable_reasoning": enable_reasoning,
     }
     if history is not None:
         payload["history"] = history

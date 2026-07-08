@@ -49,7 +49,7 @@ def test_find_resource_reports_when_none(monkeypatch):
 
 def test_search_stratpoint_delegates_to_rag_answer(monkeypatch):
     monkeypatch.setattr(
-        tools, "_rag_answer_grounded", lambda q: ("grounded answer for " + q, [], None)
+        tools, "_rag_answer_grounded", lambda q: ("grounded answer for " + q, [], None, None)
     )
     assert tools.search_stratpoint.invoke("services") == "grounded answer for services"
 
@@ -61,9 +61,9 @@ def test_search_stratpoint_records_chunks_and_grounded(monkeypatch):
 
     chunk = Chunk(id="1", slug="s", url="u", title="P", text="body", score=0.9)
     grounded = GroundedAnswer(
-        reasoning="r", answer="a", citations=[], is_grounded=True, confidence=0.8
+        answer="a", citations=[], is_grounded=True, confidence=0.8
     )
-    monkeypatch.setattr(tools, "_rag_answer_grounded", lambda q: ("a", [chunk], grounded))
+    monkeypatch.setattr(tools, "_rag_answer_grounded", lambda q: ("a", [chunk], grounded, None))
 
     tools.begin_capture()
     tools.search_stratpoint.invoke("x")
