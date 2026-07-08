@@ -10,6 +10,49 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-07-09 — Added a user-controlled "reasoning" mode and let the bot show its thinking
+
+**What we did**
+- Established that the chatbot's existing "reasoning" was only a prompting trick (the model was
+  asked to narrate its logic inside its answer, then that text was thrown away) — not the language
+  model's own native thinking. Set out to switch to the model's real reasoning and let users see it.
+- Brainstormed the feature and captured the agreed design in a spec
+  (`docs/superpowers/specs/2026-07-08-native-reasoning-toggle-design.md`), then turned it into a
+  step-by-step implementation plan (`docs/superpowers/plans/2026-07-08-native-reasoning-toggle.md`)
+  and built against it.
+- Ran a short live experiment against the hosted model to confirm how its reasoning actually behaves
+  before committing to the design (see decisions below).
+
+**Key decisions**
+- **Make reasoning a user choice, as an on/off "speed" switch.** Added an *Enable reasoning* toggle to
+  the chat interface: off gives faster, direct answers; on lets the model think step-by-step for more
+  thorough answers. Applies to both the plain-question path and the document-lookup path.
+- **Replace the old "pretend" reasoning with the model's real thinking.** Removed the discarded
+  narrated-reasoning field and its supporting prompt scaffolding, letting the model's native reasoning
+  take over that role.
+- **Surface the reasoning to the user.** The model's thinking now appears in the "under the hood"
+  debug panel and in the raw response, so it can be inspected or shown in a demo.
+- **A live finding shaped the design:** the model only returns its reasoning when *not* forced into
+  strict structured-output mode, so the reasoning path deliberately relaxes that constraint on the
+  plain-question path while keeping answers clean.
+- **Stop over-asking users to clarify.** A specific request — e.g. *"Do you have a document for
+  Stratpoint's quality assurance?"* — was being met with "What would you like to know?" instead of the
+  document, because the topic wasn't on a hardcoded list. Decided that clear questions and explicit
+  document requests should always go straight to an answer; only genuinely vague input asks for
+  clarification.
+
+**What we produced**
+- A user-facing reasoning toggle end-to-end (chat UI → service → both answer paths), verified live:
+  reasoning shows when enabled and is absent when off.
+- A fix that makes document requests return the actual file — the quality-assurance query now returns
+  Stratpoint's QA one-pager PDF instead of a clarification prompt.
+
+**Open / to decide**
+- The reasoning toggle was verified through the service directly; a final click-through of the chat UI
+  itself is still pending.
+- The chatbot recognizes topics from a fixed hardcoded list, which is inherently brittle; worth
+  revisiting if we want richer topic-aware routing later.
+
 ## 2026-07-08 — Hardened chatbot reliability: stopped good answers being wrongly safety-blocked, and recovered documents that existed but couldn't be found
 
 **What we did**
