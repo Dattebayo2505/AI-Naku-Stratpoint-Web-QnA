@@ -31,6 +31,17 @@ CASES = [
         "WEF_The_Global_Risks_Report_2024.pdf",
         id="wef-robust-infrastructure",
     ),
+    pytest.param(
+        # Short query matching a PDF link *anchor* buried in an off-topic
+        # (financial-inclusion) chunk. Failed two ways before B+C: the true-NN
+        # chunk was missed by HNSW at k=10, and the link was split across a chunk
+        # boundary so its .pdf was unextractable.
+        "mobile phone usage patterns",
+        "2025__03__14__enhancing-financial-inclusion-how-data-analytics-bridges-the-gap",
+        "mobile phone usage patterns",
+        "Behavior-Revealed-in-Mobile-Phone-Usage-Predicts-Credit-Repayment.pdf",
+        id="mobile-phone-usage-anchor",
+    ),
 ]
 
 
@@ -44,3 +55,13 @@ def test_near_verbatim_fact_is_retrieved(query, slug, needle, pdf_fragment):
     # retrieving the page but not the fact-bearing chunk was the original failure.
     assert any(needle in h.text for h in hits), f"needle {needle!r} not in retrieved chunks"
     assert any(pdf_fragment in h.text for h in hits), f"doc link {pdf_fragment!r} not retrieved"
+
+
+@pytest.mark.integration
+def test_find_resource_surfaces_anchor_matched_pdf():
+    """End-to-end seam: the user-facing tool must return the World Bank PDF for a
+    query that matches only the link's anchor text (the reported failure)."""
+    from stratpoint_rag.agent.tools import find_resource
+
+    out = find_resource.invoke("mobile phone usage patterns")
+    assert "Behavior-Revealed-in-Mobile-Phone-Usage-Predicts-Credit-Repayment.pdf" in out

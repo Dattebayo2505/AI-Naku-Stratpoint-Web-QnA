@@ -10,6 +10,18 @@ from __future__ import annotations
 from . import config
 from .models import Chunk
 
+# High-recall HNSW settings. The 1.x defaults (max_neighbors=16, ef_*=100) left
+# the *true* nearest neighbour unreachable at small k — a chunk that ranked #0 at
+# k=200 was absent entirely at k=10/50, silently dropping the best chunk for many
+# queries. max_neighbors (graph connectivity) and ef_construction are BUILD-time,
+# so applying this needs a fresh index: delete chroma_db/ then re-ingest --force.
+_HNSW_CONFIG = {
+    "space": "cosine",
+    "max_neighbors": 32,      # M — was 16; the key connectivity fix
+    "ef_construction": 200,   # was 100 — better graph quality at build time
+    "ef_search": 200,         # was 100 — wider query-time search
+}
+
 
 class VectorStore:
     def __init__(self, path: str | None = None, name: str | None = None):
@@ -18,7 +30,7 @@ class VectorStore:
         self.client = chromadb.PersistentClient(path=path or config.chroma_dir())
         self.col = self.client.get_or_create_collection(
             name=name or config.collection_name(),
-            metadata={"hnsw:space": "cosine"},
+            configuration={"hnsw": _HNSW_CONFIG},
         )
 
     def stored_hash(self, slug: str) -> str | None:

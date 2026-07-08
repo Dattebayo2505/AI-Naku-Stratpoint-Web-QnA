@@ -14,10 +14,52 @@ Keep chunks small enough that one fact stays a meaningful share of its chunk.
 
 from __future__ import annotations
 
+import re
+
 from .models import Chunk
 
 CHARS_PER_CHUNK = 800  # ~220 tokens — small enough to avoid single-fact dilution
 OVERLAP = 150  # ~40 tokens
+
+# Markdown links must never be split across a chunk boundary: a chopped
+# `[anchor](https://…` or a chunk that starts mid-URL yields an unextractable
+# link, so find_resource silently loses the document. Snap hard-split boundaries
+# out of any link span so each link lands wholly inside one chunk.
+_LINK_SPAN = re.compile(r"\[[^\]]*\]\([^)]*\)")
+
+
+def _snap_out_of_link(idx: int, spans: list[tuple[int, int]]) -> int:
+    """If idx falls strictly inside a link span, move it to that span's start so
+    the whole link is pushed into the next chunk. Boundaries at a span edge are
+    already safe and returned unchanged."""
+    for start, end in spans:
+        if start < idx < end:
+            return start
+    return idx
+
+
+def _hard_split(p: str, size: int, overlap: int) -> list[str]:
+    """Sliding-window split of one oversized paragraph, never cutting a link."""
+    spans = [(m.start(), m.end()) for m in _LINK_SPAN.finditer(p)]
+    out: list[str] = []
+    n = len(p)
+    i = 0
+    while i < n:
+        end = min(i + size, n)
+        if end < n:
+            snapped = _snap_out_of_link(end, spans)
+            # Only accept the snap if it still makes forward progress; a link
+            # longer than `size` starting at i can't be avoided, so keep the
+            # full window and let that one chunk carry the oversized link.
+            if snapped > i:
+                end = snapped
+        out.append(p[i:end])
+        if end >= n:
+            break
+        nxt = max(i + 1, end - overlap)
+        nxt = _snap_out_of_link(nxt, spans)
+        i = nxt if nxt > i else end
+    return out
 
 
 def split_text(text: str, size: int = CHARS_PER_CHUNK, overlap: int = OVERLAP) -> list[str]:
@@ -29,9 +71,7 @@ def split_text(text: str, size: int = CHARS_PER_CHUNK, overlap: int = OVERLAP) -
             if cur:
                 chunks.append(cur)
                 cur = ""
-            step = max(1, size - overlap)
-            for i in range(0, len(p), step):
-                chunks.append(p[i : i + size])
+            chunks.extend(_hard_split(p, size, overlap))
             continue
         if not cur:
             cur = p
