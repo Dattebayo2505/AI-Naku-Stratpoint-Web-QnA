@@ -1,5 +1,16 @@
+import pytest
+
 from stratpoint_rag.agent import tools
 from stratpoint_rag.rag.models import Chunk
+
+
+@pytest.fixture(autouse=True)
+def _reset_capture():
+    """ContextVars persist across tests in the shared context; reset the capture
+    sinks around each test so recording state doesn't leak between them."""
+    tools.end_capture()
+    yield
+    tools.end_capture()
 
 
 def test_extract_doc_links_finds_pdf_and_strips_markdown():
@@ -37,8 +48,49 @@ def test_find_resource_reports_when_none(monkeypatch):
 
 
 def test_search_stratpoint_delegates_to_rag_answer(monkeypatch):
-    monkeypatch.setattr(tools, "_rag_answer", lambda q: ("grounded answer for " + q, []))
+    monkeypatch.setattr(
+        tools, "_rag_answer_grounded", lambda q: ("grounded answer for " + q, [], None)
+    )
     assert tools.search_stratpoint.invoke("services") == "grounded answer for services"
+
+
+def test_search_stratpoint_records_chunks_and_grounded(monkeypatch):
+    """Fix B/C: the search tool surfaces its chunks + grounded metadata to the
+    capture sink so the guardrail layer can verify the agent's answer."""
+    from stratpoint_rag.prompts.schema import GroundedAnswer
+
+    chunk = Chunk(id="1", slug="s", url="u", title="P", text="body", score=0.9)
+    grounded = GroundedAnswer(
+        reasoning="r", answer="a", citations=[], is_grounded=True, confidence=0.8
+    )
+    monkeypatch.setattr(tools, "_rag_answer_grounded", lambda q: ("a", [chunk], grounded))
+
+    tools.begin_capture()
+    tools.search_stratpoint.invoke("x")
+    assert tools.captured_chunks() == [chunk]
+    assert tools.captured_grounded() == [grounded]
+
+
+def test_find_resource_records_chunks(monkeypatch):
+    """Fix B: find_resource surfaces its retrieved chunks to the capture sink."""
+    chunk = Chunk(
+        id="1", slug="s", url="https://stratpoint.com/p", title="P",
+        text="[x](https://s.com/f.pdf)", score=0.9,
+    )
+    monkeypatch.setattr(tools, "_retrieve", lambda topic, k=5: [chunk])
+
+    tools.begin_capture()
+    tools.find_resource.invoke("cloud")
+    assert tools.captured_chunks() == [chunk]
+
+
+def test_capture_is_noop_without_begin(monkeypatch):
+    """Recording is inert when begin_capture() was never called (direct calls)."""
+    chunk = Chunk(id="1", slug="s", url="u", title="P", text="no links", score=0.1)
+    monkeypatch.setattr(tools, "_retrieve", lambda topic, k=5: [chunk])
+    # No begin_capture() here.
+    tools.find_resource.invoke("cloud")
+    assert tools.captured_chunks() == []
 
 
 def test_find_resource_uses_higher_recall_k(monkeypatch):

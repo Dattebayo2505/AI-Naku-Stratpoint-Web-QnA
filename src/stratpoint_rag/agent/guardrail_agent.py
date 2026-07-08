@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 
+from stratpoint_rag.agent import tools as agent_tools
 from stratpoint_rag.agent.agent import AgentResult, Link, run_agent
 from stratpoint_rag.disambiguation.router import route
 from stratpoint_rag.disambiguation.schemas import IntentCategory
@@ -171,7 +172,25 @@ def run_with_guardrails(
     # ── Answer ────────────────────────────────────────────────────────
     source_chunks: list = []
     if _wants_resource(message):
-        result = run_agent(message, history=history, agent=agent)
+        # The ReAct agent grounds inside its tools; capture the chunks it
+        # retrieves so the output guardrails can actually verify the answer
+        # (otherwise the hallucination check sees no source and blocks it).
+        agent_tools.begin_capture()
+        try:
+            result = run_agent(message, history=history, agent=agent)
+            source_chunks = agent_tools.captured_chunks()
+            grounded_list = agent_tools.captured_grounded()
+        finally:
+            agent_tools.end_capture()
+        if grounded_list:
+            # Conservative: report the least-confident grounded result across
+            # any search_stratpoint calls this turn.
+            g = min(
+                grounded_list,
+                key=lambda x: (x.confidence if x.confidence is not None else 1.0),
+            )
+            result.is_grounded = g.is_grounded
+            result.confidence = g.confidence
     else:
         query = message
         if route_result.slots and route_result.slots.get("topic") == "Contact / Location" and route_result.matched_keyword:

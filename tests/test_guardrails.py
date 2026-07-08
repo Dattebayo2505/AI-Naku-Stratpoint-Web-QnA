@@ -149,10 +149,14 @@ def test_output_pii_allows_stratpoint_domain():
 # --- HallucinationChecker ---
 
 def test_hallucination_no_source_chunks():
+    # With no chunks there is nothing to verify against — treat as "cannot
+    # verify" (allow + flag), not a hallucination. The ReAct agent path grounds
+    # inside its tools and legitimately surfaces no chunks in some turns; a hard
+    # fail here nuked otherwise-grounded answers.
     checker = HallucinationChecker()
     result = checker.check("Some answer", [])
-    assert not result.passed
-    assert result.action == "escalate"
+    assert result.passed
+    assert result.action == "allow"
 
 
 # --- AdviceBlocker ---

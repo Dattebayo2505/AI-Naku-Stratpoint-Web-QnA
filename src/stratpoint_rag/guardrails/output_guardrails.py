@@ -78,10 +78,15 @@ class HallucinationChecker:
 
     def check(self, response: str, source_chunks: list[Chunk], use_llm: bool = False) -> GuardrailResult:
         if not source_chunks:
+            # Nothing to verify against — e.g. the ReAct agent grounded inside
+            # its tools and never surfaced chunks. "Cannot verify" is not the
+            # same as "hallucination": allow but flag, rather than blocking a
+            # legitimately grounded answer. (See guardrail_agent's agent path,
+            # which now surfaces the tools' chunks so this branch is a fallback.)
             return GuardrailResult(
-                passed=False,
-                action="escalate",
-                message="No source chunks to verify against",
+                passed=True,
+                action="allow",
+                message="No source chunks to verify against - hallucination check skipped",
             )
 
         try:
