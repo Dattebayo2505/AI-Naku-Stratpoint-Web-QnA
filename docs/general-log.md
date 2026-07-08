@@ -10,6 +10,48 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-07-08 — Hardened chatbot reliability: stopped good answers being wrongly safety-blocked, and recovered documents that existed but couldn't be found
+
+**What we did**
+- Investigated a failure where the bot replied *"I generated a response, but it failed safety
+  checks"* and refused document/resource requests **even though it had actually produced a correct,
+  well-sourced answer**. Traced it to the resource-handling path not passing its own sources to the
+  safety checks, so the grounding check had nothing to verify against and discarded the answer.
+- Investigated a second failure where the bot said a document wasn't available **when it existed in
+  the site corpus** — reproduced with a World Bank report on "mobile phone usage patterns" that the
+  bot repeatedly failed to surface — and traced it to two separate weaknesses in how the site is
+  searched and split into passages.
+
+**Key decisions**
+- **Verify answers against the bot's own sources, and never discard an answer just because there's
+  nothing to check.** The safety layer now treats "no sources to verify against" as "can't verify"
+  (allow, and flag) rather than an automatic failure — so a correct, grounded answer is no longer
+  thrown away on document/resource requests.
+- **Retune the site search for high recall.** Diagnosis showed the search was silently missing the
+  single most-relevant passage for many questions; the search index was rebuilt with settings that
+  reliably surface the best passage.
+- **Never split a document link across a passage boundary.** Links to downloadable reports were
+  sometimes cut in half when a page was chunked, making them unusable; passage-splitting now keeps
+  each link intact.
+
+**What we produced**
+- A more reliable chatbot: document/resource requests now return their grounded answer instead of a
+  safety refusal, and the answer's sources and grounding status also flow through to the
+  "under the hood" debug panel on that path.
+- A verified retrieval recovery: the previously-missing World Bank "mobile phone usage patterns"
+  report now surfaces on request. The search index was **rebuilt once** with the improved settings,
+  so it is demo-ready.
+- Expanded the retrieval "answer-quality" regression set with this newly-fixed case, building on the
+  seed started on 2026-07-07.
+
+**Open / to decide**
+- Still unresolved from 2026-07-07: whether the ReAct agent should handle **all** questions or only
+  resource requests — the two reliability fixes touch that path but didn't settle the question.
+- These reliability fixes plus the earlier guardrail-integration work still need to be folded into
+  the main line of work — decide how and when to integrate.
+- A fuller "answer-quality" evaluation set (now seeded with several fixed cases) would catch future
+  search regressions automatically — decide whether to build it out.
+
 ## 2026-07-07 — Connected the chatbot's parts, added in-chat file downloads, and fixed a corpus-retrieval gap
 
 **What we did**
