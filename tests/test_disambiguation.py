@@ -90,6 +90,23 @@ def test_router_clarification_for_vague():
     assert not result.should_retrieve
 
 
+def test_router_specific_question_without_topic_pattern_proceeds():
+    """Regression: a specific question whose topic isn't in the hardcoded
+    _TOPIC_PATTERNS must proceed to retrieval, not bounce to clarification.
+    (Reported: 'Do you have a document for Stratpoint's quality assurance?')"""
+    result = route("Do you have a document for Stratpoint's quality assurance?")
+    assert result.intent == IntentCategory.ASK_STRATPOINT
+    assert result.should_retrieve
+    assert result.clarification_question is None
+
+
+def test_router_resource_request_without_topic_pattern_proceeds():
+    """An imperative resource request must also proceed to retrieval."""
+    result = route("Send me the Stratpoint quality assurance one-pager")
+    assert result.should_retrieve
+    assert result.clarification_question is None
+
+
 def test_router_with_session_memory():
     mem = ConversationMemory(session_id="test")
     mem.add_turn("user", "What is OutSystems?")

@@ -22,6 +22,23 @@ _DEFAULT_CLARIFY = "I'm not sure I understand. Could you tell me what you'd like
 
 _QUESTION_PATTERN = re.compile(r"^(what|how|why|when|where|which|who|does|do|is|are|can|could|would)", re.IGNORECASE)
 
+# A substantive ask: a question, or an explicit request (esp. for a resource).
+# When present, a missing hardcoded-topic slot must NOT force a clarification —
+# the query is specific enough; let retrieval (RAG / find_resource) handle it.
+_REQUEST_PATTERN = re.compile(
+    r"\b(document|pdf|one[- ]?pager|whitepaper|white\s*paper|brochure|guide|ebook|"
+    r"download|resource|report|send|share)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_specific_ask(user_input: str) -> bool:
+    return (
+        "?" in user_input
+        or bool(_QUESTION_PATTERN.search(user_input))
+        or bool(_REQUEST_PATTERN.search(user_input))
+    )
+
 
 def route(
     user_input: str,
@@ -85,7 +102,13 @@ def route(
 
     slot_query = extract_slots(user_input, intent_query.intent)
 
-    if slot_query.missing_slots:
+    # Only clarify on a missing required slot when the input is genuinely vague.
+    # A specific question or resource request must proceed to retrieval even if
+    # its topic isn't in the hardcoded pattern list (regression: a QA-document
+    # request was bounced to clarification because "quality assurance" had no
+    # topic pattern). Truly vague input is already caught upstream as
+    # NEEDS_CLARIFICATION before reaching here.
+    if slot_query.missing_slots and not _is_specific_ask(user_input):
         loop = ClarificationLoop(
             intent=intent_query.intent,
             missing_slots=slot_query.missing_slots,
