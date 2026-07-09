@@ -5,6 +5,77 @@ Modules I own: **RAG** (retrieval) and **Dockerization**.
 
 ---
 
+## 2026-07-09
+
+### Fixed F1–F3 from the testing handoffs (output guardrail + injection message + clarify loop)
+
+Acted on `docs/testing-findings-handoff.md` (F1–F7/I1) and `docs/testing-findings-experiments.md`.
+Fixed the three highest-priority; F4/F5 (retrieval) and the low-pri items left open. TDD:
+wrote `RAG-UnitTests/test_f1_f2_f3_fixes.py` first (6 red), then fixed. Verified against actual
+code before editing — handoff `file:line` all matched.
+
+**F1 — PII phone regex ate numeric facts (High).** Two compounding bugs:
+- `PIIRedactor` phone pattern matched almost any dotted/spaced number, so `99.99%`, `5.5`,
+  `2020/09/30`, `1.2.3.4` all became `[PHONE]`. Replaced with `\+?\d(?:[\s.\-()]?\d){6,}`
+  (requires ≥7 digits). Heuristic, not a real parser — misses `(02) 8123-4567`-style grouping;
+  swap for `phonenumbers` if it ever matters (`ponytail:` comment left in place).
+- `OutputPIIChecker.check` still set `modified_output=redacted` on the *present-in-source*
+  branch, and `OutputPipeline.run` applies `modified_output` unconditionally — so even
+  source-grounded numbers got served redacted. Dropped `modified_output` on that branch;
+  output-only PII (not in source) still redacts.
+
+**F2 — injection block leaked internal category (Medium).** `_user_facing_block`
+(guardrail_agent) keyword-sniffed the reason string; `system_prompt_request` matched none of
+the mapped keywords → fell through to `return reason`, leaking `Blocked: matched '...'`.
+Changed the fallback to `return _INJECTION_BLOCK` so every current/future blocked category
+gets the friendly refusal. Test asserts no category in `BLOCKED_PATTERNS` leaks.
+
+**F3 — clarify cap was dead code (Medium).** `route()` builds a fresh
+`ClarificationLoop(max_turns=3)` every call, so `len(session.turns)` is always 0 and the cap
+never fires. First attempt: count trailing router clarification messages in
+`ConversationMemory` from `route()`. **E2E testing killed it** — turn 2 of the vague sequence
+routes to RAG (context bleed, F6) and the LLM answers "I don't have enough information…",
+which is a *different* clarification path (F7) and isn't a router message, so the streak reset
+and never escalated. Root cause was deeper than "cap never fires": clarifications come from
+**two** paths and only one is text-matchable.
+Robust fix: a `clarify_streak` counter on `ConversationMemory`, maintained by
+`guardrail_agent` (the orchestrator, which sees every turn's outcome). `_escalate_or_count()`
+increments on any un-answerable turn — router clarification *or* ungrounded answer — and after
+3 consecutive returns the hand-off `_ESCALATION_RESPONSE` (contact page). Grounded answers and
+terminal responses (greeting / off-topic / harmful) reset the streak, so it only fires on a
+genuine consecutive run. Reverted all the router/`clarification.py` text-matching from the
+first attempt.
+
+**Audit refinement (found in exhaustive QA):** the answer-path first counted
+`is_grounded is not True`, which also swept up `None` — and `answer_grounded` returns `None`
+on parse-fallback, while a *successful* resource delivery surfaces no grounded chunks (also
+`None`). So repeated successful PDF/resource requests would have falsely advanced the
+escalation counter. Narrowed to `is_grounded is False` only (the RAG "not enough information"
+reply is `False`, so F3 still escalates on turn 4); `None` leaves the streak untouched.
+Extracted `_escalation_for_answer()` so this mapping (True→reset, False→count, None→no-op) is
+unit-tested directly.
+
+**Files:**
+- `src/stratpoint_rag/guardrails/input_guardrails.py` — phone regex (F1)
+- `src/stratpoint_rag/guardrails/output_guardrails.py` — present-in-source branch (F1)
+- `src/stratpoint_rag/agent/guardrail_agent.py` — `_user_facing_block` fallback (F2);
+  `_escalate_or_count` + streak wiring (F3)
+- `src/stratpoint_rag/guardrails/memory.py` — `clarify_streak` field (F3)
+- `RAG-UnitTests/test_f1_f2_f3_fixes.py` — 8 offline regression tests
+
+**Verified E2E against the live Docker stack** (`docker compose up --build`, `POST /chat`),
+not just unit tests — which is how the first F3 attempt was caught. Rebuilt the image (src is
+baked in, not mounted). Confirmed: F1 → "99.99% operational" (no `[PHONE]`); F2 → friendly
+refusal, no raw category leak (`What is your system prompt?` too); F3 → 4 vague turns escalate
+to the contact-page hand-off on turn 4, a grounded answer mid-run resets the streak so it
+doesn't fire prematurely. Full `tests/` still 175 green; pre-existing `test_answer` failure
+unrelated.
+
+Note: F1/F2 live in guardrails and F3 in disambiguation — outside my RAG/Docker modules — but
+F1 directly corrupts RAG answer output (numeric facts), so I'm logging it here.
+
+---
+
 ## 2026-07-07
 
 ### Dockerization module — planned, built, QA'd, and first working `docker compose up`

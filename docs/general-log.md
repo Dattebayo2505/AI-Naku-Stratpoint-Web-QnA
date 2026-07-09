@@ -53,6 +53,37 @@ refreshes the newest entry below.
 - The chatbot recognizes topics from a fixed hardcoded list, which is inherently brittle; worth
   revisiting if we want richer topic-aware routing later.
 
+---
+
+## 2026-07-09 — Acted on the testing handoffs: remediated the top-priority safety and UX defects
+
+**What we did**
+- Reviewed two testing handoffs and prioritised their findings, then remediated the three
+  highest-impact defects (`docs/testing-findings-handoff.md`,
+  `docs/testing-findings-experiments.md`).
+
+**Key decisions**
+- **PII redaction must never destroy legitimate facts.** Uptime figures (99.99%), version
+  numbers, and dates inside citation links were being rewritten to "[PHONE]". Decided the
+  output safety layer should preserve any number that genuinely appears in Stratpoint's own
+  pages, and only treat phone-shaped numbers as personal data.
+- **A blocked request must always get a friendly, on-brand refusal** — never an internal
+  system label. (A prompt-injection attempt had been surfacing a raw internal category
+  string to the user.)
+- **Persistent vagueness should end in a graceful hand-off**, pointing the user to the
+  contact page, rather than the bot repeating the same clarifying question indefinitely.
+
+**What we produced**
+- A regression test suite locking in all three fixes
+  (`RAG-UnitTests/test_f1_f2_f3_fixes.py`).
+
+**Open / to decide**
+- Still-open handoff items: retrieval cases where a fact-bearing page loses to a
+  near-duplicate sibling, or the exact fact-bearing sentence falls outside the retrieved
+  passages; plus lower-priority disambiguation wording and crawler-noise cleanups.
+
+---
+
 ## 2026-07-08 — Hardened chatbot reliability: stopped good answers being wrongly safety-blocked, and recovered documents that existed but couldn't be found
 
 **What we did**
