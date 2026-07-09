@@ -54,46 +54,56 @@ def main():
         with st.chat_message("user", avatar=os.path.join(ui_dir, "user_avatar.svg")):
             st.markdown(prompt)
             
-        # Call the API
+        # Call the API (streaming: live preview -> guardrail-safe final)
         with st.chat_message("assistant", avatar=os.path.join(ui_dir, "bot_avatar.svg")):
-            with st.spinner("Thinking..."):
-                try:
-                    # Construct history for the API (only user/assistant roles, exclude the current prompt)
-                    history = [
-                        {"role": m["role"], "content": m["content"]}
-                        for m in st.session_state.messages[:-1]
-                    ]
-                    
-                    response_data = api_client.send_message(
+            try:
+                history = [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in st.session_state.messages[:-1]
+                ]
+
+                placeholder = st.empty()
+                preview = ""
+                done_event: dict = {}
+
+                with st.spinner("Thinking..."):
+                    for event in api_client.stream_message(
                         session_id=st.session_state.session_id,
                         message=prompt,
                         history=history,
-                        enable_reasoning=enable_reasoning,
-                    )
-                    
-                    answer = response_data.get("answer", "No answer provided.")
-                    st.markdown(answer)
+                    ):
+                        etype = event.get("type")
+                        if etype == "delta":
+                            preview += event.get("text", "")
+                            placeholder.markdown(preview + "▌")  # cursor while typing
+                        elif etype == "done":
+                            done_event = event
+                        elif etype == "error":
+                            raise api_client.APIError(event.get("detail", "stream error"))
 
-                    # Download controls (top result eager, rest lazy). The
-                    # assistant message is appended just below, so its index
-                    # will be the current messages length.
-                    resource_downloads.render(
-                        response_data,
-                        key_prefix=f"msg{len(st.session_state.messages)}",
-                    )
+                # done.answer is authoritative — output guardrails may have
+                # redacted/blocked the streamed preview, so overwrite with it.
+                answer = done_event.get("answer") or preview or "No answer provided."
+                placeholder.markdown(answer)
 
-                    # Render the debug panel immediately
-                    debug_panel.render(response_data)
-                    
-                    # Append assistant response to state
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": answer,
-                        "raw_response": response_data
-                    })
-                    
-                except api_client.APIError as e:
-                    st.error(str(e))
+                response_data = dict(done_event)
+                response_data.pop("type", None)
+                response_data["answer"] = answer
+
+                resource_downloads.render(
+                    response_data,
+                    key_prefix=f"msg{len(st.session_state.messages)}",
+                )
+                debug_panel.render(response_data)
+
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "raw_response": response_data
+                })
+
+            except api_client.APIError as e:
+                st.error(str(e))
 
 if __name__ == "__main__":
     main()

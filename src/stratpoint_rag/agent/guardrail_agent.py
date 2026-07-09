@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
+from stratpoint_rag._timing import log_total, timed
 from stratpoint_rag.agent import tools as agent_tools
 from stratpoint_rag.agent.agent import AgentResult, Link, run_agent
 from stratpoint_rag.disambiguation.router import route
@@ -10,7 +12,7 @@ from stratpoint_rag.disambiguation.schemas import IntentCategory
 from stratpoint_rag.guardrails.memory import ConversationMemory
 from stratpoint_rag.guardrails.pipeline import GuardrailPipeline
 from stratpoint_rag.guardrails.schemas import GuardrailConfig
-from stratpoint_rag.rag.answer import answer_grounded
+from stratpoint_rag.rag.answer import answer_grounded, answer_grounded_stream
 
 log = logging.getLogger(__name__)
 
@@ -186,70 +188,228 @@ def run_with_guardrails(
 ) -> AgentResult:
     memory = _get_memory(session_id)
     config = guardrail_config or GuardrailConfig()
+    stages: dict[str, float] = {}
+    t_start = time.perf_counter()
+    try:
+        # ── Input guardrails (built-in keyword/PII → NeMo) ────────────────
+        with timed("input_guardrails", stages):
+            processed_input, block_reason = _run_input_guardrails(message, config, use_nemo)
+        if block_reason:
+            log.info("Input blocked: %s", block_reason)
+            memory.add_turn("user", message)
+            memory.add_turn("assistant", _user_facing_block(block_reason))
+            return AgentResult(answer=_user_facing_block(block_reason), guardrail_reason=block_reason)
 
-    # ── Input guardrails (built-in keyword/PII → NeMo) ────────────────
+        # ── Disambiguation ────────────────────────────────────────────────
+        with timed("disambiguation", stages):
+            route_result = route(processed_input, session_memory=memory)
+
+        if route_result.intent in (IntentCategory.HARMFUL, IntentCategory.OFF_TOPIC):
+            reason = route_result.rejection_reason or "I can't process that request."
+            memory.clarify_streak = 0  # definitive response, not persistent vagueness
+            memory.add_turn("user", message)
+            memory.add_turn("assistant", reason)
+            return AgentResult(answer=reason, guardrail_reason=reason)
+
+        if route_result.intent == IntentCategory.GREETING:
+            reply = route_result.rejection_reason or ""
+            memory.clarify_streak = 0
+            memory.add_turn("user", message)
+            memory.add_turn("assistant", reply)
+            return AgentResult(answer=reply, guardrail_reason="Greeting detected")
+
+        if route_result.clarification_question:
+            # Persistent vagueness → hand off instead of asking the same thing again.
+            if _escalate_or_count(memory):
+                answer = _ESCALATION_RESPONSE
+            else:
+                answer = route_result.clarification_question
+            memory.add_turn("user", message)
+            memory.add_turn("assistant", answer)
+            return AgentResult(
+                answer=answer,
+                guardrail_reason=f"Needed clarification: {route_result.intent.value}",
+            )
+
+        # ── Answer ────────────────────────────────────────────────────────
+        source_chunks: list = []
+        with timed("answer", stages):
+            if _wants_resource(message):
+                # The ReAct agent grounds inside its tools; capture the chunks it
+                # retrieves so the output guardrails can actually verify the answer
+                # (otherwise the hallucination check sees no source and blocks it).
+                agent_tools.begin_capture()
+                try:
+                    result = run_agent(
+                        message, history=history, agent=agent, enable_reasoning=enable_reasoning
+                    )
+                    source_chunks = agent_tools.captured_chunks()
+                    grounded_list = agent_tools.captured_grounded()
+                finally:
+                    agent_tools.end_capture()
+                if grounded_list:
+                    # Conservative: report the least-confident grounded result across
+                    # any search_stratpoint calls this turn.
+                    g = min(
+                        grounded_list,
+                        key=lambda x: (x.confidence if x.confidence is not None else 1.0),
+                    )
+                    result.is_grounded = g.is_grounded
+                    result.confidence = g.confidence
+            else:
+                query = message
+                if route_result.slots and route_result.slots.get("topic") == "Contact / Location" and route_result.matched_keyword:
+                    from stratpoint_rag.rag.store import VectorStore
+                    store = VectorStore()
+                    got = store.col.get(where_document={"$contains": "office"}, include=["metadatas"])
+                    slugs = [m["slug"].replace("_", " ") for m in (got.get("metadatas") or [])]
+                    if slugs:
+                        query = f"{message} {' '.join(slugs[:10])}"
+                raw, source_chunks, grounded, reasoning = answer_grounded(query, k=8, enable_reasoning=enable_reasoning)
+                result = AgentResult(answer=raw)
+                result.reasoning = reasoning
+                if grounded is not None:
+                    result.citations = [
+                        Link(title=c.title or "Stratpoint", url=c.url)
+                        for c in grounded.citations
+                    ]
+                    result.is_grounded = grounded.is_grounded
+                    result.confidence = grounded.confidence
+
+        # ── Output guardrails (built-in → NeMo) ──────────────────────────
+        with timed("output_guardrails", stages):
+            safe_text, out_block = _run_output_guardrails(result.answer, source_chunks, config, use_nemo)
+        if out_block:
+            log.warning("Output blocked: %s", out_block)
+            if config.mode == "fail_closed":
+                result.answer = (
+                    "I generated a response, but it failed safety checks. "
+                    "Please rephrase your question or contact our team for assistance."
+                )
+                result.guardrail_reason = out_block
+                return result
+        elif safe_text != result.answer:
+            result.answer = safe_text
+
+        # A grounded answer resets the streak; an explicit "not enough information"
+        # (is_grounded False, incl. the RAG LLM's own reply) counts, and once
+        # persistent is replaced by the hand-off — matching the clarification path.
+        escalation = _escalation_for_answer(memory, result.is_grounded)
+        if escalation:
+            result.answer = escalation
+
+        memory.add_turn("user", message)
+        memory.add_turn("assistant", result.answer)
+
+        return result
+    finally:
+        log_total(stages, (time.perf_counter() - t_start) * 1000)
+
+
+# ── Streaming variant (SSE) ─────────────────────────────────────────────────
+
+def _links_payload(links: list[Link]) -> list[dict]:
+    return [{"title": l.title, "url": l.url} for l in links]
+
+
+def stream_with_guardrails(
+    message: str,
+    history: list[dict] | None = None,
+    *,
+    agent=None,
+    session_id: str | None = None,
+    guardrail_config: GuardrailConfig | None = None,
+    use_nemo: bool = True,
+):
+    """Event-generator twin of run_with_guardrails for SSE.
+
+    Yields dict events:
+      {"type": "status", "stage": "composing"|"searching"}   — progress hint
+      {"type": "delta",  "text": "..."}                       — answer-text delta
+      {"type": "done",   "answer","citations","resources",
+                         "is_grounded","confidence","guardrail_reason"}
+
+    IMPORTANT (safety): the streamed deltas are a PREVIEW of the raw LLM answer.
+    Output guardrails run on the *complete* text afterward, and the terminal
+    "done" event carries the authoritative, guardrail-safe answer. When a rail
+    redacts/blocks, done.answer differs from the streamed preview and the client
+    must replace what it showed. The direct RAG path token-streams; the ReAct
+    (resource) path can't (multi-call) and is emitted as one delta before done.
+    """
+    memory = _get_memory(session_id)
+    config = guardrail_config or GuardrailConfig()
+
+    def _done(answer, *, citations=None, resources=None, is_grounded=None,
+              confidence=None, guardrail_reason=None) -> dict:
+        memory.add_turn("user", message)
+        memory.add_turn("assistant", answer)
+        return {
+            "type": "done",
+            "answer": answer,
+            "citations": _links_payload(citations or []),
+            "resources": _links_payload(resources or []),
+            "is_grounded": is_grounded,
+            "confidence": confidence,
+            "guardrail_reason": guardrail_reason,
+        }
+
+    # ── Input guardrails ──────────────────────────────────────────────
     processed_input, block_reason = _run_input_guardrails(message, config, use_nemo)
     if block_reason:
-        log.info("Input blocked: %s", block_reason)
-        memory.add_turn("user", message)
-        memory.add_turn("assistant", _user_facing_block(block_reason))
-        return AgentResult(answer=_user_facing_block(block_reason), guardrail_reason=block_reason)
+        log.info("Input blocked (stream): %s", block_reason)
+        yield _done(_user_facing_block(block_reason), guardrail_reason=block_reason)
+        return
 
     # ── Disambiguation ────────────────────────────────────────────────
     route_result = route(processed_input, session_memory=memory)
-
     if route_result.intent in (IntentCategory.HARMFUL, IntentCategory.OFF_TOPIC):
         reason = route_result.rejection_reason or "I can't process that request."
         memory.clarify_streak = 0  # definitive response, not persistent vagueness
-        memory.add_turn("user", message)
-        memory.add_turn("assistant", reason)
-        return AgentResult(answer=reason, guardrail_reason=reason)
-
+        yield _done(reason, guardrail_reason=reason)
+        return
     if route_result.intent == IntentCategory.GREETING:
-        reply = route_result.rejection_reason or ""
         memory.clarify_streak = 0
-        memory.add_turn("user", message)
-        memory.add_turn("assistant", reply)
-        return AgentResult(answer=reply, guardrail_reason="Greeting detected")
-
+        yield _done(route_result.rejection_reason or "", guardrail_reason="Greeting detected")
+        return
     if route_result.clarification_question:
-        # Persistent vagueness → hand off instead of asking the same thing again.
-        if _escalate_or_count(memory):
-            answer = _ESCALATION_RESPONSE
-        else:
-            answer = route_result.clarification_question
-        memory.add_turn("user", message)
-        memory.add_turn("assistant", answer)
-        return AgentResult(
-            answer=answer,
+        # Persistent vagueness → hand off instead of asking the same thing again
+        # (parity with run_with_guardrails; the streaming UI is now the only path).
+        answer = _ESCALATION_RESPONSE if _escalate_or_count(memory) else route_result.clarification_question
+        yield _done(
+            answer,
             guardrail_reason=f"Needed clarification: {route_result.intent.value}",
         )
+        return
 
     # ── Answer ────────────────────────────────────────────────────────
     source_chunks: list = []
+    citations: list[Link] = []
+    resources: list[Link] = []
+    is_grounded = None
+    confidence = None
+
     if _wants_resource(message):
-        # The ReAct agent grounds inside its tools; capture the chunks it
-        # retrieves so the output guardrails can actually verify the answer
-        # (otherwise the hallucination check sees no source and blocks it).
+        # ReAct path — grounds inside tools, can't token-stream. Emit progress,
+        # run it, then push the whole answer as one delta before the safe done.
+        yield {"type": "status", "stage": "searching"}
         agent_tools.begin_capture()
         try:
-            result = run_agent(
-                message, history=history, agent=agent, enable_reasoning=enable_reasoning
-            )
+            result = run_agent(message, history=history, agent=agent)
             source_chunks = agent_tools.captured_chunks()
             grounded_list = agent_tools.captured_grounded()
         finally:
             agent_tools.end_capture()
+        answer_text = result.answer
+        citations = result.citations
+        resources = result.resources
         if grounded_list:
-            # Conservative: report the least-confident grounded result across
-            # any search_stratpoint calls this turn.
-            g = min(
-                grounded_list,
-                key=lambda x: (x.confidence if x.confidence is not None else 1.0),
-            )
-            result.is_grounded = g.is_grounded
-            result.confidence = g.confidence
+            g = min(grounded_list, key=lambda x: (x.confidence if x.confidence is not None else 1.0))
+            is_grounded = g.is_grounded
+            confidence = g.confidence
+        if answer_text:
+            yield {"type": "delta", "text": answer_text}
     else:
+        yield {"type": "status", "stage": "composing"}
         query = message
         if route_result.slots and route_result.slots.get("topic") == "Contact / Location" and route_result.matched_keyword:
             from stratpoint_rag.rag.store import VectorStore
@@ -258,39 +418,67 @@ def run_with_guardrails(
             slugs = [m["slug"].replace("_", " ") for m in (got.get("metadatas") or [])]
             if slugs:
                 query = f"{message} {' '.join(slugs[:10])}"
-        raw, source_chunks, grounded, reasoning = answer_grounded(query, k=8, enable_reasoning=enable_reasoning)
-        result = AgentResult(answer=raw)
-        result.reasoning = reasoning
+        gen = answer_grounded_stream(query, k=8)
+        grounded = None
+        try:
+            while True:
+                yield {"type": "delta", "text": next(gen)}
+        except StopIteration as stop:
+            answer_text, source_chunks, grounded = stop.value
         if grounded is not None:
-            result.citations = [
-                Link(title=c.title or "Stratpoint", url=c.url)
-                for c in grounded.citations
-            ]
-            result.is_grounded = grounded.is_grounded
-            result.confidence = grounded.confidence
+            citations = [Link(title=c.title or "Stratpoint", url=c.url) for c in grounded.citations]
+            is_grounded = grounded.is_grounded
+            confidence = grounded.confidence
 
-    # ── Output guardrails (built-in → NeMo) ──────────────────────────
-    safe_text, out_block = _run_output_guardrails(result.answer, source_chunks, config, use_nemo)
+    # ── Output guardrails on the COMPLETE text (safety authority) ──────
+    safe_text, out_block = _run_output_guardrails(answer_text, source_chunks, config, use_nemo)
     if out_block:
-        log.warning("Output blocked: %s", out_block)
+        log.warning("Output blocked (stream): %s", out_block)
         if config.mode == "fail_closed":
-            result.answer = (
+            yield _done(
                 "I generated a response, but it failed safety checks. "
-                "Please rephrase your question or contact our team for assistance."
+                "Please rephrase your question or contact our team for assistance.",
+                guardrail_reason=out_block,
             )
-            result.guardrail_reason = out_block
-            return result
-    elif safe_text != result.answer:
-        result.answer = safe_text
+            return
+    elif safe_text != answer_text:
+        answer_text = safe_text
 
-    # A grounded answer resets the streak; an explicit "not enough information"
-    # (is_grounded False, incl. the RAG LLM's own reply) counts, and once
-    # persistent is replaced by the hand-off — matching the clarification path.
-    escalation = _escalation_for_answer(memory, result.is_grounded)
+    # Grounded answer resets the streak; a persistent "not enough information"
+    # is replaced by the hand-off — parity with run_with_guardrails.
+    escalation = _escalation_for_answer(memory, is_grounded)
     if escalation:
-        result.answer = escalation
+        answer_text = escalation
 
-    memory.add_turn("user", message)
-    memory.add_turn("assistant", result.answer)
+    yield _done(
+        answer_text,
+        citations=citations,
+        resources=resources,
+        is_grounded=is_grounded,
+        confidence=confidence,
+    )
 
-    return result
+
+def warmup(use_nemo: bool = True) -> None:
+    """Pre-build the process-wide caches so the FIRST real request pays warm
+    latency (~40s) instead of the ~137s cold path. Safe to call in a background
+    thread at startup — each piece is the same lazy singleton the request path
+    builds (embedder+Chroma, NeMo input/output rails incl. their expensive
+    first-.check() init). Skips the answer LLM call (it has no cold component)."""
+    import time as _time
+
+    from stratpoint_rag._timing import note
+
+    t0 = _time.perf_counter()
+    try:
+        from stratpoint_rag.rag.retrieve import retrieve
+        retrieve("warmup", k=1)  # embedder + Chroma + HNSW graph
+    except Exception as e:
+        log.warning("warmup: retrieve failed: %s", e)
+    cfg = GuardrailConfig()
+    try:
+        _run_input_guardrails("hello", cfg, use_nemo=use_nemo)
+        _run_output_guardrails("Stratpoint builds software.", [], cfg, use_nemo=use_nemo)
+    except Exception as e:
+        log.warning("warmup: guardrail warm failed: %s", e)
+    note(f"warmup complete in {(_time.perf_counter() - t0) * 1000:.0f} ms")

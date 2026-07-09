@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 
 from stratpoint_rag.rag import config as rag_config
 from stratpoint_rag.rag.models import Chunk
@@ -24,25 +25,51 @@ except ImportError:
     log.warning("nemoguardrails not installed; NeMo backend unavailable")
 
 
+# Process-wide LLMRails cache. Building LLMRails parses Colang and constructs an
+# embedding index over the `user said` intent flows — several seconds. It was
+# previously rebuilt on every request (twice: input + output) because the cache
+# lived on a per-call pipeline instance. Keyed on the resolved model name, the
+# only thing _build_rails varies on.
+# ponytail: the cached LLMRails is shared across threadpool requests. .check() is
+# not validated for concurrent entry; fine for sequential/demo use (and rails
+# fail-open here). Serialize .check() or per-model isolate if real parallelism lands.
+_rails_cache: dict[str, "LLMRails"] = {}
+_rails_lock = threading.Lock()  # guards the cold build against the warmup/first-request race
+
+
+def _get_rails():
+    import time
+
+    from stratpoint_rag._timing import note
+
+    model = rag_config.llm_model()
+    cached = _rails_cache.get(model)
+    if cached is not None:
+        return cached
+    with _rails_lock:
+        cached = _rails_cache.get(model)
+        if cached is not None:
+            return cached
+        t0 = time.perf_counter()
+        cfg = RailsConfig.from_path(_NEMO_DIR)
+        for m in cfg.models:
+            if m.type == "main":
+                m.model = model
+        cached = LLMRails(cfg)
+        _rails_cache[model] = cached
+        note(f"built NeMo LLMRails (cold, once per process) in {(time.perf_counter() - t0) * 1000:.0f} ms")
+    return cached
+
+
 class NeMoGuardrailPipeline:
     def __init__(self, config: GuardrailConfig | None = None):
         if not _HAS_NEMO:
             raise ImportError("nemoguardrails is not installed")
         self.config = config or GuardrailConfig()
-        self._rails = None
-
-    def _build_rails(self):
-        cfg = RailsConfig.from_path(_NEMO_DIR)
-        for m in cfg.models:
-            if m.type == "main":
-                m.model = rag_config.llm_model()
-        return LLMRails(cfg)
 
     @property
     def rails(self):
-        if self._rails is None:
-            self._rails = self._build_rails()
-        return self._rails
+        return _get_rails()
 
     def run_input(self, user_input: str) -> tuple[str, list[GuardrailResult]]:
         try:
