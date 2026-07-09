@@ -15,6 +15,9 @@ class ConversationMemory:
     session_id: str
     max_turns: int = 6
     turns: list[Turn] = field(default_factory=list)
+    # Consecutive turns the bot could not answer (clarification asked or answer
+    # ungrounded). Drives the F3 escalation hand-off. Reset on any real answer.
+    clarify_streak: int = 0
 
     def add_turn(self, role: str, content: str) -> None:
         self.turns.append(Turn(role=role, content=content))

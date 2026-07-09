@@ -23,7 +23,12 @@ class PIIRedactor:
         ),
         RedactionRule(pattern=r"[\w.+-]+@[\w-]+\.[\w.-]+", replacement="[EMAIL]", entity_type="email"),
         RedactionRule(
-            pattern=r"\+?\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}",
+            # Require ≥7 digits so percentages (99.99%), version/dotted numbers
+            # (5.5, 1.2.3.4) and dates (2020/09/30) are not mistaken for phones.
+            # ponytail: digit-count heuristic, not a real phone parser — misses
+            # exotic groupings like "(02) 8123-4567"; swap for `phonenumbers` if
+            # that ever matters.
+            pattern=r"\+?\d(?:[\s.\-()]?\d){6,}",
             replacement="[PHONE]",
             entity_type="phone",
         ),

@@ -26,6 +26,45 @@ _HARMFUL_BLOCK = "I'm sorry, I can't help with that. Please ask me about Stratpo
 
 _INJECTION_BLOCK = "I can only answer questions about Stratpoint — their services, projects, technologies, and company information. Could you ask something related to Stratpoint?"
 
+# After this many consecutive turns the bot can't answer (clarification asked
+# or answer ungrounded), stop looping and hand off. Tracked on ConversationMemory
+# because clarifications come from two paths — the router and the RAG LLM's own
+# "not enough information" reply — so counting router messages alone misses half.
+_MAX_CLARIFY_ROUNDS = 3
+
+_ESCALATION_RESPONSE = (
+    "It looks like I'm having trouble understanding what you need. I can help with "
+    "Stratpoint's services, past projects, and technologies like OutSystems, Flutter, "
+    "or cloud — or you can reach the team directly at https://stratpoint.com/contact-us/."
+)
+
+
+def _escalate_or_count(memory: ConversationMemory) -> bool:
+    """Record a turn the bot couldn't answer. Returns True (and resets the
+    streak) once the run of such turns reaches the cap — the caller then serves
+    the hand-off instead of asking the user to clarify yet again."""
+    if memory.clarify_streak >= _MAX_CLARIFY_ROUNDS:
+        memory.clarify_streak = 0
+        return True
+    memory.clarify_streak += 1
+    return False
+
+
+def _escalation_for_answer(memory: ConversationMemory, is_grounded: bool | None) -> str | None:
+    """Apply the clarify-streak rule to a completed answer turn. Returns the
+    hand-off message if we've hit the cap, else None (keep the real answer).
+
+    Only an explicit ``is_grounded is False`` (the LLM said "I don't have this")
+    counts. ``None`` is ambiguous — a parse-fallback answer or a resource
+    delivery that surfaced no grounded chunks may well have helped — so it
+    leaves the streak untouched rather than pushing a helpful turn toward the
+    hand-off."""
+    if is_grounded is True:
+        memory.clarify_streak = 0
+    elif is_grounded is False and _escalate_or_count(memory):
+        return _ESCALATION_RESPONSE
+    return None
+
 
 def _user_facing_block(reason: str) -> str:
     """Convert an internal guardrail reason into a conversational user-facing message."""
@@ -34,9 +73,10 @@ def _user_facing_block(reason: str) -> str:
     lower = reason.lower()
     if any(kw in lower for kw in ("harmful", "attack", "malware", "hack", "exploit")):
         return _HARMFUL_BLOCK
-    if any(kw in lower for kw in ("injection", "jailbreak", "bypass", "leak", "override", "info")):
-        return _INJECTION_BLOCK
-    return reason
+    # Any remaining blocked category (e.g. 'system_prompt_request', which
+    # contains none of the keywords above) gets the generic refusal — never
+    # leak the raw internal reason string to the user.
+    return _INJECTION_BLOCK
 
 
 def _wants_resource(message: str) -> bool:
@@ -160,21 +200,28 @@ def run_with_guardrails(
 
     if route_result.intent in (IntentCategory.HARMFUL, IntentCategory.OFF_TOPIC):
         reason = route_result.rejection_reason or "I can't process that request."
+        memory.clarify_streak = 0  # definitive response, not persistent vagueness
         memory.add_turn("user", message)
         memory.add_turn("assistant", reason)
         return AgentResult(answer=reason, guardrail_reason=reason)
 
     if route_result.intent == IntentCategory.GREETING:
         reply = route_result.rejection_reason or ""
+        memory.clarify_streak = 0
         memory.add_turn("user", message)
         memory.add_turn("assistant", reply)
         return AgentResult(answer=reply, guardrail_reason="Greeting detected")
 
     if route_result.clarification_question:
+        # Persistent vagueness → hand off instead of asking the same thing again.
+        if _escalate_or_count(memory):
+            answer = _ESCALATION_RESPONSE
+        else:
+            answer = route_result.clarification_question
         memory.add_turn("user", message)
-        memory.add_turn("assistant", route_result.clarification_question)
+        memory.add_turn("assistant", answer)
         return AgentResult(
-            answer=route_result.clarification_question,
+            answer=answer,
             guardrail_reason=f"Needed clarification: {route_result.intent.value}",
         )
 
@@ -235,6 +282,13 @@ def run_with_guardrails(
             return result
     elif safe_text != result.answer:
         result.answer = safe_text
+
+    # A grounded answer resets the streak; an explicit "not enough information"
+    # (is_grounded False, incl. the RAG LLM's own reply) counts, and once
+    # persistent is replaced by the hand-off — matching the clarification path.
+    escalation = _escalation_for_answer(memory, result.is_grounded)
+    if escalation:
+        result.answer = escalation
 
     memory.add_turn("user", message)
     memory.add_turn("assistant", result.answer)

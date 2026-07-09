@@ -58,11 +58,14 @@ class OutputPIIChecker:
                 modified_output=redacted,
             )
 
+        # PII present in the source docs is legitimate content (uptime %, dates
+        # in citation URLs, version numbers) — do NOT serve the redacted copy.
+        # OutputPipeline applies modified_output unconditionally, so leaving it
+        # unset here is what keeps the fact intact.
         return GuardrailResult(
             passed=True,
             action="allow",
             message=f"PII in output but present in source docs: {source_leaked}",
-            modified_output=redacted,
         )
 
 
