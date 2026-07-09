@@ -33,7 +33,7 @@ _OFF_TOPIC_KEYWORDS = {
     "travel", "flight", "hotel", "vacation", "trip",
     "politics", "president", "election", "government",
     "crypto", "bitcoin", "investing", "stock price",
-    "homework", "math", "history", "science class",
+    "homework", "math", "science class",
 }
 
 _STRATPOINT_KEYWORDS = [
