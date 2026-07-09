@@ -63,9 +63,9 @@ def _record_grounded(grounded) -> None:
     if sink is not None and grounded is not None:
         sink.append(grounded)
 
-# Markdown links whose target is a downloadable document.
+# Markdown links whose target is a downloadable document. PDF only: the crawled
 _DOC_LINK = re.compile(
-    r"\[([^\]]+)\]\((https?://[^\s)]+?\.(?:pdf|docx?|pptx?)(?:\?[^\s)]*)?)\)",
+    r"\[([^\]]+)\]\((https?://[^\s)]+?\.pdf(?:\?[^\s)]*)?)\)",
     re.IGNORECASE,
 )
 

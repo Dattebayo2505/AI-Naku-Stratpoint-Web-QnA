@@ -20,15 +20,14 @@ def test_extract_doc_links_finds_pdf_and_strips_markdown():
     ]
 
 
-def test_extract_doc_links_dedupes_and_ignores_non_docs():
+def test_extract_doc_links_dedupes_and_ignores_non_pdfs():
+    """Office docs are deliberately not matched — the corpus contains none."""
     text = (
         "[a](https://s.com/f.pdf) [b](https://s.com/f.pdf) "
-        "[c](https://s.com/page) [d](https://s.com/deck.pptx)"
+        "[c](https://s.com/page) [d](https://s.com/deck.pptx) "
+        "[e](https://s.com/paper.docx)"
     )
-    assert tools._extract_doc_links(text) == [
-        ("a", "https://s.com/f.pdf"),
-        ("d", "https://s.com/deck.pptx"),
-    ]
+    assert tools._extract_doc_links(text) == [("a", "https://s.com/f.pdf")]
 
 
 def test_find_resource_lists_links_from_retrieved_chunks(monkeypatch):
