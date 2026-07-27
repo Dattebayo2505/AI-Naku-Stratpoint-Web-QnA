@@ -10,6 +10,64 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-07-27 — Switched to a faster model, then rebuilt the assistant to work without the features it lacks
+
+**What we did**
+- Moved the chatbot onto a **smaller, faster language model** (`meta/llama-3.1-8b-instruct`,
+  replacing `gemma-4-31b-it`), which was too slow to be usable. The rationale, measured
+  timings, and prompt-comparison results are captured in
+  `docs/handoff-llm-model-switch.md`.
+- Discovered that two capabilities the assistant depended on **do not work on the new
+  model**: letting the model pick its tools through the vendor's built-in mechanism, and
+  asking it for its own internal "thinking". Both had been built against the previous model.
+- Brainstormed the replacement design and captured it in a spec
+  (`docs/superpowers/specs/2026-07-27-portable-react-loop-design.md`), then turned it into a
+  seven-task implementation plan (`docs/superpowers/plans/2026-07-27-portable-react-loop.md`)
+  and built against it.
+- Verified the rebuilt assistant against the live model across four realistic visitor
+  scenarios, plus the automated checks.
+
+**Key decisions**
+- **Drive the assistant's reasoning in plain language instead of relying on a vendor
+  feature.** The assistant now writes out its thinking, its chosen tool, and what it learned
+  as ordinary text that we interpret ourselves. This is the central decision of the session:
+  it puts the assistant's behaviour under our control rather than the model provider's, and
+  means the chatbot is no longer tied to one vendor's model — it will run on any provider.
+- **Produce "reasoning" by asking for it, not by requesting a model feature.** Since the new
+  model cannot expose its own thinking, the assistant is simply asked to explain its grounding
+  before answering. The user-facing reasoning toggle behaves the same as before.
+- **Remove a large third-party framework from the product.** With the vendor-specific tool
+  mechanism gone, the LangChain stack was no longer needed; dropping it removed 16 packages
+  from the deployment, which matters for the memory-constrained container this will be hosted on.
+- **Keep one description per tool, in one place.** Tool descriptions previously existed in two
+  places that could disagree; they now live in a single registry that also generates the
+  assistant's instructions, so the two can no longer drift apart.
+- **Always fall back to a real, sourced answer.** If the assistant can't complete its
+  reasoning loop, it answers from the website search rather than returning a canned apology —
+  so the visitor still gets a grounded answer and the safety checks still have sources to
+  verify against.
+
+**What we produced**
+- A rebuilt, **provider-portable assistant**, verified live: it picks the right tool for plain
+  questions versus document requests, restates every PDF it finds, and never mentions its own
+  tooling to the visitor.
+- **A measured quality improvement found only by live testing.** The first live run degraded to
+  a basic answer on **2 of 2** document requests — the model was copying the instruction template
+  literally, and re-searching instead of answering when nothing was found. After rewording the
+  instructions, the same scenarios degraded **0 of 2** times.
+- Updated project documentation (`docs/ARCHITECTURE.md`, `CLAUDE.md`) to describe the new design.
+
+**Open / to decide**
+- The prompt comparison that chose our current answer style was run against the **old** model;
+  it has not been re-run on the new one, so the current settings are inherited rather than
+  re-validated.
+- A known retrieval gap remains: a question about "C.A.R.E." doesn't find the right page.
+  Unrelated to this work, still open.
+- The four separate places we call the model could be consolidated behind one client — a
+  tidy-up deliberately left for later.
+
+---
+
 ## 2026-07-09 — Added a user-controlled "reasoning" mode and let the bot show its thinking
 
 **What we did**
