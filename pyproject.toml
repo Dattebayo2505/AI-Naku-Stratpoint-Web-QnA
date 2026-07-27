@@ -39,7 +39,7 @@ module-name = ["stratpoint_crawl", "stratpoint_rag"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests", "RAG-UnitTests"]
-markers = ["integration: hits the live network (deselected by default)"]
+markers = ["integration: hits the live network or needs a built local index (deselected by default)"]
 addopts = "-m 'not integration'"
 
 [dependency-groups]

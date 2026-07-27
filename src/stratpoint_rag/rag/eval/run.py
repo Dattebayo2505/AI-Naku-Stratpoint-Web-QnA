@@ -14,6 +14,7 @@ knowing before it is built.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import statistics
@@ -330,3 +331,115 @@ def diff_baseline(results: list[CaseResult], baseline: dict) -> list[Delta]:
             )
         )
     return out
+
+
+def _fmt(value: float | None) -> str:
+    return "  -  " if value is None else f"{value:.3f}"
+
+
+def format_report(
+    results: list[CaseResult], cases: list[GoldCase], sep: Separation, k: int
+) -> str:
+    lines = ["", f"Per-case (k={k})", "-" * 64]
+    for r in results:
+        if r.expect == EXPECT_ABSTAIN:
+            lines.append(f"  [ABST] {r.id:<28} top1={_fmt(r.top1_score)}")
+        else:
+            tag = "HIT " if _hit(r, k) else "MISS"
+            rank = "-" if r.rank is None else str(r.rank)
+            lines.append(
+                f"  [{tag}] {r.id:<28} rank={rank:<3} gold={_fmt(r.gold_score)} "
+                f"top1={_fmt(r.top1_score)}"
+            )
+
+    lines += ["", "Aggregates", "-" * 64,
+              f"  hit@{k}: {hit_rate(results, k):.2f}    MRR: {mrr(results, k):.3f}"]
+    for axis, rate in sorted(hit_rate_by_axis(results, k).items()):
+        lines.append(f"    {axis:<16} {rate:.2f}")
+
+    pairs = divergent_pairs(results, cases, k)
+    if pairs:
+        lines += ["", "  Divergent paraphrase pairs (one side hits, one misses):"]
+        lines += [f"    {base} -> {twin}" for base, twin in pairs]
+
+    lines += ["", "Separation", "-" * 64,
+              f"  gold chunk scores (n={sep.gold_total}):    "
+              f"min={_fmt(sep.gold_min)} p25={_fmt(sep.gold_p25)} median={_fmt(sep.gold_median)}",
+              f"  abstain top-1 scores (n={sep.abstain_total}): "
+              f"median={_fmt(sep.abstain_median)} p75={_fmt(sep.abstain_p75)} "
+              f"max={_fmt(sep.abstain_max)}",
+              f"  abstain cases above the gold median: {sep.overlap_count}/{sep.abstain_total}"]
+    if sep.overlap_count:
+        lines.append(
+            "  ^ distributions overlap — a single global distance cutoff cannot "
+            "separate answerable from unanswerable. Session 4 needs redesign."
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _build_retrieve_fn():
+    """Bind the real retriever. Isolated so tests can monkeypatch it."""
+    from ..retrieve import retrieve
+
+    return lambda q, k: retrieve(q, k=k)
+
+
+def _known_slugs() -> set[str] | None:
+    try:
+        return {r["slug"] for r in load_manifest(DEFAULT_INDEX)}
+    except FileNotFoundError:
+        return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    from .. import config
+
+    ap = argparse.ArgumentParser(description="Scored retrieval eval over the gold set.")
+    ap.add_argument("--k", type=int, default=5)
+    ap.add_argument("--gold", type=Path, default=GOLD)
+    ap.add_argument("--baseline", action="store_true", help="diff against the committed baseline")
+    ap.add_argument("--write-baseline", action="store_true", help="overwrite the baseline")
+    args = ap.parse_args(argv)
+
+    try:
+        cases = load_cases(args.gold, known_slugs=_known_slugs())
+    except GoldSetError as exc:
+        raise SystemExit(f"gold set is invalid:\n{exc}") from exc
+
+    try:
+        retrieve_fn = _build_retrieve_fn()
+        results = run_cases(cases, retrieve_fn, k=args.k)
+    except Exception as exc:
+        raise SystemExit(
+            f"retrieval failed ({exc}). If the store is empty or missing, build it "
+            f"first: uv run stratpoint-rag-ingest"
+        ) from exc
+
+    sep = separation(results, args.k)
+    print(format_report(results, cases, sep, args.k))
+
+    fingerprint = corpus_fingerprint()
+    embed_model = config.embedding_model()
+
+    if args.write_baseline:
+        write_baseline(BASELINE, results, embed_model, fingerprint)
+        print(f"baseline written to {BASELINE}")
+    elif args.baseline:
+        if not BASELINE.exists():
+            raise SystemExit(f"no baseline at {BASELINE}; create one with --write-baseline")
+        prior = load_baseline(BASELINE)
+        stale = baseline_is_stale(prior, embed_model, fingerprint)
+        if stale:
+            print(f"\n!! BASELINE STALE: {stale}\n   deltas below are NOT trustworthy\n")
+        print("Deltas vs baseline\n" + "-" * 64)
+        for d in diff_baseline(results, prior):
+            if (d.rank_before, d.score_before) != (d.rank_after, d.score_after):
+                print(
+                    f"  {d.id:<28} rank {d.rank_before} -> {d.rank_after}   "
+                    f"gold {_fmt(d.score_before)} -> {_fmt(d.score_after)}"
+                )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
