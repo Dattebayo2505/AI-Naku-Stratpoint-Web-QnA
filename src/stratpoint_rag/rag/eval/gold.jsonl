@@ -18,13 +18,13 @@
 {"id": "co-webinars", "q": "What webinars has Stratpoint published?", "slug": "webinars", "expect": "retrieve", "axis": "entity-named"}
 {"id": "port-globe-ups", "q": "How much in monthly online payments does the Globe Unified Payment Service handle?", "slug": "portfolio-globe-unified-payment-service", "expect": "retrieve", "axis": "entity-named"}
 {"id": "eb-digital-acceleration", "q": "Does Stratpoint have an e-book with a framework for digital transformation?", "slug": "universal-approach-to-digital-acceleration-e-book", "expect": "retrieve", "axis": "entity-named"}
-{"id": "svc-qa", "q": "What quality assurance services does Stratpoint provide?", "slug": "qaservices1", "expect": "retrieve", "axis": "entity-named"}
+{"id": "svc-qa", "q": "What quality assurance services does Stratpoint provide?", "slug": "qaservices", "expect": "retrieve", "axis": "entity-named"}
 {"id": "svc-nops", "q": "By how much can nOps reduce cloud costs?", "slug": "nops", "expect": "retrieve", "axis": "entity-named"}
 {"id": "port-globe-platbook", "q": "What is the Globe PlatBook digital terminal and who uses it?", "slug": "portfolio-globe-platinum", "expect": "retrieve", "axis": "entity-named"}
 {"id": "svc-aws-migration", "q": "Does Stratpoint offer free AWS credits for new cloud migrations?", "slug": "aws-migration", "expect": "retrieve", "axis": "entity-named"}
 {"id": "svc-qa-playbook", "q": "What topics does the Stratpoint QA Playbook cover?", "slug": "qa-playbook-slides", "expect": "retrieve", "axis": "entity-named"}
 {"id": "svc-outsystems-p", "q": "Do you do OutSystems development?", "slug": "outsystems-offerings", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-outsystems"}
-{"id": "svc-qa-p", "q": "What QA services do you offer?", "slug": "qaservices1", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-qa"}
+{"id": "svc-qa-p", "q": "What QA services do you offer?", "slug": "qaservices", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-qa"}
 {"id": "svc-nops-p", "q": "How much can you cut our cloud costs with nOps?", "slug": "nops", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-nops"}
 {"id": "svc-aws-migration-p", "q": "Do you give free AWS credits if we migrate?", "slug": "aws-migration", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-aws-migration"}
 {"id": "co-privacy-p", "q": "What personal data do you collect from me on your website?", "slug": "privacy-notice", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "co-privacy"}

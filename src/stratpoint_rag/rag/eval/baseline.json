@@ -1,0 +1,211 @@
+{
+  "cases": {
+    "abs-cfo": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.7794297337532043
+    },
+    "abs-founded": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.7488100528717041
+    },
+    "abs-headcount": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.7430907487869263
+    },
+    "abs-intern-stipend": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.7534022331237793
+    },
+    "abs-pricing": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.7870519161224365
+    },
+    "abs-revenue": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.8041468858718872
+    },
+    "abs-stock": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.7309449315071106
+    },
+    "abs-vietnam": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.7054548263549805
+    },
+    "blog-alibaba-landingzone": {
+      "gold_score": 0.9196106791496277,
+      "rank": 0,
+      "top1_score": 0.9196106791496277
+    },
+    "blog-alibaba-landingzone-p": {
+      "gold_score": 0.9235960245132446,
+      "rank": 0,
+      "top1_score": 0.9235960245132446
+    },
+    "blog-aws-poty-finalist": {
+      "gold_score": 0.8527586460113525,
+      "rank": 4,
+      "top1_score": 0.917343258857727
+    },
+    "blog-aws-social-impact": {
+      "gold_score": 0.8864940404891968,
+      "rank": 0,
+      "top1_score": 0.8864940404891968
+    },
+    "blog-channel-asia": {
+      "gold_score": 0.8407734632492065,
+      "rank": 0,
+      "top1_score": 0.8407734632492065
+    },
+    "blog-data-tips": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.8188610672950745
+    },
+    "blog-flutter": {
+      "gold_score": 0.8563117384910583,
+      "rank": 0,
+      "top1_score": 0.8563117384910583
+    },
+    "blog-lambda": {
+      "gold_score": 0.77937912940979,
+      "rank": 0,
+      "top1_score": 0.77937912940979
+    },
+    "blog-nops-casestudy": {
+      "gold_score": 0.8910439014434814,
+      "rank": 0,
+      "top1_score": 0.8910439014434814
+    },
+    "blog-outsystems-fast": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.8172696828842163
+    },
+    "blog-retail": {
+      "gold_score": 0.7656220197677612,
+      "rank": 2,
+      "top1_score": 0.7966644763946533
+    },
+    "blog-softcon": {
+      "gold_score": 0.8330309987068176,
+      "rank": 0,
+      "top1_score": 0.8330309987068176
+    },
+    "co-privacy": {
+      "gold_score": 0.7904166579246521,
+      "rank": 1,
+      "top1_score": 0.8095046281814575
+    },
+    "co-privacy-p": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.8096756935119629
+    },
+    "co-webinars": {
+      "gold_score": 0.7265982031822205,
+      "rank": 0,
+      "top1_score": 0.7265982031822205
+    },
+    "co-webinars-p": {
+      "gold_score": 0.7279627323150635,
+      "rank": 0,
+      "top1_score": 0.7279627323150635
+    },
+    "eb-cx-disruptive": {
+      "gold_score": 0.8122942447662354,
+      "rank": 0,
+      "top1_score": 0.8122942447662354
+    },
+    "eb-digital-acceleration": {
+      "gold_score": 0.8513479232788086,
+      "rank": 2,
+      "top1_score": 0.8513479232788086
+    },
+    "port-globe-platbook": {
+      "gold_score": 0.779846727848053,
+      "rank": 2,
+      "top1_score": 0.8303370475769043
+    },
+    "port-globe-ups": {
+      "gold_score": 0.8086037635803223,
+      "rank": 0,
+      "top1_score": 0.8086037635803223
+    },
+    "port-telco-payments": {
+      "gold_score": 0.8800045251846313,
+      "rank": 2,
+      "top1_score": 0.8804712891578674
+    },
+    "svc-aws-migration": {
+      "gold_score": 0.8598880767822266,
+      "rank": 0,
+      "top1_score": 0.8598880767822266
+    },
+    "svc-aws-migration-p": {
+      "gold_score": 0.8539326190948486,
+      "rank": 0,
+      "top1_score": 0.8539326190948486
+    },
+    "svc-nops": {
+      "gold_score": 0.8271610140800476,
+      "rank": 0,
+      "top1_score": 0.8271610140800476
+    },
+    "svc-nops-p": {
+      "gold_score": 0.8373429775238037,
+      "rank": 1,
+      "top1_score": 0.8645436763763428
+    },
+    "svc-outsystems": {
+      "gold_score": 0.8184083700180054,
+      "rank": 3,
+      "top1_score": 0.8255199790000916
+    },
+    "svc-outsystems-p": {
+      "gold_score": 0.821611762046814,
+      "rank": 2,
+      "top1_score": 0.8321002721786499
+    },
+    "svc-qa": {
+      "gold_score": 0.7974401712417603,
+      "rank": 2,
+      "top1_score": 0.8121789693832397
+    },
+    "svc-qa-p": {
+      "gold_score": null,
+      "rank": null,
+      "top1_score": 0.8236840963363647
+    },
+    "svc-qa-playbook": {
+      "gold_score": 0.7844274044036865,
+      "rank": 2,
+      "top1_score": 0.7902718186378479
+    },
+    "svc-qa-playbook-p": {
+      "gold_score": 0.8331839442253113,
+      "rank": 1,
+      "top1_score": 0.8331839442253113
+    },
+    "web-ml-masterclass": {
+      "gold_score": 0.8855700492858887,
+      "rank": 0,
+      "top1_score": 0.8855700492858887
+    },
+    "web-need-for-speed": {
+      "gold_score": 0.869430422782898,
+      "rank": 1,
+      "top1_score": 0.869430422782898
+    }
+  },
+  "embed_model": "BAAI/bge-small-en-v1.5",
+  "fingerprint": "371:3d2ec8e5c8e394ee"
+}

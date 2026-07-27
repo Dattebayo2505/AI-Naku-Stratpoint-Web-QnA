@@ -95,3 +95,71 @@ changing which chunks exist, Session 3 by shifting every score. Each must end by
 re-writing the baseline as an explicit, reviewable commit. The baseline header
 records the embedding model and a corpus fingerprint so a stale comparison warns
 rather than silently misleading.
+
+## Session 0 results
+
+Run on 2026-07-27, k=5, 41 gold cases (25 answerable + 8 pronoun twins + 8
+abstention), `BAAI/bge-small-en-v1.5`, corpus fingerprint
+`371:3d2ec8e5c8e394ee`.
+
+| Metric | Value |
+|--------|-------|
+| hit@5 | 0.88 |
+| MRR | 0.630 |
+| hit@5, `entity-named` axis | 0.92 |
+| hit@5, `pronoun` axis | 0.75 |
+| Gold-chunk scores (n=29) | min 0.727 / p25 0.797 / median 0.833 |
+| Abstention top-1 scores (n=8) | median 0.751 / p75 0.787 / max 0.804 |
+| **Abstention cases above the gold median** | **0/8** |
+
+### Separation verdict: buildable, but not free
+
+By the go/no-go metric the distributions separate — no abstention question
+scores above the median gold chunk. Session 4's relevance floor is therefore
+**not** disqualified.
+
+The tails do overlap, though, and that changes the design. `abstain_max` (0.804)
+sits *above* `gold_p25` (0.797), so the "cutoff between abstain_max and
+gold_p25" window the plan anticipated does not exist. Eight of 29 correctly
+retrieved gold chunks score below `abstain_max`. The cost curve:
+
+| Cutoff | Correctly abstains | Falsely abstains |
+|--------|--------------------|------------------|
+| 0.750 | 4/8 | 2/29 |
+| 0.780 | 6/8 | 5/29 |
+| 0.800 | 7/8 | 8/29 |
+| 0.805 | 8/8 | 8/29 |
+| 0.830 | 8/8 | 13/29 |
+
+Catching every abstention case costs ~28% false abstention on answerable
+questions. **Session 4 should not aim for a single global cutoff tuned to catch
+all abstentions.** A conservative floor near 0.75 buys half the abstentions for
+7% false-abstention, and the rest of the gap needs a different mechanism than a
+distance threshold. Re-check these numbers after Session 3 — the BGE query
+prefix shifts every score and this whole table moves.
+
+### Retrieval findings
+
+**Pronoun axis lags entity-named by 17 points** (0.75 vs 0.92), and two
+paraphrase pairs diverge — the twin misses while the entity-named sibling hits:
+
+- `co-privacy -> co-privacy-p` — the gold `privacy-notice` page falls to rank 7,
+  beaten by four sibling privacy notices (events, recruitment, holiday-giveaway,
+  softcon).
+- `svc-qa -> svc-qa-p`.
+
+**Near-duplicate pages dominate top-k.** This is the strongest evidence for
+Session 1. Seven of the 25 answerable gold slugs have a same-title twin, most
+with byte-identical length: `qa-playbook`/`qa-playbook-slides`,
+`webinar-need-for-speed`/`need-for-speed-video`,
+`machine-learning-masterclass-video`/`webinar-machine-learning-masterclass`,
+plus four `universal-approach-to-digital-acceleration-*` variants. Single pages
+also occupy several top-k slots at once — `2024__11__11__embarking-on-the-data-journey`
+takes 3 of the top 8 on `blog-data-tips`, and `stratpoint-outsystems-development`
+takes 3 of 8 on `blog-outsystems-fast`. Both are misses caused by duplicate
+occupancy rather than by bad ranking.
+
+**Gold-label correction made during triage.** `svc-qa`/`svc-qa-p` were
+originally labelled against `qaservices1`, the stale half of a twin pair;
+re-pointed to the canonical, newer, longer `qaservices` (`/qaservices/`). The
+other four remaining misses were triaged as fair and kept.
