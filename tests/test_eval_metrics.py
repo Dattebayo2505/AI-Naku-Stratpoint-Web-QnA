@@ -69,3 +69,79 @@ class TestRunCases:
         cases = [retrieve_case("a"), retrieve_case("b")]
         results = run_cases(cases, lambda q, k: [chunk("target", 0.9)])
         assert [r.id for r in results] == ["a", "b"]
+
+
+from stratpoint_rag.rag.eval.run import (
+    divergent_pairs,
+    hit_rate,
+    hit_rate_by_axis,
+    mrr,
+)
+
+
+def result(cid, rank, *, expect="retrieve", axis="entity-named", gold=0.8, top1=0.8):
+    return CaseResult(id=cid, expect=expect, axis=axis, rank=rank,
+                      gold_score=gold if rank is not None else None, top1_score=top1)
+
+
+class TestHitRate:
+    def test_counts_only_ranks_inside_k(self):
+        results = [result("a", 0), result("b", 4), result("c", 7), result("d", None)]
+        assert hit_rate(results, k=5) == 0.5
+
+    def test_abstain_cases_are_excluded(self):
+        results = [result("a", 0), result("z", None, expect="abstain", axis=None)]
+        assert hit_rate(results, k=5) == 1.0
+
+    def test_no_retrieve_cases_is_zero_not_a_crash(self):
+        assert hit_rate([result("z", None, expect="abstain", axis=None)], k=5) == 0.0
+
+
+class TestHitRateByAxis:
+    def test_splits_by_axis(self):
+        results = [
+            result("a", 0, axis="entity-named"),
+            result("b", 1, axis="entity-named"),
+            result("ap", 0, axis="pronoun"),
+            result("bp", None, axis="pronoun"),
+        ]
+        assert hit_rate_by_axis(results, k=5) == {"entity-named": 1.0, "pronoun": 0.5}
+
+
+class TestMRR:
+    def test_reciprocal_of_one_based_rank(self):
+        # rank 0 -> 1/1, rank 1 -> 1/2, miss -> 0  =>  (1 + 0.5 + 0) / 3
+        results = [result("a", 0), result("b", 1), result("c", None)]
+        assert mrr(results, k=5) == pytest.approx(0.5)
+
+    def test_rank_beyond_k_scores_zero(self):
+        assert mrr([result("a", 9)], k=5) == 0.0
+
+
+class TestDivergentPairs:
+    def test_reports_twin_missing_while_sibling_hits(self):
+        """The regression guard for the anchor_entity fix in a7cb482."""
+        cases = [
+            GoldCase(id="s1", q="q", expect="retrieve", slug="p", axis="entity-named"),
+            GoldCase(id="s1p", q="q", expect="retrieve", slug="p", axis="pronoun",
+                     paraphrase_of="s1"),
+        ]
+        results = [result("s1", 0), result("s1p", None)]
+        assert divergent_pairs(results, cases) == [("s1", "s1p")]
+
+    def test_silent_when_both_hit(self):
+        cases = [
+            GoldCase(id="s1", q="q", expect="retrieve", slug="p", axis="entity-named"),
+            GoldCase(id="s1p", q="q", expect="retrieve", slug="p", axis="pronoun",
+                     paraphrase_of="s1"),
+        ]
+        assert divergent_pairs([result("s1", 0), result("s1p", 2)], cases) == []
+
+    def test_silent_when_both_miss(self):
+        """Both missing is a coverage problem, not an anchoring regression."""
+        cases = [
+            GoldCase(id="s1", q="q", expect="retrieve", slug="p", axis="entity-named"),
+            GoldCase(id="s1p", q="q", expect="retrieve", slug="p", axis="pronoun",
+                     paraphrase_of="s1"),
+        ]
+        assert divergent_pairs([result("s1", None), result("s1p", None)], cases) == []

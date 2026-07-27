@@ -144,3 +144,53 @@ def run_cases(
 ) -> list[CaseResult]:
     """Evaluate every case. Retrieval is injected so metrics stay testable."""
     return [evaluate_case(c, retrieve_fn(c.q, k)) for c in cases]
+
+
+def _hit(r: CaseResult, k: int) -> bool:
+    return r.rank is not None and r.rank < k
+
+
+def _retrieve_only(results: list[CaseResult]) -> list[CaseResult]:
+    return [r for r in results if r.expect == EXPECT_RETRIEVE]
+
+
+def hit_rate(results: list[CaseResult], k: int = 5) -> float:
+    """Fraction of answerable cases whose gold page appears in the top k."""
+    rows = _retrieve_only(results)
+    return sum(_hit(r, k) for r in rows) / len(rows) if rows else 0.0
+
+
+def hit_rate_by_axis(results: list[CaseResult], k: int = 5) -> dict[str, float]:
+    """Hit rate split by phrasing. A pronoun-axis collapse is the signal that
+    entity anchoring has regressed; the overall rate would only dip."""
+    by_axis: dict[str, list[CaseResult]] = {}
+    for r in _retrieve_only(results):
+        by_axis.setdefault(r.axis or "untagged", []).append(r)
+    return {axis: sum(_hit(r, k) for r in rows) / len(rows) for axis, rows in by_axis.items()}
+
+
+def mrr(results: list[CaseResult], k: int = 5) -> float:
+    """Mean reciprocal rank over answerable cases; a miss contributes 0."""
+    rows = _retrieve_only(results)
+    if not rows:
+        return 0.0
+    return sum(1.0 / (r.rank + 1) if _hit(r, k) else 0.0 for r in rows) / len(rows)
+
+
+def divergent_pairs(
+    results: list[CaseResult], cases: list[GoldCase], k: int = 5
+) -> list[tuple[str, str]]:
+    """Paraphrase pairs where exactly one side hits, as (base_id, twin_id).
+
+    This is the legible form of an anchoring regression: an aggregate hit-rate
+    dip says something broke, a divergent pair says which phrasing broke.
+    """
+    hits = {r.id: _hit(r, k) for r in results}
+    out = []
+    for c in cases:
+        if not c.paraphrase_of:
+            continue
+        base, twin = c.paraphrase_of, c.id
+        if base in hits and twin in hits and hits[base] != hits[twin]:
+            out.append((base, twin))
+    return out
