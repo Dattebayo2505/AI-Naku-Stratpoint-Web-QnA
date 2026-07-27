@@ -3,3 +3,39 @@
 {"id": "blog-lambda", "q": "How does serverless architecture with AWS Lambda work?", "slug": "2020__09__30__serverless-using-aws-lambda", "expect": "retrieve", "axis": "entity-named"}
 {"id": "blog-flutter", "q": "Tell me about Stratpoint's cross-platform Flutter journey", "slug": "2021__04__30__finding-flutter-our-cross-platform-journey", "expect": "retrieve", "axis": "entity-named"}
 {"id": "blog-outsystems-fast", "q": "What did Stratpoint build fast on OutSystems?", "slug": "2021__05__19__apps-stratpoint-built-fast-and-right-on-outsystems", "expect": "retrieve", "axis": "entity-named"}
+{"id": "blog-aws-poty-finalist", "q": "Was Stratpoint a finalist for the AWS Partner of the Year award in the Philippines?", "slug": "2022__08__08__in-the-news-stratpoint-technologies-named-finalist-for-aws-partner-of-the-year-ph", "expect": "retrieve", "axis": "entity-named"}
+{"id": "blog-data-tips", "q": "What advice does Stratpoint give businesses that are just starting to work with data?", "slug": "2023__12__11__navigating-oceans-of-data-a-guide-for-young-adopters", "expect": "retrieve", "axis": "entity-named"}
+{"id": "blog-nops-casestudy", "q": "How does Stratpoint use nOps to manage its clients' AWS workloads?", "slug": "2023__11__21__promoting-cloud-efficiency-savings-and-innovation", "expect": "retrieve", "axis": "entity-named"}
+{"id": "blog-alibaba-landingzone", "q": "Is Stratpoint a certified Landing Zone partner of Alibaba Cloud?", "slug": "2024__09__16__stratpoint-named-as-phs-first-landing-zone-certified-partner-of-alibaba-cloud", "expect": "retrieve", "axis": "entity-named"}
+{"id": "blog-aws-social-impact", "q": "Which Stratpoint app won the AWS 2020 Social Impact Partner of the Year award?", "slug": "2020__11__25__stratpoint-wins-aws-2020-social-impact-partner-of-the-year-award", "expect": "retrieve", "axis": "entity-named"}
+{"id": "blog-channel-asia", "q": "What was Stratpoint recognized for in the Channel Asia 2021 Innovation Awards?", "slug": "2021__12__02__stratpoint-recognized-in-the-channel-asia-2021-innovation-awards", "expect": "retrieve", "axis": "entity-named"}
+{"id": "blog-softcon", "q": "What topics did Stratpoint engineers present at Softcon 2021?", "slug": "2021__11__04__in-the-news-stratpoint-excites-software-it-professionals-at-softcon-2021", "expect": "retrieve", "axis": "entity-named"}
+{"id": "port-telco-payments", "q": "What did Stratpoint do to modernize the payment platform of a Philippine telco?", "slug": "payment-modernization-for-leading-telco-in-the-philippines-portfolio", "expect": "retrieve", "axis": "entity-named"}
+{"id": "web-ml-masterclass", "q": "What does Stratpoint's Machine Learning Masterclass webinar teach about Amazon Rekognition?", "slug": "machine-learning-masterclass-video", "expect": "retrieve", "axis": "entity-named"}
+{"id": "co-privacy", "q": "What personal data does Stratpoint collect from visitors to its website?", "slug": "privacy-notice", "expect": "retrieve", "axis": "entity-named"}
+{"id": "web-need-for-speed", "q": "Which Stratpoint webinar covers Confluent data streaming for customer experience?", "slug": "webinar-need-for-speed", "expect": "retrieve", "axis": "entity-named"}
+{"id": "eb-cx-disruptive", "q": "Which Stratpoint e-book covers using AI, AR and IoT to improve customer experience?", "slug": "disruptive-cx-strategies-redefining-cx-in-the-digital-age-e-book", "expect": "retrieve", "axis": "entity-named"}
+{"id": "co-webinars", "q": "What webinars has Stratpoint published?", "slug": "webinars", "expect": "retrieve", "axis": "entity-named"}
+{"id": "port-globe-ups", "q": "How much in monthly online payments does the Globe Unified Payment Service handle?", "slug": "portfolio-globe-unified-payment-service", "expect": "retrieve", "axis": "entity-named"}
+{"id": "eb-digital-acceleration", "q": "Does Stratpoint have an e-book with a framework for digital transformation?", "slug": "universal-approach-to-digital-acceleration-e-book", "expect": "retrieve", "axis": "entity-named"}
+{"id": "svc-qa", "q": "What quality assurance services does Stratpoint provide?", "slug": "qaservices1", "expect": "retrieve", "axis": "entity-named"}
+{"id": "svc-nops", "q": "By how much can nOps reduce cloud costs?", "slug": "nops", "expect": "retrieve", "axis": "entity-named"}
+{"id": "port-globe-platbook", "q": "What is the Globe PlatBook digital terminal and who uses it?", "slug": "portfolio-globe-platinum", "expect": "retrieve", "axis": "entity-named"}
+{"id": "svc-aws-migration", "q": "Does Stratpoint offer free AWS credits for new cloud migrations?", "slug": "aws-migration", "expect": "retrieve", "axis": "entity-named"}
+{"id": "svc-qa-playbook", "q": "What topics does the Stratpoint QA Playbook cover?", "slug": "qa-playbook-slides", "expect": "retrieve", "axis": "entity-named"}
+{"id": "svc-outsystems-p", "q": "Do you do OutSystems development?", "slug": "outsystems-offerings", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-outsystems"}
+{"id": "svc-qa-p", "q": "What QA services do you offer?", "slug": "qaservices1", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-qa"}
+{"id": "svc-nops-p", "q": "How much can you cut our cloud costs with nOps?", "slug": "nops", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-nops"}
+{"id": "svc-aws-migration-p", "q": "Do you give free AWS credits if we migrate?", "slug": "aws-migration", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-aws-migration"}
+{"id": "co-privacy-p", "q": "What personal data do you collect from me on your website?", "slug": "privacy-notice", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "co-privacy"}
+{"id": "co-webinars-p", "q": "What webinars have you published?", "slug": "webinars", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "co-webinars"}
+{"id": "blog-alibaba-landingzone-p", "q": "Are you a certified Landing Zone partner of Alibaba Cloud?", "slug": "2024__09__16__stratpoint-named-as-phs-first-landing-zone-certified-partner-of-alibaba-cloud", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "blog-alibaba-landingzone"}
+{"id": "svc-qa-playbook-p", "q": "What does your QA Playbook cover?", "slug": "qa-playbook-slides", "expect": "retrieve", "axis": "pronoun", "paraphrase_of": "svc-qa-playbook"}
+{"id": "abs-headcount", "q": "How many employees does Stratpoint have?", "expect": "abstain"}
+{"id": "abs-revenue", "q": "What was Stratpoint's revenue last year?", "expect": "abstain"}
+{"id": "abs-pricing", "q": "How much does Stratpoint charge for OutSystems development?", "expect": "abstain"}
+{"id": "abs-cfo", "q": "Who is Stratpoint's CFO?", "expect": "abstain"}
+{"id": "abs-vietnam", "q": "Does Stratpoint have an office in Vietnam?", "expect": "abstain"}
+{"id": "abs-stock", "q": "Is Stratpoint publicly traded and what is its ticker?", "expect": "abstain"}
+{"id": "abs-intern-stipend", "q": "What stipend does Stratpoint pay its interns?", "expect": "abstain"}
+{"id": "abs-founded", "q": "What quarter did Stratpoint open its Cebu office?", "expect": "abstain"}
