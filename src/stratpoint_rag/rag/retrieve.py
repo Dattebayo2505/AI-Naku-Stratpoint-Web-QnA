@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .embeddings import Embedder, get_embedder
 from .models import Chunk
+from .query_rewrite import anchor_entity
 from .store import VectorStore
 
 _embedder: Embedder | None = None
@@ -28,5 +29,8 @@ def retrieve(
     if store is None:
         _store = _store or VectorStore()
         store = _store
-    vec = embedder.embed([query])[0]
+    # Anchored here rather than at a caller so every retrieval path — the direct
+    # answer_grounded() route and both agent tools — gets it from one place.
+    # Only the embedded text changes; the query shown to the LLM is untouched.
+    vec = embedder.embed([anchor_entity(query)])[0]
     return store.query(vec, k=k)
