@@ -17,6 +17,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
+
+from ..models import Chunk
 
 GOLD = Path(__file__).with_name("gold.jsonl")
 
@@ -99,3 +102,45 @@ def load_cases(path: Path = GOLD, known_slugs: set[str] | None = None) -> list[G
     if problems:
         raise GoldSetError(f"{path}:\n  " + "\n  ".join(problems))
     return cases
+
+
+@dataclass(frozen=True)
+class CaseResult:
+    id: str
+    expect: str
+    axis: str | None
+    rank: int | None        # 0-based rank of the gold slug; None when absent
+    gold_score: float | None
+    top1_score: float | None
+
+
+def evaluate_case(case: GoldCase, chunks: list[Chunk]) -> CaseResult:
+    """Score one case against the chunks retrieval returned for it.
+
+    A page is split across chunks, so the gold slug can appear more than once;
+    the best (first) occurrence is the one that counts.
+    """
+    rank: int | None = None
+    gold_score: float | None = None
+    if case.slug is not None:
+        for i, c in enumerate(chunks):
+            if c.slug == case.slug:
+                rank, gold_score = i, c.score
+                break
+    return CaseResult(
+        id=case.id,
+        expect=case.expect,
+        axis=case.axis,
+        rank=rank,
+        gold_score=gold_score,
+        top1_score=chunks[0].score if chunks else None,
+    )
+
+
+def run_cases(
+    cases: list[GoldCase],
+    retrieve_fn: Callable[[str, int], list[Chunk]],
+    k: int = 5,
+) -> list[CaseResult]:
+    """Evaluate every case. Retrieval is injected so metrics stay testable."""
+    return [evaluate_case(c, retrieve_fn(c.q, k)) for c in cases]
