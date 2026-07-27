@@ -91,9 +91,12 @@ def _heuristic_classify(user_input: str, context: str | None = None) -> IntentQu
         check_text = f"{text} {context.lower()}"
 
     if not text:
+        # Certain, not a guess — so it must score above the 0.7 escalation
+        # threshold in classify(). At 0.6 an empty string was sent to the LLM,
+        # which confidently called it a greeting and overrode this branch.
         return IntentQuery(
             intent=IntentCategory.NEEDS_CLARIFICATION,
-            confidence=0.6,
+            confidence=0.95,
             reasoning="Empty input",
         )
 
