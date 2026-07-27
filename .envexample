@@ -13,6 +13,8 @@ CHROMA_DIR=
 CHROMA_COLLECTION=
 
 # RAG — generation LLM (NVIDIA-hosted NIM, OpenAI-compatible chat/completions)
+# Blank = the config.py default, meta/llama-3.1-8b-instruct. One key works for
+# any NIM model, so switching models needs only this line.
 LLM_MODEL=
 NVIDIA_BASE_URL=
 NVIDIA_API_KEY=

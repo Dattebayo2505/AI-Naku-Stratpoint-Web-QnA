@@ -33,9 +33,15 @@ def embedding_model() -> str:
 
 
 def llm_model() -> str:
-    # NVIDIA-hosted NIM (cloud) — see plan Decision #1
+    # NVIDIA-hosted NIM (cloud) — see plan Decision #1.
+    #
+    # Default switched from google/gemma-4-31b-it to meta/llama-3.1-8b-instruct:
+    # gemma's latency was the user-visible complaint (mean ~6s and as high as 73s
+    # on the agent path under endpoint load, vs ~1-5s for llama) at equivalent
+    # answer quality on the corpus. Every LLM call site reads this one function,
+    # so this is the single switch for the whole app.
     val = os.getenv("LLM_MODEL")
-    return val if val else "google/gemma-4-31b-it"
+    return val if val else "meta/llama-3.1-8b-instruct"
 
 
 def nvidia_base_url() -> str:

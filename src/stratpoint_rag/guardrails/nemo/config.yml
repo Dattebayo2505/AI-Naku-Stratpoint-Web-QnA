@@ -1,7 +1,9 @@
 models:
   - type: main
     engine: openai
-    model: google/gemma-4-31b-it
+    # Overridden at load by nemo_guardrails._build_rails from
+    # rag.config.llm_model() — keep in sync with that default.
+    model: meta/llama-3.1-8b-instruct
     parameters:
       api_key: ${NVIDIA_API_KEY}
       base_url: https://integrate.api.nvidia.com/v1
