@@ -71,3 +71,5 @@ We evaluated all 6 configurations against a fixed test set of **7 questions** (5
     }
     ```
 *   **Analysis**: Programmatically consumable. The app can inspect `is_grounded: false` and choose how to handle the refusal, while keeping the grounding reasoning completely separate.
+
+> **Schema note (recorded after this experiment):** the `reasoning` field shown above was part of `GroundedAnswer` when this ablation was run, and the outputs are quoted verbatim. It was later removed from the schema in favor of the model's *native* reasoning (NIM `enable_thinking` → `reasoning_content`), which is surfaced separately rather than as a JSON field. The current contract is `answer`, `citations`, `is_grounded`, `confidence`.
