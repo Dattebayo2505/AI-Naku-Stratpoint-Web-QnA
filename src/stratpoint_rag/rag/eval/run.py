@@ -14,12 +14,14 @@ knowing before it is built.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from ..loader import load_manifest
 from ..models import Chunk
 
 GOLD = Path(__file__).with_name("gold.jsonl")
@@ -251,3 +253,80 @@ def separation(results: list[CaseResult], k: int = 5) -> Separation:
         abstain_total=len(abstain_top1),
         gold_total=len(gold_scores),
     )
+
+
+BASELINE = Path(__file__).with_name("baseline.json")
+DEFAULT_INDEX = Path("data") / "index.jsonl"
+
+
+def corpus_fingerprint(index_path: Path = DEFAULT_INDEX) -> str:
+    """`<page count>:<hash over slug+content_hash>` for present pages.
+
+    Uses the corpus invariant from CLAUDE.md — a page is present when status is
+    ok OR skipped — via loader.load_manifest, so this tracks exactly the set
+    ingestion indexes.
+    """
+    rows = load_manifest(Path(index_path))
+    payload = "\n".join(sorted(f"{r['slug']}:{r.get('content_hash', '')}" for r in rows))
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f"{len(rows)}:{digest}"
+
+
+def write_baseline(
+    path: Path, results: list[CaseResult], embed_model: str, fingerprint: str
+) -> None:
+    payload = {
+        "embed_model": embed_model,
+        "fingerprint": fingerprint,
+        "cases": {
+            r.id: {"rank": r.rank, "gold_score": r.gold_score, "top1_score": r.top1_score}
+            for r in results
+        },
+    }
+    Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def load_baseline(path: Path = BASELINE) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def baseline_is_stale(baseline: dict, embed_model: str, fingerprint: str) -> str | None:
+    """Return a human-readable reason the baseline cannot be trusted, or None."""
+    if baseline.get("embed_model") != embed_model:
+        return (
+            f"embedding model changed: baseline={baseline.get('embed_model')!r} "
+            f"now={embed_model!r}"
+        )
+    if baseline.get("fingerprint") != fingerprint:
+        return (
+            f"corpus changed: baseline={baseline.get('fingerprint')!r} now={fingerprint!r}"
+        )
+    return None
+
+
+@dataclass(frozen=True)
+class Delta:
+    id: str
+    rank_before: int | None
+    rank_after: int | None
+    score_before: float | None
+    score_after: float | None
+
+
+def diff_baseline(results: list[CaseResult], baseline: dict) -> list[Delta]:
+    """One Delta per current case. Cases dropped from the gold set are ignored —
+    the current run defines the case list."""
+    prior = baseline.get("cases", {})
+    out = []
+    for r in results:
+        was = prior.get(r.id, {})
+        out.append(
+            Delta(
+                id=r.id,
+                rank_before=was.get("rank"),
+                rank_after=r.rank,
+                score_before=was.get("gold_score"),
+                score_after=r.gold_score,
+            )
+        )
+    return out
