@@ -80,3 +80,20 @@ Instructions:
 Study these examples of how to answer:
 """ + FEW_SHOT_JSON_EXAMPLES
 
+
+
+# ==========================================
+# V4 + prompted reasoning
+# ==========================================
+# Reasoning is PROMPTED here because NIM's endpoint for
+# meta/llama-3.1-8b-instruct does not support native thinking. The preamble is
+# split off in rag/answer.py, which keeps GroundedAnswer at four fields — no
+# `reasoning` field is reintroduced into the schema.
+#
+# Appended AFTER the few-shot examples on purpose: those examples show
+# JSON-only replies, and the instruction has to be the last thing the model
+# reads or it gets overridden by them.
+SYSTEM_PROMPT_V4_COMBINED_REASONING = SYSTEM_PROMPT_V4_COMBINED + """
+Before the JSON object, write your grounding reasoning as ONE short paragraph on a single line, beginning with `Reasoning: `. Then output the JSON object.
+Output nothing else: no code fences, and no commentary after the JSON.
+"""

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+
 import httpx
 
 from stratpoint_rag.rag import config
@@ -40,6 +42,35 @@ def _strip_code_fences(s: str) -> str:
     return s.strip()
 
 
+_REASONING_PREFIX = re.compile(r"^\s*Reasoning:\s*", re.IGNORECASE)
+
+
+def _split_reasoning(raw: str) -> tuple[str, str | None]:
+    """Split a 'Reasoning: ...' preamble off the front of a JSON reply.
+
+    Returns (json_body, reasoning). If the preamble is absent — the model
+    ignored the instruction — returns the input unchanged with None, so
+    non-compliance degrades to 'no reasoning' rather than a parse failure.
+    """
+    s = (raw or "").strip()
+    if not _REASONING_PREFIX.match(s):
+        return raw, None
+    brace = s.find("{")
+    if brace == -1:
+        return raw, None
+
+    reasoning = _REASONING_PREFIX.sub("", s[:brace]).strip()
+    # Without json_object mode the model often fences the body. Splitting at
+    # '{' leaves the ```json OPENER on the tail of the reasoning text and the
+    # closing fence on the tail of the body — neither is caught by
+    # _strip_code_fences, which only handles a leading fence. Trim both.
+    reasoning = re.sub(r"```(?:json)?\s*$", "", reasoning).strip()
+    body = s[brace:].rstrip()
+    if body.endswith("```"):
+        body = body[:-3].rstrip()
+    return body, (reasoning or None)
+
+
 def answer(query: str, k: int = _DEFAULT_K) -> tuple[str, list[Chunk]]:
     """Backward-compatible 2-tuple seam (used by agent tools).
 
@@ -53,12 +84,12 @@ def answer_grounded(
     query: str, k: int = _DEFAULT_K, enable_reasoning: bool = False
 ) -> tuple[str, list[Chunk], GroundedAnswer | None, str | None]:
     """Like answer(), but also returns the parsed GroundedAnswer (or None on
-    parse-failure fallback) and the model's native reasoning text (or None).
+    parse-failure fallback) and the model's reasoning text (or None).
 
-    When ``enable_reasoning`` is set, NIM's ``enable_thinking`` is requested. Note
-    (live-confirmed): ``response_format=json_object`` SUPPRESSES reasoning, so in
-    that mode we drop it and rely on the V4 prompt's JSON instruction; the parse
-    fallback below covers any non-compliance.
+    When ``enable_reasoning`` is set, the reasoning prompt variant is used and
+    ``response_format`` is dropped (json_object mode forbids the prose
+    preamble). The model's ``Reasoning:`` line is split off and returned as the
+    4th element; the remainder is parsed as the GroundedAnswer JSON.
     """
     key = config.nvidia_api_key()
     if not key:
@@ -67,10 +98,12 @@ def answer_grounded(
     # 1. Retrieve the top-k relevant context chunks
     chunks = retrieve(query, k=k)
 
-    # 2. Build the system and user prompts for the winning variant
-    system_prompt, user_prompt = build_prompt(
-        query, chunks, variant="v4_combined_lowtemp"
-    )
+    # 2. Build the system and user prompts. Reasoning is prompted, not native:
+    #    NIM's endpoint for meta/llama-3.1-8b-instruct does not support
+    #    enable_thinking, so the reasoning variant asks for a 'Reasoning:'
+    #    preamble ahead of the JSON and we split it off below.
+    variant = "v4_combined_reasoning" if enable_reasoning else "v4_combined_lowtemp"
+    system_prompt, user_prompt = build_prompt(query, chunks, variant=variant)
 
     # 3. Call the NVIDIA NIM endpoint
     body = {
@@ -84,9 +117,9 @@ def answer_grounded(
         "top_p": 0.95,
         "stream": False,
     }
-    if enable_reasoning:
-        body["chat_template_kwargs"] = {"enable_thinking": True}
-    else:
+    # json_object mode forbids the prose preamble, so it is only used when
+    # reasoning is off — where it keeps its hard JSON guarantee.
+    if not enable_reasoning:
         body["response_format"] = {"type": "json_object"}
 
     llm_timeout = config.llm_timeout()
@@ -99,8 +132,10 @@ def answer_grounded(
     resp.raise_for_status()
     message = resp.json()["choices"][0]["message"]
     raw_response = message["content"]
-    # Defensive: live NIM returns "reasoning_content"; keep "reasoning" as a fallback.
-    reasoning = message.get("reasoning_content") or message.get("reasoning")
+
+    reasoning = None
+    if enable_reasoning:
+        raw_response, reasoning = _split_reasoning(raw_response)
 
     # 4. Parse and validate the response (tolerate markdown-fenced JSON, which
     #    appears on the reasoning-on path where json_object mode is disabled).

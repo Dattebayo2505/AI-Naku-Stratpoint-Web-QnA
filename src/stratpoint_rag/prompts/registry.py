@@ -20,4 +20,5 @@ PROMPT_VARIANTS: dict[str, VariantConfig] = {
     "v3_role_structured": VariantConfig(use_schema=True, temperature=0.3),
     "v4_combined_lowtemp": VariantConfig(use_schema=True, temperature=0.1),
     "v4_combined_hightemp": VariantConfig(use_schema=True, temperature=0.8),
+    "v4_combined_reasoning": VariantConfig(use_schema=True, temperature=0.1),
 }

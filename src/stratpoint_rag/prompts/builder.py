@@ -13,6 +13,7 @@ from .system_prompts import (
     SYSTEM_PROMPT_V2_COT,
     SYSTEM_PROMPT_V3_ROLE_STRUCTURED,
     SYSTEM_PROMPT_V4_COMBINED,
+    SYSTEM_PROMPT_V4_COMBINED_REASONING,
 )
 
 if TYPE_CHECKING:
@@ -39,6 +40,9 @@ def build_prompt(query: str, chunks: list[Chunk], variant: str) -> tuple[str, st
     elif variant in ("v4_combined_lowtemp", "v4_combined_hightemp"):
         schema_json = json.dumps(GroundedAnswer.model_json_schema(), indent=2)
         sys_tmpl = SYSTEM_PROMPT_V4_COMBINED.replace("{schema_format}", schema_json)
+    elif variant == "v4_combined_reasoning":
+        schema_json = json.dumps(GroundedAnswer.model_json_schema(), indent=2)
+        sys_tmpl = SYSTEM_PROMPT_V4_COMBINED_REASONING.replace("{schema_format}", schema_json)
     else:
         raise ValueError(f"Unknown prompt variant: {variant!r}")
 
