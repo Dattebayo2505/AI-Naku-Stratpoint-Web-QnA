@@ -184,10 +184,3 @@ TOOL_SPECS: list[ToolSpec] = [
 ]
 
 TOOL_REGISTRY: dict[str, Callable[[str], str]] = {s.name: s.fn for s in TOOL_SPECS}
-
-# TEMPORARY BRIDGE — deleted in the cutover task. agent.py still builds a
-# LangChain agent; re-wrap the plain callables so that path keeps working and
-# the suite stays green until it is removed.
-from langchain_core.tools import tool as _lc_tool  # noqa: E402
-
-TOOLS = [_lc_tool(s.fn) for s in TOOL_SPECS]

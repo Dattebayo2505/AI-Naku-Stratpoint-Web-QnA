@@ -1,62 +1,50 @@
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-
+"""run_agent is a thin seam over react.run_react."""
 from stratpoint_rag.agent import agent
 
 
-class _FakeAgent:
-    """Stands in for a compiled create_react_agent; records the input, returns canned messages."""
-    def __init__(self, messages):
-        self._messages = messages
-        self.seen = None
+class ScriptedChat:
+    def __init__(self, *turns):
+        self._turns = list(turns)
+        self.calls = []
 
-    def invoke(self, payload, config=None):
-        self.seen = payload
-        return {"messages": self._messages}
+    def __call__(self, messages, stop):
+        self.calls.append({"messages": [dict(m) for m in messages], "stop": list(stop)})
+        return self._turns.pop(0)
 
 
-def test_run_agent_returns_agentresult_from_injected_agent():
-    fake = _FakeAgent([
-        HumanMessage(content="services?"),
-        AIMessage(content="We build software, cloud, data, and AI solutions."),
-    ])
-    result = agent.run_agent("What services do you offer?", agent=fake)
+def test_run_agent_returns_agentresult_from_injected_chat():
+    chat = ScriptedChat("Answer: We build software, cloud, data, and AI solutions.")
+    result = agent.run_agent("What services do you offer?", chat=chat)
+
     assert result.answer == "We build software, cloud, data, and AI solutions."
-    # the user message is threaded into the agent payload
-    assert fake.seen["messages"][-1] == ("user", "What services do you offer?")
+    assert chat.calls[0]["messages"][-1] == {
+        "role": "user", "content": "What services do you offer?",
+    }
 
 
 def test_run_agent_threads_history():
-    fake = _FakeAgent([AIMessage(content="ok")])
+    chat = ScriptedChat("Answer: ok")
     agent.run_agent(
         "and pricing?",
         history=[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}],
-        agent=fake,
+        chat=chat,
     )
-    assert fake.seen["messages"] == [
-        ("user", "hi"), ("assistant", "hello"), ("user", "and pricing?"),
+    # [0] is the system prompt; history follows, then the new message.
+    assert chat.calls[0]["messages"][1:] == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": "and pricing?"},
     ]
+
+
+def test_run_agent_forwards_enable_reasoning():
+    chat = ScriptedChat("Thought: Considering.\nAnswer: ok")
+    assert agent.run_agent("hi", chat=chat, enable_reasoning=True).reasoning == "Considering."
+    chat = ScriptedChat("Thought: Considering.\nAnswer: ok")
+    assert agent.run_agent("hi", chat=chat, enable_reasoning=False).reasoning is None
 
 
 def test_agent_package_reexports():
     import stratpoint_rag.agent as pkg
+
     assert hasattr(pkg, "run_agent") and hasattr(pkg, "AgentResult")
-
-
-def test_build_agent_sets_generous_timeout(monkeypatch):
-    """Regression: the NIM client must be built with a timeout well above the
-    ~40s steady-state agent latency, so a transient spike doesn't 502."""
-    import langchain_nvidia_ai_endpoints as nv
-    import langgraph.prebuilt as lp
-
-    captured = {}
-
-    class _FakeChat:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(nv, "ChatNVIDIA", _FakeChat)
-    monkeypatch.setattr(lp, "create_react_agent", lambda llm, tools, prompt=None: object())
-    monkeypatch.setattr(agent.config, "nvidia_api_key", lambda: "test-key")
-
-    agent._build_agent()
-    assert captured.get("timeout", 0) >= 120

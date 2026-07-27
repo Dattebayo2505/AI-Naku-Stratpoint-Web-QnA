@@ -234,7 +234,7 @@ def run_with_guardrails(
         agent_tools.begin_capture()
         try:
             result = run_agent(
-                message, history=history, agent=agent, enable_reasoning=enable_reasoning
+                message, history=history, chat=agent, enable_reasoning=enable_reasoning
             )
             source_chunks = agent_tools.captured_chunks()
             grounded_list = agent_tools.captured_grounded()
