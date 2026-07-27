@@ -32,7 +32,7 @@ def main():
         enable_reasoning = st.toggle(
             "Enable reasoning",
             value=False,
-            help="Let the model think step-by-step before answering (slower, more thorough).",
+            help="Show the assistant's step-by-step reasoning. On direct questions this also makes it reason before answering (slower, more thorough).",
         )
 
         st.markdown("---")

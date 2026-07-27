@@ -107,12 +107,16 @@ The **first** `--incremental` run after a full crawl recrawls everything — a p
 
 Grounded-answer prompting, structured so the system prompt is the only thing that varies across experiments. Layout:
 
-- **`schema.py`** — `GroundedAnswer` (Pydantic): the structured-JSON contract the LLM must return — `answer`, `citations: list[Citation]`, `is_grounded`, `confidence`. This is the public output type; `Citation` and `GroundedAnswer` are re-exported from `prompts/__init__.py`. There is deliberately **no `reasoning` field**: it was removed in favor of the model's native reasoning (NIM `enable_thinking` → `reasoning_content`), which `rag/answer.py` returns as a separate 4th tuple element and `AgentResult.reasoning` carries to the UI. Don't reintroduce it into the schema.
+- **`schema.py`** — `GroundedAnswer` (Pydantic): the structured-JSON contract the LLM must return — `answer`, `citations: list[Citation]`, `is_grounded`, `confidence`. This is the public output type; `Citation` and `GroundedAnswer` are re-exported from `prompts/__init__.py`. There is deliberately **no `reasoning` field**: reasoning is produced by *prompting*, not by a
+model feature. NIM's endpoint for `meta/llama-3.1-8b-instruct` does not support native thinking, so
+the `v4_combined_reasoning` variant asks for a `Reasoning:` prose line ahead of the JSON object and
+`rag/answer.py` splits it off, returning it as a separate 4th tuple element that `AgentResult.reasoning`
+carries to the UI. Don't reintroduce it into the schema.
 - **`system_prompts.py`** + **`few_shot_examples.py`** — five system-prompt templates (`V0_ZEROSHOT`, `V1_FEWSHOT`, `V2_COT`, `V3_ROLE_STRUCTURED`, `V4_COMBINED`); the V2–V4 templates embed the schema via a `{schema_format}` placeholder that `builder.py` fills with `GroundedAnswer.model_json_schema()`.
-- **`registry.py`** — `PROMPT_VARIANTS`: six named `VariantConfig`s (the five above plus `v4_combined_hightemp`) pinning `use_schema`/`temperature`/`top_p` per experiment.
+- **`registry.py`** — `PROMPT_VARIANTS`: seven named `VariantConfig`s (the five above plus `v4_combined_hightemp` and `v4_combined_reasoning`) pinning `use_schema`/`temperature`/`top_p` per experiment.
 - **`builder.py`** — `build_prompt(query, chunks, variant) -> (system_prompt, user_prompt)` is the seam. **The user prompt (context blocks + question) is held byte-identical across every variant** so the system prompt is the sole independent variable — preserve that when adding variants.
 
-`rag/answer.py` is now the **real** answer path (no longer throwaway scaffolding): it calls `build_prompt(..., variant="v4_combined_lowtemp")` — the winning variant — sends `response_format={"type": "json_object"}` at `temperature=0.1`, validates the reply with `GroundedAnswer.model_validate_json`, and falls back to the raw string on parse failure. This means `rag` imports `prompts` (allowed); `prompts` must not import `rag` except under `TYPE_CHECKING` (it does this for the `Chunk` type). `config.py` now calls `load_dotenv()` at import so `.env` is read without an external shell export.
+`rag/answer.py` is now the **real** answer path (no longer throwaway scaffolding): it picks the variant by `enable_reasoning` — `v4_combined_lowtemp` (the winning variant) when off, `v4_combined_reasoning` when on — validates the reply with `GroundedAnswer.model_validate_json` at `temperature=0.1`, and falls back to the raw string on parse failure. `response_format={"type": "json_object"}` is sent only on the reasoning-off path; json_object mode forbids the `Reasoning:` prose preamble, so reasoning-on drops it and `_split_reasoning` strips the preamble (and any code fence) before parsing. This means `rag` imports `prompts` (allowed); `prompts` must not import `rag` except under `TYPE_CHECKING` (it does this for the `Chunk` type). `config.py` now calls `load_dotenv()` at import so `.env` is read without an external shell export.
 
 ## Deployment target
 

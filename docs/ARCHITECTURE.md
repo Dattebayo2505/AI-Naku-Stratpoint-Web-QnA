@@ -16,7 +16,7 @@ The chatbot half of the repository. `stratpoint_rag` is organized as one subpack
 | `disambiguation/` | Intent classification, slot extraction, and the clarification loop that runs before retrieval |
 | `guardrails/` | Input/output checks: keyword blocking, PII redaction, topic filtering, hallucination detection, advice blocking, conversation memory |
 | `guardrails/nemo/` | Optional NeMo Guardrails config: Colang 2.x flows plus custom actions that delegate back to the built-in checks |
-| `agent/` | LangGraph ReAct agent, its two tools, and `run_with_guardrails()` — the single orchestration entry the API calls |
+| `agent/` | Plain-text ReAct agent, its two tools, and `run_with_guardrails()` — the single orchestration entry the API calls |
 | `api/` | FastAPI app exposing `POST /chat` and `GET /health` |
 | `ui/` | Streamlit chat UI: transcript, debug panel, resource downloads, API client |
 | `evaluation/` | Results and findings artifacts for the prompt-engineering experiment (no code) |
@@ -51,7 +51,7 @@ Two independent paths meet at the Chroma store.
 2. Input guardrails: built-in `KeywordBlocker` then `PIIRedactor` (fast, no API cost), then optionally the NeMo input rails.
 3. `disambiguation/router.py` classifies intent and extracts slots; greetings, off-topic, harmful, and too-vague inputs are answered without retrieval.
 4. Answer, on one of two branches:
-   - resource-shaped requests → `agent/agent.py:run_agent()`, a LangGraph ReAct loop over `search_stratpoint` / `find_resource`, with the tools' retrieved chunks captured through context vars so the output guardrails have something to verify against;
+   - resource-shaped requests → `agent/agent.py:run_agent()`, a plain-text ReAct loop over `search_stratpoint` / `find_resource`, with the tools' retrieved chunks captured through context vars so the output guardrails have something to verify against;
    - everything else → `rag/answer.py:answer_grounded()`, a single call: `retrieve(query, k=8)` → `prompts/builder.py:build_prompt(..., "v4_combined_lowtemp")` → NVIDIA NIM → `GroundedAnswer` validation.
 5. Output guardrails: built-in `AdviceBlocker` → `HallucinationChecker` (embedding cosine similarity ≥ 0.6 against the source chunks) → `OutputPIIChecker`, then optionally the NeMo output rails.
 6. `guardrails/memory.py` records the turn and tracks the clarify streak that drives the escalation hand-off; the `AgentResult` returns to the UI, whose debug panel renders citations, trace, reasoning, and grounding status.
@@ -115,8 +115,10 @@ Two independent paths meet at the Chroma store.
 
 | File | What it does | Depends on |
 |---|---|---|
-| `agent/agent.py` | `AgentResult` / `Step` / `Link` models, trace extraction from a LangGraph message list, and `run_agent()` — one ReAct turn against NIM via `ChatNVIDIA` (one compiled agent cached per reasoning flag) | `rag/config.py`, `agent/tools.py` |
-| `agent/tools.py` | The only two tools the agent may call: `search_stratpoint` (grounded Q&A) and `find_resource` (PDF links mined from retrieved chunks). Also the context-var capture sinks that let the guardrail layer read back what the tools grounded on | `rag/answer.py`, `rag/retrieve.py` |
+| `agent/models.py` | `AgentResult` / `Step` / `Link` — the structured result types, in their own module so `react.py` and `agent.py` don't import each other | — |
+| `agent/react.py` | The plain-text ReAct loop: renders the system prompt from `TOOL_SPECS`, calls NIM over `httpx` with `stop=["Observation:", "PAUSE"]`, parses `Thought`/`Action`/`Answer`, dispatches tools, and falls back to `search_stratpoint` when the loop can't finish | `rag/config.py`, `agent/tools.py`, `agent/models.py` |
+| `agent/agent.py` | `run_agent()` — the public seam, delegating to `react.run_react`; re-exports the models | `agent/react.py`, `agent/models.py` |
+| `agent/tools.py` | The only two tools the agent may call: `search_stratpoint` (grounded Q&A) and `find_resource` (PDF links mined from retrieved chunks) — plain callables plus the `TOOL_SPECS` registry whose descriptions render into the loop's system prompt. Also the context-var capture sinks that let the guardrail layer read back what the tools grounded on | `rag/answer.py`, `rag/retrieve.py` |
 | `agent/guardrail_agent.py` | `run_with_guardrails()` — the orchestrator: input guardrails → disambiguation → answer (ReAct branch for resource asks, direct RAG otherwise, with a Chroma `$contains` augmentation for contact/location queries) → output guardrails → memory and escalation. Also `clear_memory()` | `agent/agent.py`, `agent/tools.py`, `disambiguation/router.py`, `disambiguation/schemas.py`, `guardrails/memory.py`, `guardrails/pipeline.py`, `guardrails/schemas.py`, `rag/answer.py`, `rag/store.py` |
 | `agent/__init__.py` | Re-exports the public seam: `run_agent`, `run_with_guardrails`, `clear_memory`, `AgentResult`, `Link`, `Step` | `agent/agent.py`, `agent/guardrail_agent.py` |
 

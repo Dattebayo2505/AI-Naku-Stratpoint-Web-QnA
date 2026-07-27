@@ -1102,20 +1102,6 @@ wheels = [
 ]
 
 [[package]]
-name = "langchain-nvidia-ai-endpoints"
-version = "1.4.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "langchain-core" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/70/11/f0bc526fbe1bffcfa053a302f3ac93f59cb0a136a86c16c6fb92c6af0166/langchain_nvidia_ai_endpoints-1.4.3.tar.gz", hash = "sha256:8076a99cecb5318e285e47668ab7ec884b0e188aad5b3d37221e6b155f9f536c", size = 59121, upload-time = "2026-07-02T00:38:06.146Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/de/1f0a9a7b464a212c5f8e761f445f7c539c38956fe4e178e19a4a9a27c745/langchain_nvidia_ai_endpoints-1.4.3-py3-none-any.whl", hash = "sha256:f71966a079f1800ae292b4add953509481d149dc3bc4a3f60b9c09742642d043", size = 64484, upload-time = "2026-07-02T00:38:04.983Z" },
-]
-
-[[package]]
 name = "langchain-protocol"
 version = "0.0.18"
 source = { registry = "https://pypi.org/simple" }
@@ -3152,10 +3138,6 @@ dependencies = [
     { name = "chromadb" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "langchain" },
-    { name = "langchain-core" },
-    { name = "langchain-nvidia-ai-endpoints" },
-    { name = "langgraph" },
     { name = "lxml" },
     { name = "markdownify" },
     { name = "playwright" },
@@ -3187,12 +3169,8 @@ requires-dist = [
     { name = "chromadb", specifier = ">=0.5.0" },
     { name = "fastapi", specifier = ">=0.139.0" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "langchain", specifier = ">=1.0" },
     { name = "langchain", marker = "extra == 'nemo'", specifier = ">=0.3.0" },
     { name = "langchain-community", marker = "extra == 'nemo'", specifier = ">=0.3.0" },
-    { name = "langchain-core", specifier = ">=1.4.8" },
-    { name = "langchain-nvidia-ai-endpoints", specifier = ">=1.4.3" },
-    { name = "langgraph", specifier = ">=1.2.7" },
     { name = "lxml", specifier = ">=6.1.1" },
     { name = "markdownify", specifier = ">=1.2.2" },
     { name = "nemoguardrails", marker = "extra == 'nemo'", specifier = ">=0.17.0" },
