@@ -8,36 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from pydantic import BaseModel
-
-
-class Link(BaseModel):
-    title: str
-    url: str
-
-
-class Step(BaseModel):
-    type: str  # "thought" | "action" | "observation" | "answer"
-    tool: str | None = None
-    tool_input: dict | None = None
-    content: str | None = None
-
-
-class AgentResult(BaseModel):
-    answer: str
-    citations: list[Link] = []
-    resources: list[Link] = []
-    trace: list[Step] = []
-    # Grounding + guardrail metadata surfaced to the UI debug panel. Optional so
-    # the ReAct path (which has no grounding score) and existing callers/tests
-    # keep working; populated by run_with_guardrails on the RAG path.
-    is_grounded: bool | None = None
-    confidence: float | None = None
-    guardrail_reason: str | None = None
-    # Native model reasoning (NIM enable_thinking), when requested. Populated by
-    # the RAG path (from answer_grounded) and the agent path (from _build_result).
-    reasoning: str | None = None
-
+from stratpoint_rag.agent.models import AgentResult, Link, Step
 
 _LINK_LINE = re.compile(r"^- (.+?) \((https?://[^)]+)\)\s*$", re.MULTILINE)
 
