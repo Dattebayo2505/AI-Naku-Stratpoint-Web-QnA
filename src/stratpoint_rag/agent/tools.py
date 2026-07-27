@@ -1,14 +1,15 @@
 """Agent tools: corpus-grounded Q&A and downloadable-resource lookup.
 
-Both are LangChain @tool functions; the docstrings drive tool selection, so
-keep them descriptive. These are the only tools the ReAct agent may call.
+Both are plain callables. Tool selection is driven by the `description` on
+their ToolSpec below, which is rendered into the ReAct loop's system prompt.
+These are the only tools the agent may call.
 """
 from __future__ import annotations
 
 import contextvars
 import re
-
-from langchain_core.tools import tool
+from dataclasses import dataclass
+from typing import Callable
 
 from stratpoint_rag.rag.answer import answer_grounded as _rag_answer_grounded
 from stratpoint_rag.rag.retrieve import retrieve as _retrieve
@@ -83,7 +84,6 @@ def _extract_doc_links(text: str) -> list[tuple[str, str]]:
     return out
 
 
-@tool
 def search_stratpoint(query: str) -> str:
     """Answer a question about Stratpoint using the company's website content.
     Use for anything about Stratpoint's services, company, case studies, or blog.
@@ -100,7 +100,6 @@ def search_stratpoint(query: str) -> str:
         return f"search_stratpoint error: {type(ex).__name__}: {ex}"
 
 
-@tool
 def find_resource(topic: str) -> str:
     """Find downloadable resources (PDFs/whitepapers) related to a topic, drawn
     from Stratpoint's website content. Use when the visitor wants something to
@@ -136,4 +135,59 @@ def find_resource(topic: str) -> str:
     return f"Downloadable resources for '{topic}':\n{lines}"
 
 
-TOOLS = [search_stratpoint, find_resource]
+@dataclass(frozen=True)
+class ToolSpec:
+    """One tool the ReAct loop may call.
+
+    `description` is rendered into the loop's system prompt, so a tool cannot be
+    added without the prompt learning about it — which is how the old setup
+    drifted (descriptions lived in both the docstring and SYSTEM_PROMPT).
+    `arg` is the parameter name, used only to label the trace step.
+    """
+
+    name: str
+    fn: Callable[[str], str]
+    arg: str
+    description: str
+
+
+# Wording here is load-bearing and was tuned against live llama-3.1-8b:
+#   - search_stratpoint must be named the DEFAULT, or an 8B model calls
+#     find_resource for plain questions and answers "not available in the
+#     downloadable resources".
+#   - find_resource must demand the visitor's FULL wording; resources are
+#     matched against source text, so terse topics miss the document.
+TOOL_SPECS: list[ToolSpec] = [
+    ToolSpec(
+        name="search_stratpoint",
+        fn=search_stratpoint,
+        arg="query",
+        description=(
+            "Answer any question about Stratpoint using the company's website "
+            "content: the company, its people and leaders, services, case "
+            "studies, or blog posts. This is the default tool. Input: the "
+            "visitor's question, e.g. 'Do you offer cloud migration?'"
+        ),
+    ),
+    ToolSpec(
+        name="find_resource",
+        fn=find_resource,
+        arg="topic",
+        description=(
+            "Find downloadable resources (PDFs, whitepapers, reports) on a "
+            "topic. Use ONLY when the visitor asks for a document to read or "
+            "download. Input: the visitor's FULL, specific wording, keeping "
+            "their figures and years, e.g. 'how many business tasks will be "
+            "automated by 2027'. Do NOT shorten it to broad keywords."
+        ),
+    ),
+]
+
+TOOL_REGISTRY: dict[str, Callable[[str], str]] = {s.name: s.fn for s in TOOL_SPECS}
+
+# TEMPORARY BRIDGE — deleted in the cutover task. agent.py still builds a
+# LangChain agent; re-wrap the plain callables so that path keeps working and
+# the suite stays green until it is removed.
+from langchain_core.tools import tool as _lc_tool  # noqa: E402
+
+TOOLS = [_lc_tool(s.fn) for s in TOOL_SPECS]

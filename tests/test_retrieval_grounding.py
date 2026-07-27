@@ -63,5 +63,5 @@ def test_find_resource_surfaces_anchor_matched_pdf():
     query that matches only the link's anchor text (the reported failure)."""
     from stratpoint_rag.agent.tools import find_resource
 
-    out = find_resource.invoke("mobile phone usage patterns")
+    out = find_resource("mobile phone usage patterns")
     assert "Behavior-Revealed-in-Mobile-Phone-Usage-Predicts-Credit-Repayment.pdf" in out
