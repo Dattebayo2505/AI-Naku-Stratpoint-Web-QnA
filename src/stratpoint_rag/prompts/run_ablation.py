@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import sys
 from pathlib import Path
 import httpx
 from pydantic import ValidationError
@@ -145,7 +143,6 @@ def run_ablation() -> None:
                 json_valid = False
                 refusal_correct = False
                 confidence = 0.0
-                reasoning = ""
                 answer = raw_response
 
                 if var_config.use_schema:
@@ -153,7 +150,6 @@ def run_ablation() -> None:
                         parsed = GroundedAnswer.model_validate_json(raw_response)
                         json_valid = True
                         confidence = parsed.confidence
-                        reasoning = parsed.reasoning
                         answer = parsed.answer
                         # Refusal check: out-of-scope question should have is_grounded=False
                         if item["is_out_of_scope"]:
@@ -189,7 +185,6 @@ def run_ablation() -> None:
                     "is_out_of_scope": item["is_out_of_scope"],
                     "raw_response": raw_response,
                     "parsed_answer": answer,
-                    "reasoning": reasoning,
                     "json_valid": json_valid,
                     "refusal_correct": refusal_correct,
                     "confidence": confidence,
