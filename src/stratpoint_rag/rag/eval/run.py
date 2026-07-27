@@ -15,6 +15,7 @@ knowing before it is built.
 from __future__ import annotations
 
 import json
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -194,3 +195,59 @@ def divergent_pairs(
         if base in hits and twin in hits and hits[base] != hits[twin]:
             out.append((base, twin))
     return out
+
+
+@dataclass(frozen=True)
+class Separation:
+    gold_min: float | None
+    gold_p25: float | None
+    gold_median: float | None
+    abstain_median: float | None
+    abstain_p75: float | None
+    abstain_max: float | None
+    overlap_count: int
+    abstain_total: int
+    gold_total: int
+
+
+def _quantile(values: list[float], q: float) -> float:
+    """Nearest-rank quantile. Avoids interpolation so a reported cutoff is
+    always a score some case actually produced."""
+    ordered = sorted(values)
+    idx = min(int(q * len(ordered)), len(ordered) - 1)
+    return ordered[idx]
+
+
+def separation(results: list[CaseResult], k: int = 5) -> Separation:
+    """Compare gold-chunk scores against unanswerable-question top-1 scores.
+
+    `overlap_count` — abstain cases scoring above the median gold chunk — is the
+    number Session 4 hangs on. Only *hit* answerable cases contribute a gold
+    score: a miss has no gold chunk to score, and a gold chunk ranked outside k
+    was not actually retrieved.
+    """
+    gold_scores = [
+        r.gold_score for r in results
+        if r.expect == EXPECT_RETRIEVE and _hit(r, k) and r.gold_score is not None
+    ]
+    abstain_top1 = [
+        r.top1_score for r in results
+        if r.expect == EXPECT_ABSTAIN and r.top1_score is not None
+    ]
+
+    gold_median = statistics.median(gold_scores) if gold_scores else None
+    overlap = (
+        sum(1 for s in abstain_top1 if s > gold_median) if gold_scores and abstain_top1 else 0
+    )
+
+    return Separation(
+        gold_min=min(gold_scores) if gold_scores else None,
+        gold_p25=_quantile(gold_scores, 0.25) if gold_scores else None,
+        gold_median=gold_median,
+        abstain_median=statistics.median(abstain_top1) if abstain_top1 else None,
+        abstain_p75=_quantile(abstain_top1, 0.75) if abstain_top1 else None,
+        abstain_max=max(abstain_top1) if abstain_top1 else None,
+        overlap_count=overlap,
+        abstain_total=len(abstain_top1),
+        gold_total=len(gold_scores),
+    )
