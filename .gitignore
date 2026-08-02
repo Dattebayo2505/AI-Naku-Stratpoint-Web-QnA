@@ -23,4 +23,7 @@ Thumbs.db
 .env
 
 # Chroma DB
-chroma_db/
+chroma_db/
+
+# LLMOps trace sink
+llmops_traces.jsonl

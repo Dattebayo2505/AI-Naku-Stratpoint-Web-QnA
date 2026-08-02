@@ -22,3 +22,7 @@ LLM_TIMEOUT=300
 
 # UI — base URL of the API (blank = http://localhost:8000; docker-compose sets http://api:8000)
 STRATPOINT_API_URL=
+
+# LLMOps — JSONL trace sink (Component #8); blank = defaults in stratpoint_rag/llmops
+LLMOPS_ENABLED=
+LLMOPS_LOG_PATH=

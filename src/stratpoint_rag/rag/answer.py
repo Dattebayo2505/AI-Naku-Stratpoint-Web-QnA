@@ -12,6 +12,7 @@ import re
 
 import httpx
 
+from stratpoint_rag import llmops
 from stratpoint_rag.rag import config
 from stratpoint_rag.rag.models import Chunk
 from stratpoint_rag.rag.retrieve import retrieve
@@ -130,7 +131,9 @@ def answer_grounded(
         timeout=llm_timeout,
     )
     resp.raise_for_status()
-    message = resp.json()["choices"][0]["message"]
+    data = resp.json()
+    llmops.add_usage(data.get("usage"))  # per-request token accumulator
+    message = data["choices"][0]["message"]
     raw_response = message["content"]
 
     reasoning = None

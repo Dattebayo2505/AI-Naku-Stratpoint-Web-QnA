@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from stratpoint_rag import llmops
 from stratpoint_rag.agent.models import AgentResult, Link, Step
 from stratpoint_rag.agent.tools import TOOL_REGISTRY, TOOL_SPECS
 from stratpoint_rag.rag import config
@@ -193,7 +194,9 @@ def _default_chat(messages: list[dict], stop: list[str]) -> str:
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"].get("content") or ""
+    data = resp.json()
+    llmops.add_usage(data.get("usage"))  # per-request token accumulator
+    return data["choices"][0]["message"].get("content") or ""
 
 
 def _arg_name(tool: str) -> str:
