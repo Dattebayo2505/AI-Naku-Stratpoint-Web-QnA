@@ -5,7 +5,14 @@ These live in their own module so `react.py` (which builds them) and `agent.py`
 """
 from __future__ import annotations
 
+from typing import Any
 from pydantic import BaseModel
+
+from stratpoint_rag.agent.contracts import (
+    EstimationResult,
+    ExtractedRequirements,
+    PDFGenerationResult,
+)
 
 
 class Link(BaseModel):
@@ -21,6 +28,14 @@ class Step(BaseModel):
     content: str | None = None
 
 
+class ProposalData(BaseModel):
+    """Assembled project proposal data collected across tool calls."""
+
+    requirements: ExtractedRequirements | dict[str, Any] | None = None
+    estimation: EstimationResult | dict[str, Any] | None = None
+    pdf: PDFGenerationResult | dict[str, Any] | None = None
+
+
 class AgentResult(BaseModel):
     answer: str
     citations: list[Link] = []
@@ -33,7 +48,7 @@ class AgentResult(BaseModel):
     confidence: float | None = None
     guardrail_reason: str | None = None
     # The loop's own "Thought:" lines, joined. Surfaced only when the caller
-    # passes enable_reasoning=True. This is PROMPTED reasoning, not a model
-    # feature: NIM's endpoint for meta/llama-3.1-8b-instruct does not support
-    # native thinking, which is why enable_thinking was removed.
+    # passes enable_reasoning=True.
     reasoning: str | None = None
+    # Assembled project proposal data (timeline, cost, PDF, requirements)
+    proposal_data: ProposalData | dict[str, Any] | None = None
