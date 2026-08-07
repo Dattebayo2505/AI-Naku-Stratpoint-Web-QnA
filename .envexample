@@ -16,9 +16,30 @@ CHROMA_COLLECTION=
 # Blank = the config.py default, meta/llama-3.1-8b-instruct. One key works for
 # any NIM model, so switching models needs only this line.
 LLM_MODEL=
-NVIDIA_BASE_URL=
-NVIDIA_API_KEY=
+NVIDIA_API_KEY=nvapi-
 LLM_TIMEOUT=300
+
+# docparse — vision model for transcribing uploaded client briefs.
+# One key works for any NIM model, so NVIDIA_VISION_API_KEY is OPTIONAL: blank
+# falls back to NVIDIA_API_KEY. A second key is only a quota lever (40 RPM per
+# model). Blank VISION_MODEL = the docparse/config.py default.
+VISION_MODEL=
+NVIDIA_VISION_API_KEY=
+
+# docparse — uploads + parsing. Defaults live in stratpoint_rag/docparse/config.py;
+# blank = use the default, shown after each name:
+#   UPLOAD_DIR                    data/uploads
+#   UPLOAD_TTL_SECONDS            3600
+#   UPLOAD_MAX_BYTES              25000000
+#   DOCPARSE_MAX_PAGES            20
+#   DOCPARSE_CONCURRENCY          4
+#   DOCPARSE_TEXT_LAYER_MIN_CHARS 100   (rasterize a page only below this many chars)
+UPLOAD_DIR=
+UPLOAD_TTL_SECONDS=
+UPLOAD_MAX_BYTES=
+DOCPARSE_MAX_PAGES=
+DOCPARSE_CONCURRENCY=
+DOCPARSE_TEXT_LAYER_MIN_CHARS=
 
 # UI — base URL of the API (blank = http://localhost:8000; docker-compose sets http://api:8000)
 STRATPOINT_API_URL=

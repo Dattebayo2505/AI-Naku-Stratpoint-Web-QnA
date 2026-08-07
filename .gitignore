@@ -26,4 +26,7 @@ Thumbs.db
 chroma_db/
 
 # LLMOps trace sink
-llmops_traces.jsonl
+llmops_traces.jsonl
+
+# docparse — uploaded client briefs (confidential) + their transcriptions
+data/uploads/
