@@ -127,6 +127,22 @@ def test_sends_the_tuning_constants(client):
 
 
 @respx.mock
+def test_uses_the_vision_timeout_not_the_chat_one(client):
+    """Observed live: under rate limiting NVIDIA throttles by DELAYING rather
+    than returning 429, so tenacity never fires — one page took 173s against a
+    1.5s baseline. At LLM_TIMEOUT (300s) a 20-page brief could block for well
+    over an hour. A bounded per-page ceiling turns that hang into a recorded
+    failed page, which is the degradation the rest of the design already
+    assumes."""
+    route = respx.post(URL).mock(return_value=_ok())
+
+    client.describe(JPEG, "prompt")
+
+    assert route.calls.last.request.extensions["timeout"]["read"] == config.VISION_TIMEOUT
+    assert config.VISION_TIMEOUT < config.llm_timeout()
+
+
+@respx.mock
 def test_authorizes_with_the_vision_key(client):
     route = respx.post(URL).mock(return_value=_ok())
 

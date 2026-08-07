@@ -18,11 +18,12 @@ src/
 └── stratpoint_rag/      # the chatbot (one subpackage per component)
     ├── rag/             # BUILT — chunking, embeddings, Chroma store, retrieve() seam, ingest CLI
     ├── prompts/         # BUILT — system-prompt variants (v0–v4), few-shot examples, build_prompt() seam, GroundedAnswer schema
+    ├── docparse/        # BUILT (hop 1) — uploaded brief (PDF/image) → Markdown transcription
     ├── disambiguation/  # planned — ambiguous-input detection; clarify intent before tool calls
     ├── guardrails/      # planned — input/output guardrails
     ├── agent/           # planned — ReAct agent orchestrating retrieval + tools
-    ├── api/             # planned — HTTP API endpoint (e.g. FastAPI)
-    ├── ui/              # planned — Streamlit chat UI
+    ├── api/             # BUILT — FastAPI: /chat, /upload, /upload/{id}/parse, /metrics
+    ├── ui/              # BUILT — Streamlit chat UI + client-brief uploader
     └── evaluation/      # planned — retrieval / answer-quality evals
 ```
 
@@ -117,6 +118,94 @@ carries to the UI. Don't reintroduce it into the schema.
 - **`builder.py`** — `build_prompt(query, chunks, variant) -> (system_prompt, user_prompt)` is the seam. **The user prompt (context blocks + question) is held byte-identical across every variant** so the system prompt is the sole independent variable — preserve that when adding variants.
 
 `rag/answer.py` is now the **real** answer path (no longer throwaway scaffolding): it picks the variant by `enable_reasoning` — `v4_combined_lowtemp` (the winning variant) when off, `v4_combined_reasoning` when on — validates the reply with `GroundedAnswer.model_validate_json` at `temperature=0.1`, and falls back to the raw string on parse failure. `response_format={"type": "json_object"}` is sent only on the reasoning-off path; json_object mode forbids the `Reasoning:` prose preamble, so reasoning-on drops it and `_split_reasoning` strips the preamble (and any code fence) before parsing. This means `rag` imports `prompts` (allowed); `prompts` must not import `rag` except under `TYPE_CHECKING` (it does this for the `Chunk` type). `config.py` now calls `load_dotenv()` at import so `.env` is read without an external shell export.
+
+## Document parsing (`stratpoint_rag.docparse`)
+
+Hop 1 of the client-brief pipeline: an uploaded PDF or image becomes one
+complete Markdown transcription with provenance. **Transcription only** —
+turning that into `ExtractedRequirements` is hop 2 and is not built.
+
+`transcribe_document(path, *, vision=None) -> TranscriptionResult` is the seam.
+`render.py` is the only PyMuPDF call site (PyMuPDF is AGPL unless licensed;
+keeping it there makes a swap to `pypdfium2` a contained change).
+
+### Key design decisions (read before editing)
+
+These came out of a live probe of `meta/llama-3.2-11b-vision-instruct` and are
+counter-intuitive enough that they *will* be re-litigated by anyone reading only
+the NVIDIA docs.
+
+- **The OpenAI multimodal payload form is mandatory.** `content` must be a list
+  of `{"type":"text"}` + `{"type":"image_url"}` parts. The HTML-`<img>` form
+  returns **HTTP 200** while the base64 is tokenized as plain text and never
+  reaches the vision encoder — the model then hallucinates a fluent description
+  of an image it never saw. Token accounting is the tell: the same 11,268-char
+  base64 billed 8,058 prompt tokens under HTML-img vs 1,628 under the OpenAI
+  form. The HTML form belongs to the legacy `ai.api.nvidia.com/v1/vlm/...`
+  NVCF endpoints.
+
+- **1120px is a TILE cap, not a size cap.** Billing is exactly 1,601 tokens per
+  tile + 27 overhead, hard-capped at 4 tiles, so everything past ~1120px on the
+  long edge is silently discarded. Higher resolution costs the *same* and
+  transcribes *worse*: an invoice page that transcribed perfectly at 1120x1456
+  dropped its entire Overview body at 2240x2912. There is **no ~180 KB payload
+  limit** here (a 25.6 MB base64 body returned 200); that figure belongs to the
+  legacy NVCF endpoints. Do not build a downscale ladder or an asset-upload path.
+
+- **One image per request.** Two gets `"At most 1 image(s) may be provided in
+  one prompt."` — HTTP 400, refused before inference. A multi-page PDF is N
+  separate calls with no cross-page context, which is *why* Python owns the
+  `## Page N` wrapper and the model is restricted to `###` and deeper.
+
+- **Workers return usage; the parent accumulates.** `llmops/usage.py` is a
+  `threading.local()` that assumes one request per thread. Calling `add_usage()`
+  from inside a page worker writes to an accumulator the request thread never
+  reads — ~129k prompt tokens per 20-page brief would vanish from `/metrics`.
+  Page tasks return `(markdown, usage)`; the caller sums and records.
+
+- **Instructions go in a system message, never beside the image.** Sent in the
+  same user turn, the model transcribed the page and then kept going, emitting
+  `### Rules` plus every prompt bullet verbatim as though printed on the page.
+
+- **Negative prompt framing backfires on this model.** "X is never a figure"
+  suppressed figure blocks on real diagrams too. Use positive, concrete cues.
+  Residual known behaviour is recorded in `docparse/prompts.py` — read it before
+  re-tuning, so the same ground is not re-walked.
+
+- **Rasterize on the calling thread, fan out only the model calls.** PyMuPDF
+  pages are not thread-safe and rendering is milliseconds against a ~5s network
+  call.
+
+- **The text layer is the cost saver.** A page is rasterized only when its
+  embedded text is under `DOCPARSE_TEXT_LAYER_MIN_CHARS` (default 100) or it
+  carries a large image. A 30-page digital RFP therefore costs **zero** vision
+  calls; the text layer is ground truth and vision is a guess at it.
+
+- **`VISION_TIMEOUT` is 90s, deliberately below `LLM_TIMEOUT`.** Under rate
+  limiting this endpoint throttles by *delaying*, not by returning 429, so
+  tenacity never fires — one measured page took 173s against a 1.5s baseline.
+  The ceiling converts an indefinite stall into one entry in `pages_failed`.
+
+- **No clock inside the package.** `store.sweep(now=...)` takes the timestamp
+  from the API layer, the same rule that keeps the crawler deterministic.
+
+### Uploads
+
+`POST /upload` (validate + store, no model) is split from
+`POST /upload/{id}/parse` (hop 1) because you cannot show a page count before
+opening the file, and the confirmation dialog needs one. **Ids, never paths** —
+a path in a chat message would be LLM-generated free text flowing into `open()`,
+and `guardrails` guards the user's *message*, not tool arguments.
+
+Storage is `data/uploads/<session_id>/<upload_id>/` (gitignored). Three
+independent cleanups, none of them "delete on next run" keyed to the UI:
+purge-on-API-boot, a TTL sweep on each upload, and explicit delete. Streamlit
+re-executes `ui/app.py` on every widget interaction, so keying cleanup to script
+execution would delete the file the user just uploaded.
+
+**Known limitation, deferred by decision: prompt injection via uploaded
+content.** A brief is attacker-controllable and hop 1 transcribes it verbatim by
+design.
 
 ## Deployment target
 

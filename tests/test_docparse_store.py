@@ -156,6 +156,40 @@ def test_saving_a_transcription_for_an_unknown_upload_raises(uploads):
         store.save_transcription("sess", store.new_upload_id(), "# nope")
 
 
+def test_provenance_is_stored_structurally_not_reparsed_from_markdown(uploads):
+    """The API serves cached parses from this, so it must not depend on
+    re-reading YAML frontmatter — the two would drift, and pages_via_vision is
+    not in the frontmatter at all."""
+    uid = store.new_upload_id()
+    store.save_upload("sess", uid, "b.pdf", PDF)
+
+    store.save_transcription(
+        "sess", uid, "## Page 1", provenance={"pages_parsed": 11, "pages_failed": [7]}
+    )
+
+    record = store.find_upload("sess", uid)
+    assert record.provenance == {"pages_parsed": 11, "pages_failed": [7]}
+
+
+def test_provenance_is_none_before_a_transcription_exists(uploads):
+    uid = store.new_upload_id()
+    store.save_upload("sess", uid, "b.pdf", PDF)
+
+    assert store.find_upload("sess", uid).provenance is None
+
+
+def test_saving_a_transcription_preserves_the_upload_metadata(uploads):
+    uid = store.new_upload_id()
+    store.save_upload("sess", uid, "client-brief.pdf", PDF)
+
+    store.save_transcription("sess", uid, "## Page 1", provenance={"pages_parsed": 1})
+
+    record = store.find_upload("sess", uid)
+    assert record.filename == "client-brief.pdf"
+    assert record.sha256 == hashlib.sha256(PDF).hexdigest()
+    assert record.path.read_bytes() == PDF
+
+
 # ── deletion ────────────────────────────────────────────────────────────────
 
 

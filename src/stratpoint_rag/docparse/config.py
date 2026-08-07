@@ -18,6 +18,7 @@ load_dotenv()
 __all__ = [
     "MAX_TOKENS",
     "TEMPERATURE",
+    "VISION_TIMEOUT",
     "concurrency",
     "llm_timeout",
     "max_pages",
@@ -43,6 +44,19 @@ __all__ = [
 # instead of transcribing.
 TEMPERATURE = 0.1
 MAX_TOKENS = 2048
+
+# Per-page ceiling on one vision call, deliberately far below LLM_TIMEOUT (300s).
+#
+# A page normally returns in ~1.5-5s. But under rate limiting this endpoint
+# throttles by DELAYING rather than returning 429 — one measured page took 173s
+# against a 1.5s baseline, and tenacity never fired because the response was a
+# perfectly good 200 that simply arrived late. At 300s a 20-page brief could
+# block for the better part of an hour, long past any client timeout.
+#
+# 90s is ~4.5x the documented p95 (20s), so it does not clip a merely slow page,
+# but it converts an indefinite stall into one recorded entry in pages_failed —
+# the same soft degradation the rest of the page loop already assumes.
+VISION_TIMEOUT = 90
 
 
 def _int_env(var: str, default: int) -> int:

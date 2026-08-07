@@ -10,6 +10,70 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-08-07 — Built the client-brief reader: drop in a PDF, get a faithful transcription
+
+**What we did**
+- Worked from a two-part plan that splits the document reader into a **transcription
+  stage** (`DOCPARSE-HOP1-PLAN.md`) and a later **requirements-extraction stage**
+  (`DOCPARSE-HOP2-PLAN.md`), and built the first stage end to end. The split means a
+  demoable feature ships even if the second stage slips.
+- Decided the transcription stage produces **ground truth only** — a complete, verbatim
+  rendering that preserves the document's own headings, bullets, and tables. Reorganising
+  content into Requirements / Constraints / Timeline is deliberately left to the second
+  stage, so a wrong answer can always be traced to one stage rather than two.
+- Chose to **read a document's built-in text layer wherever one exists** and send only
+  scans, images, and diagram pages to the vision model. A fully digital 30-page proposal
+  request now transcribes in seconds at no model cost, and the text layer is exact where
+  the vision model is only a good guess.
+- Decided to **accept PDFs and images but not PowerPoint or Word files.** Supporting them
+  would have meant a large office-software install on the deployment container, and the
+  lightweight alternative reads only text — missing exactly the diagrams and architecture
+  slides where requirements actually live. "Export your deck to PDF" is a five-second ask.
+- Established that uploaded briefs are **confidential and short-lived**: stored per
+  conversation, deleted on request, swept automatically, and wiped whenever the service
+  restarts.
+- Ran the finished pipeline against real documents to check quality, and tuned the
+  instructions given to the vision model based on what came back.
+
+**Key decisions**
+- **Transcribe eagerly, the moment a file is dropped**, rather than when the visitor asks
+  a question. The wait then lands where someone expects a progress spinner instead of
+  appearing as a hang mid-conversation.
+- **Show the visitor what failed.** Every transcription reports how many pages were read,
+  how many needed the vision model, and which pages could not be read at all — so a
+  scanned page that did not make it is visible *before* anyone acts on a quote built from
+  the document.
+- **Cap each document at 20 pages** as a cost and waiting-time guard.
+- **Never let the assistant handle file paths.** Uploads are referenced by an opaque id,
+  so a document's contents can never steer the system toward a file on disk.
+
+**What we produced**
+- A working client-brief reader: drag a PDF or image into the sidebar, confirm, and a
+  structured Markdown transcription appears with its own provenance summary.
+- Quality findings from live testing, recorded alongside the code so they are not
+  rediscovered: bordered tables transcribe accurately; diagrams yield their boxes and
+  connections but only approximately; and the model occasionally adds a redundant
+  description of a table it already transcribed correctly.
+- Deployment guidance confirming the feature adds **no new system-level installs** to the
+  container, plus its disk-usage envelope (`docs/deploy-lxc-6gb-no-docker.md`).
+- Updated setup and usage documentation (`README.md`, `CLAUDE.md`).
+
+**Open / to decide**
+- **A contract change needs to be agreed with two teammates** before the next stage: the
+  parser will no longer invent a client or project name when a brief omits one, and the
+  cost estimator and proposal generator both need to handle their absence. The estimator
+  also has to settle on peso ranges with itemised lines rather than a single dollar figure.
+- **Requirements extraction (stage two) is not built** — today the transcription is
+  produced and displayed, but the assistant does not yet reason over it.
+- **Prompt injection through uploaded documents is a known, accepted gap.** A brief is
+  transcribed faithfully by design, so instructions hidden inside one would be carried
+  through. Worth naming in the writeup as a limitation.
+- **Evaluation is deferred.** One cheap idea worth keeping: any digital PDF's own text
+  layer is free ground truth, so the vision path can be scored against it automatically
+  with no manual annotation.
+
+---
+
 ## 2026-07-27 — Switched to a faster model, then rebuilt the assistant to work without the features it lacks
 
 **What we did**

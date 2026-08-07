@@ -22,6 +22,7 @@ src/
 └── stratpoint_rag/      #  the chatbot
     ├── rag/             #  chunking, embeddings, vector store, retrieval, grounded answers
     ├── prompts/         #  prompt engineering: system prompts, few-shot, CoT
+    ├── docparse/        #  uploaded client briefs (PDF/image) → Markdown transcription
     ├── disambiguation/  #  ambiguous-input detection, clarify intent before tool calls
     ├── guardrails/      #  input/output guardrails (built-in + optional NeMo)
     ├── agent/           #  ReAct agent orchestrating retrieval + tools
@@ -60,7 +61,26 @@ pip install pytest pytest-asyncio respx   # dev deps (or: pip install --group de
 playwright install chromium               # one-time browser download (required)
 ```
 
-With pip, drop the `uv run` prefix from the commands below (e.g. just
+### With conda / mamba
+
+Conda supplies the interpreter; the project's own deps still come from pip,
+because they are declared in `pyproject.toml` rather than as conda packages.
+
+```bash
+conda create -n stratpoint-rag python=3.13   # or: mamba create ...
+conda activate stratpoint-rag
+
+pip install -e .                          # deps + the stratpoint-crawler console script
+pip install pytest pytest-asyncio respx   # dev deps
+playwright install chromium               # one-time browser download (required)
+```
+
+If you later add a package with a heavyweight binary dependency (PyTorch being
+the usual one), install *that* through conda first — picking the CUDA/CPU build
+explicitly — and then run `pip install -e .` so pip resolves around it instead
+of pulling a second copy.
+
+With pip or conda, drop the `uv run` prefix from the commands below (e.g. just
 `stratpoint-crawler --limit 5` or `python -m stratpoint_crawl --limit 5`).
 
 ## Configuration
@@ -190,10 +210,46 @@ uv run streamlit run src/stratpoint_rag/ui/app.py   # -> http://localhost:8501
 ```
 
 Expects the API at `STRATPOINT_API_URL` (default `http://localhost:8000`). The sidebar shows API
-health, the session ID, a conversation reset, and a reasoning toggle; each assistant turn carries
+health, a client-brief uploader, the session ID, a conversation reset, and a reasoning toggle; each assistant turn carries
 an "Under the hood" panel with sources, the agent trace, reasoning, and grounding status. The
 repo-root `run.ps1` / `run.bat` / `run.sh` launchers start the API and UI together and kill both
 process trees on stop.
+
+## Usage — client-brief upload (document parsing)
+
+Drop a PDF or image into the sidebar's **Client brief** section and confirm; a
+complete Markdown transcription is produced and shown in an expander. Accepted:
+`pdf`, `png`, `jpg`, `jpeg`, `webp`, `tiff`. Export decks and Word documents to
+PDF first — `.pptx`/`.docx` are rejected on purpose (see `CLAUDE.md`).
+
+The same thing over HTTP:
+
+```bash
+# 1. store + validate (sub-second, no model runs)
+curl -s -F "file=@client-brief.pdf" -F "session_id=demo" \
+     http://localhost:8000/upload
+# -> {"upload_id":"...","filename":"client-brief.pdf","pages":12,"sha256":"...","cached":false}
+
+# 2. transcribe (hop 1) — seconds to a couple of minutes depending on page count
+curl -s -X POST "http://localhost:8000/upload/<upload_id>/parse?session_id=demo"
+# -> {"markdown_path":"...","pages_total":12,"pages_parsed":11,"pages_failed":[7],...}
+
+# 3. drop it
+curl -s -X DELETE "http://localhost:8000/upload/<upload_id>?session_id=demo"
+```
+
+Pages that already carry a text layer are read directly and cost **no** model
+call, so a fully digital 30-page RFP transcribes in seconds; only scans, images,
+and diagram pages go to the vision model. `pages_failed` reports pages the model
+could not read — check it before acting on anything derived from the document.
+
+Re-uploading identical bytes in the same session returns the original
+`upload_id` with `cached: true` and reuses the existing transcription.
+
+> Uploaded briefs are stored under `data/uploads/` (gitignored), wiped when the
+> API restarts, and swept after `UPLOAD_TTL_SECONDS`. The transcription is
+> verbatim by design, so a brief containing injected instructions is transcribed
+> faithfully — treat uploaded content as untrusted.
 
 ## Usage — LLMOps metrics
 

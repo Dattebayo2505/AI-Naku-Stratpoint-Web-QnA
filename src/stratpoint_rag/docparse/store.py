@@ -75,6 +75,10 @@ class UploadRecord:
     filename: str
     sha256: str
     path: Path
+    # Hop-1 provenance, present once a transcription has been saved. Stored
+    # structurally rather than re-derived from the markdown's frontmatter: the
+    # two would drift, and pages_via_vision is not in the frontmatter at all.
+    provenance: dict | None = None
 
     @property
     def transcription_path(self) -> Path:
@@ -149,6 +153,7 @@ def _read_record(directory: Path) -> UploadRecord | None:
         filename=meta["filename"],
         sha256=meta["sha256"],
         path=directory / meta["stored_name"],
+        provenance=meta.get("provenance"),
     )
 
 
@@ -175,13 +180,26 @@ def find_by_sha256(session_id: str, sha256: str) -> UploadRecord | None:
     return None
 
 
-def save_transcription(session_id: str, upload_id: str, markdown: str) -> Path:
-    """Write the hop-1 artifact beside its source file."""
+def save_transcription(
+    session_id: str, upload_id: str, markdown: str, *, provenance: dict | None = None
+) -> Path:
+    """Write the hop-1 artifact beside its source file.
+
+    ``provenance`` is merged into the upload's metadata so a cached parse can be
+    served without re-reading the markdown.
+    """
     directory = _dir_for(session_id, upload_id)
-    if not (directory / _META).is_file():
+    meta_path = directory / _META
+    if not meta_path.is_file():
         raise FileNotFoundError(f"no upload {upload_id} in session {session_id}")
+
     path = directory / _TRANSCRIPTION
     path.write_text(markdown, encoding="utf-8")
+
+    if provenance is not None:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["provenance"] = provenance
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
     return path
 
 

@@ -133,7 +133,7 @@ class NimVisionClient:
             f"{config.nvidia_base_url()}/chat/completions",
             headers={"Authorization": f"Bearer {key}"},
             json=body,
-            timeout=config.llm_timeout(),
+            timeout=config.VISION_TIMEOUT,
         )
         try:
             resp.raise_for_status()

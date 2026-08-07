@@ -21,8 +21,26 @@ from stratpoint_rag.docparse.transcribe import transcribe_document
 A4_W, A4_H = 595, 842
 
 
+@pytest.fixture
+def serial(monkeypatch):
+    """Pin page concurrency to 1.
+
+    FakeVisionClient keys ``fail_on``/``reply`` to the order calls ARRIVE, but
+    the pool starts every page at once, so arrival order is a race and "page 2"
+    would mean whichever worker won the lock second. Tests that assert *which*
+    page failed use this; the product itself is order-safe because
+    transcribe_document sorts results by page number before accounting.
+    """
+    monkeypatch.setenv("DOCPARSE_CONCURRENCY", "1")
+
+
 class FakeVisionClient:
-    """Canned markdown + a call log. Mirrors FakeFetcher.calls."""
+    """Canned markdown + a call log. Mirrors FakeFetcher.calls.
+
+    ``fail_on`` and a callable ``reply`` are indexed by call arrival order, so
+    any test that depends on them matching page numbers must also use the
+    ``serial`` fixture.
+    """
 
     def __init__(self, reply="### Transcribed heading\n\nSome real body text.",
                  usage=None, fail_on=()):
@@ -202,7 +220,7 @@ def test_untruncated_document_reports_truncated_false(make_pdf):
 # ── failure handling: soft per page ─────────────────────────────────────────
 
 
-def test_a_raising_page_is_recorded_and_the_rest_continue(scanned_pdf):
+def test_a_raising_page_is_recorded_and_the_rest_continue(scanned_pdf, serial):
     """Crawler precedent: per-page failures are soft, the run continues."""
     vision = FakeVisionClient(fail_on=(2,))
 
@@ -214,7 +232,7 @@ def test_a_raising_page_is_recorded_and_the_rest_continue(scanned_pdf):
     assert "## Page 3" in result.markdown
 
 
-def test_a_refusal_is_treated_as_a_failed_page(scanned_pdf):
+def test_a_refusal_is_treated_as_a_failed_page(scanned_pdf, serial):
     """The model sometimes returns 'I'm unable to read this image.'"""
     vision = FakeVisionClient(
         reply=lambda n: "I'm unable to read this image." if n == 1 else "### Fine\n\nBody text here."
@@ -226,7 +244,7 @@ def test_a_refusal_is_treated_as_a_failed_page(scanned_pdf):
     assert "FAILED" in result.markdown.split("## Page 2")[0]
 
 
-def test_empty_output_is_treated_as_a_failed_page(scanned_pdf):
+def test_empty_output_is_treated_as_a_failed_page(scanned_pdf, serial):
     vision = FakeVisionClient(reply=lambda n: "" if n == 2 else "### Fine\n\nBody text here.")
 
     result = transcribe_document(scanned_pdf, vision=vision)
@@ -292,7 +310,7 @@ def test_frontmatter_carries_provenance(make_pdf):
     assert "pages_failed: []" in head
 
 
-def test_frontmatter_lists_failed_pages(scanned_pdf):
+def test_frontmatter_lists_failed_pages(scanned_pdf, serial):
     vision = FakeVisionClient(fail_on=(2,))
 
     result = transcribe_document(scanned_pdf, vision=vision)

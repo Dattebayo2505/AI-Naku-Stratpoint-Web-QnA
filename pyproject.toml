@@ -27,6 +27,9 @@ dependencies = [
     "pymupdf>=1.26.0",
     # Explicit (was transitive via streamlit) — pdf_gen templates the proposal.
     "jinja2>=3.1.0",
+    # Required by FastAPI to parse the multipart body on POST /upload. It was
+    # only ever present transitively; the upload endpoint depends on it directly.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
