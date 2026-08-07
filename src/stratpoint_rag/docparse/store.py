@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from stratpoint_rag.docparse import config
+from stratpoint_rag.docparse.models import BriefRef
 
 __all__ = [
     "UploadRecord",
@@ -50,6 +51,7 @@ __all__ = [
     "is_safe_id",
     "new_upload_id",
     "purge_all",
+    "resolve_briefs",
     "save_transcription",
     "save_upload",
     "sweep",
@@ -178,6 +180,37 @@ def find_by_sha256(session_id: str, sha256: str) -> UploadRecord | None:
         if record and record.sha256 == sha256:
             return record
     return None
+
+
+def resolve_briefs(session_id: str, upload_ids: list[str] | None) -> list[BriefRef]:
+    """Turn the chat request's opaque upload ids into resolved briefs.
+
+    Unknown ids are dropped rather than raising: an id can go stale between the
+    UI's sidebar and the API (TTL sweep, a delete from another tab, a restarted
+    uvicorn that purged on boot), and the right response to "that attachment is
+    gone" is a conversation without it, not a 500 mid-turn.
+
+    Session-scoped by construction, via ``find_upload``.
+    """
+    briefs: list[BriefRef] = []
+    for upload_id in upload_ids or []:
+        record = find_upload(session_id, upload_id)
+        if record is None:
+            continue
+        provenance = record.provenance or {}
+        has_markdown = record.transcription_path.is_file()
+        briefs.append(
+            BriefRef(
+                upload_id=record.upload_id,
+                filename=record.filename,
+                sha256=record.sha256,
+                markdown_path=str(record.transcription_path) if has_markdown else None,
+                pages_total=int(provenance.get("pages_total") or 0),
+                pages_parsed=int(provenance.get("pages_parsed") or 0),
+                pages_failed=list(provenance.get("pages_failed") or []),
+            )
+        )
+    return briefs
 
 
 def save_transcription(

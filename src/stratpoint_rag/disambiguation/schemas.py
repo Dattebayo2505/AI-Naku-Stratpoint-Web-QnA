@@ -8,6 +8,11 @@ from pydantic import BaseModel
 
 class IntentCategory(str, Enum):
     ASK_STRATPOINT = "ask_stratpoint"
+    # The visitor wants a scoped proposal for their OWN project — a quote, an
+    # estimate, a PDF. Distinct from ASK_STRATPOINT ("tell me about Stratpoint")
+    # because it is the one intent that needs a client/project name, and names
+    # are the one thing neither docparse hop is allowed to supply.
+    REQUEST_PROPOSAL = "request_proposal"
     GREETING = "greeting"
     OFF_TOPIC = "off_topic"
     NEEDS_CLARIFICATION = "needs_clarification"

@@ -13,11 +13,92 @@ INTENT_SLOTS: dict[IntentCategory, list[SlotDef]] = {
         SlotDef(name="project_name", description="Specific Stratpoint project if mentioned", required=False),
         SlotDef(name="service_type", description="Type of service (development, consulting, etc.)", required=False),
     ],
+    # NOTE the deliberately distinct names. INTENT_SLOTS[ASK_STRATPOINT] already
+    # has a slot called `project_name`, and it means something entirely
+    # different — *a Stratpoint case study the visitor is asking about*, not
+    # *the visitor's own project*. Conflating the two would be silent and wrong.
+    #
+    # Both are required=False on purpose. A required slot loops until the
+    # visitor supplies a value, which is exactly the coercion this whole design
+    # set out to remove: declining to name the engagement is a first-class
+    # answer, not a failure to answer.
+    IntentCategory.REQUEST_PROPOSAL: [
+        SlotDef(
+            name="brief_client_name",
+            description="The visitor's own client/company name for the proposal",
+            required=False,
+            llm_hint="Only if the visitor states it. Never infer it.",
+        ),
+        SlotDef(
+            name="brief_project_name",
+            description="The visitor's own project name for the proposal",
+            required=False,
+            llm_hint="Only if the visitor states it. Never infer it.",
+        ),
+    ],
     IntentCategory.GREETING: [],
     IntentCategory.OFF_TOPIC: [],
     IntentCategory.NEEDS_CLARIFICATION: [],
     IntentCategory.HARMFUL: [],
 }
+
+# An explicit "leave them blank". This is an ANSWER, not an absence of one —
+# commit 7f9ae17 stopped empty input escalating to the LLM, and a blank reply
+# here must be recorded as a declination rather than bounced back as ambiguous.
+_DECLINE_PATTERN = re.compile(
+    r"^\s*(no|nope|nah|skip|none|n/?a|blank|leave (?:it|them) blank|"
+    r"no thanks?|don'?t (?:have|know)|not (?:sure|yet)|prefer not(?: to)?)"
+    r"[\s.!]*$",
+    re.IGNORECASE,
+)
+
+_CLIENT_ANSWER = re.compile(
+    r"\bclient(?:\s*name)?\s*(?:is|:|=)\s*([^,;\n]+)", re.IGNORECASE
+)
+_PROJECT_ANSWER = re.compile(
+    r"\bproject(?:\s*name)?\s*(?:is|:|=)\s*([^,;\n]+)", re.IGNORECASE
+)
+
+
+def is_declination(user_input: str) -> bool:
+    """True when the visitor declined to supply a name (including by silence)."""
+    text = (user_input or "").strip()
+    return not text or bool(_DECLINE_PATTERN.match(text))
+
+
+def _clean_name(value: str) -> str | None:
+    text = value.strip().strip("\"'").strip(".,;:").strip()
+    return text if 2 <= len(text) <= 80 and any(c.isalpha() for c in text) else None
+
+
+def _extract_proposal_names(user_input: str, target_slot: str | None) -> dict[str, str]:
+    """Pull brief_client_name / brief_project_name out of a free-text answer.
+
+    Labelled forms win ("client is Northwind, project is Loyalty App"). An
+    unlabelled answer is assigned to whichever slot was actually asked about —
+    the visitor typing "Northwind Retail" at a question about the client name
+    means the client name, and requiring them to repeat the label would be
+    theatre.
+    """
+    if is_declination(user_input):
+        return {}
+
+    found: dict[str, str] = {}
+    for pattern, name in (
+        (_CLIENT_ANSWER, "brief_client_name"),
+        (_PROJECT_ANSWER, "brief_project_name"),
+    ):
+        m = pattern.search(user_input)
+        if m:
+            cleaned = _clean_name(m.group(1))
+            if cleaned:
+                found[name] = cleaned
+
+    if not found and target_slot:
+        cleaned = _clean_name(user_input)
+        if cleaned:
+            found[target_slot] = cleaned
+    return found
 
 _TOPIC_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"outsystems", re.IGNORECASE), "OutSystems"),
@@ -62,10 +143,23 @@ def extract_slots(
     user_input: str,
     intent: IntentCategory,
     history: list | None = None,
+    target_slot: str | None = None,
 ) -> SlotQuery:
     slot_defs = INTENT_SLOTS.get(intent, [])
     if not slot_defs:
         return SlotQuery(intent=intent, slots={}, missing_slots=[])
+
+    if intent == IntentCategory.REQUEST_PROPOSAL:
+        # The Stratpoint topic/service/project patterns below are about
+        # Stratpoint's own catalogue and mean nothing here; running them would
+        # stuff a `project_name` of "SM Retail App" into a proposal for someone
+        # else's project. Both slots are optional, so missing_slots stays empty
+        # and the loop terminates whatever the visitor says.
+        return SlotQuery(
+            intent=intent,
+            slots=_extract_proposal_names(user_input, target_slot),
+            missing_slots=[],
+        )
 
     slots: dict[str, str | None] = {}
     matched_keyword: str | None = None

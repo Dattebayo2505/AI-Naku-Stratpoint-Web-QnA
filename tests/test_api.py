@@ -48,7 +48,7 @@ def test_chat_maps_runtime_error_to_503(monkeypatch):
 def test_chat_forwards_enable_reasoning(monkeypatch):
     seen = {}
 
-    def fake(message, history=None, session_id=None, use_nemo=True, enable_reasoning=False):
+    def fake(message, history=None, session_id=None, use_nemo=True, enable_reasoning=False, **kw):
         seen["enable_reasoning"] = enable_reasoning
         return AgentResult(answer="ok", reasoning="thinking...")
 

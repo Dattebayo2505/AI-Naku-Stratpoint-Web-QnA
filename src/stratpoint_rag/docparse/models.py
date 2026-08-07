@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-__all__ = ["PageResult", "TranscriptionResult"]
+__all__ = ["BriefRef", "PageResult", "TranscriptionResult"]
 
 
 @dataclass(frozen=True)
@@ -39,3 +39,29 @@ class TranscriptionResult:
     pages_via_vision: int = 0
     truncated: bool = False
     usage: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BriefRef:
+    """A stored upload, resolved far enough for hop 2 and for the agent's
+    attachment manifest — but *not* its contents.
+
+    This is what an ``upload_id`` means once it has been looked up in a session:
+    where the transcription lives, how much of it hop 1 managed to read, and the
+    ``sha256`` that keys the hop-2 cache. The markdown itself is read lazily so
+    building a manifest for the system prompt does not pull a 40k-character
+    document into memory for every chat turn.
+    """
+
+    upload_id: str
+    filename: str
+    sha256: str
+    markdown_path: str | None = None
+    pages_total: int = 0
+    pages_parsed: int = 0
+    pages_failed: list[int] = field(default_factory=list)
+
+    @property
+    def transcribed(self) -> bool:
+        """True once hop 1 has run and left an artifact on disk."""
+        return self.markdown_path is not None

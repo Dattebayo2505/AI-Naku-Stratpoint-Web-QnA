@@ -66,12 +66,9 @@ class ChatRequest(BaseModel):
     # Upload ids, not paths. A list so multi-file generalizes later; merge
     # semantics ("whose constraints win?") are deliberately not built yet.
     #
-    # HOP 1 ACCEPTS THIS FIELD BUT DOES NOT FORWARD IT. Teaching the ReAct loop
-    # to use an attachment is hop 2: it needs the attachment manifest injected
-    # into the loop's context (without it the upload_id never reaches the model
-    # and the tool is uncallable), the parse_client_brief -> extract_brief_
-    # requirements rename, and conditional tool registration. Until then the
-    # field exists so the UI and the wire format are already the right shape.
+    # Resolved against `session_id` before it reaches the agent: an id that has
+    # been swept, deleted, or belongs to another session simply is not in the
+    # resulting brief list, so the loop is never offered a tool it cannot run.
     attachments: list[str] | None = None
 
 
@@ -103,6 +100,10 @@ def health() -> dict:
 def chat(req: ChatRequest) -> AgentResult:
     t = time.perf_counter()
     llmops.reset_usage()  # scope the token accumulator to this request
+    # Ids -> resolved briefs happens here, at the boundary that knows the
+    # session. The agent never sees an id it has not already had checked, and
+    # never sees a path at all.
+    briefs = store.resolve_briefs(req.session_id or "", req.attachments)
     try:
         result = run_with_guardrails(
             req.message,
@@ -110,7 +111,7 @@ def chat(req: ChatRequest) -> AgentResult:
             session_id=req.session_id,
             use_nemo=req.use_nemo,
             enable_reasoning=req.enable_reasoning,
-            # req.attachments is deliberately not passed — see ChatRequest.
+            briefs=briefs,
         )
     except RuntimeError as ex:  # config problems (e.g. missing API key)
         _record_chat(t, req, error="RuntimeError")

@@ -29,4 +29,7 @@ chroma_db/
 llmops_traces.jsonl
 
 # docparse — uploaded client briefs (confidential) + their transcriptions
-data/uploads/
+data/uploads/
+
+# generated proposal PDFs
+data/proposals/

@@ -41,6 +41,16 @@ DOCPARSE_MAX_PAGES=
 DOCPARSE_CONCURRENCY=
 DOCPARSE_TEXT_LAYER_MIN_CHARS=
 
+# docparse hop 2 — turning the transcription into structured requirements.
+# Runs on LLM_MODEL (above), not VISION_MODEL. Defaults, blank = use them:
+#   DOCPARSE_EXTRACTION_TOKEN_BUDGET 12000  (above this, split into page groups)
+#   DOCPARSE_EXTRACTION_GROUP_PAGES  5      (pages per group when it splits)
+# Raising the budget is NOT free: extraction quality collapses long before the
+# model's nominal 128k window, and it fails silently — requirements buried late
+# in a long brief are simply dropped from an otherwise well-formed answer.
+DOCPARSE_EXTRACTION_TOKEN_BUDGET=
+DOCPARSE_EXTRACTION_GROUP_PAGES=
+
 # UI — base URL of the API (blank = http://localhost:8000; docker-compose sets http://api:8000)
 STRATPOINT_API_URL=
 

@@ -188,7 +188,7 @@ def test_resource_query_answer_survives_output_guardrails(monkeypatch):
         title="QA", text=grounded_answer, score=0.9,
     )
 
-    def fake_run_agent(message, history=None, *, chat=None, enable_reasoning=False):
+    def fake_run_agent(message, history=None, *, chat=None, enable_reasoning=False, **kw):
         # Emulate a tool recording its chunks during the agent run.
         agent_tools._record_chunks([chunk])
         return AgentResult(answer=grounded_answer)
@@ -218,7 +218,7 @@ def test_resource_query_surfaces_grounding_metadata(monkeypatch):
         is_grounded=True, confidence=0.9,
     )
 
-    def fake_run_agent(message, history=None, *, chat=None, enable_reasoning=False):
+    def fake_run_agent(message, history=None, *, chat=None, enable_reasoning=False, **kw):
         agent_tools._record_chunks([chunk])
         agent_tools._record_grounded(grounded)
         return AgentResult(answer=answer_text)
@@ -241,7 +241,7 @@ def test_enable_reasoning_flag_reaches_run_agent(monkeypatch):
 
     seen = {}
 
-    def fake_run_agent(message, history=None, *, chat=None, enable_reasoning=False):
+    def fake_run_agent(message, history=None, *, chat=None, enable_reasoning=False, **kw):
         seen["enable_reasoning"] = enable_reasoning
         agent_tools._record_chunks([])
         return AgentResult(answer="ok", reasoning="thought" if enable_reasoning else None)

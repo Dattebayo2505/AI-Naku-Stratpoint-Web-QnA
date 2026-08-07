@@ -20,15 +20,19 @@ class ScriptedChat:
 
 @pytest.fixture(autouse=True)
 def _stub_tools(monkeypatch):
-    """Replace both tools with deterministic stand-ins, keeping the real
-    registry wiring (name -> callable) intact."""
-    monkeypatch.setitem(
-        react.TOOL_REGISTRY,
+    """Replace both tools with deterministic stand-ins.
+
+    Patched at the source functions, not on a module-level registry: the loop
+    builds its spec list per request (`build_tool_specs`), so a stale entry in
+    `TOOL_REGISTRY` would no longer be what the loop dispatches.
+    """
+    monkeypatch.setattr(
+        tools,
         "search_stratpoint",
         lambda q: f"We do {q}.\n\nSources used:\n- Cloud (https://stratpoint.com/cloud)",
     )
-    monkeypatch.setitem(
-        react.TOOL_REGISTRY,
+    monkeypatch.setattr(
+        tools,
         "find_resource",
         lambda t: f"Downloadable resources for '{t}':\n- AWS WP (https://aws.com/wp.pdf)",
     )
@@ -36,7 +40,7 @@ def _stub_tools(monkeypatch):
 
 def test_system_prompt_lists_every_tool():
     p = react.render_system_prompt()
-    for spec in tools.TOOL_SPECS:
+    for spec in tools.build_tool_specs():
         assert spec.name in p
     assert "Thought:" in p and "Action:" in p and "Answer:" in p
 
@@ -156,12 +160,8 @@ def test_fallback_calls_the_tool_so_guardrails_have_chunks(monkeypatch):
     message — the output guardrails verify against the chunks it records, and
     an answer with no sources gets blocked as unverifiable."""
     calls = []
-    # setitem, never a bare assignment: TOOL_REGISTRY is the same dict object
-    # as tools.TOOL_REGISTRY, so a raw write leaks into every later test.
-    monkeypatch.setitem(
-        react.TOOL_REGISTRY,
-        "search_stratpoint",
-        lambda q: calls.append(q) or "Grounded.",
+    monkeypatch.setattr(
+        tools, "search_stratpoint", lambda q: calls.append(q) or "Grounded."
     )
     chat = ScriptedChat("prose", "prose")
     react.run_react("the original question", chat=chat)

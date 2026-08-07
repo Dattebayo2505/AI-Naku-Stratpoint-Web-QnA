@@ -10,18 +10,31 @@ import os
 
 from dotenv import load_dotenv
 
-# Imported, not duplicated — one URL and one timeout to change.
-from stratpoint_rag.rag.config import llm_timeout, nvidia_base_url
+# Imported, not duplicated — one URL, one timeout, one text model to change.
+# Hop 2 runs on the same LLM_MODEL as the rest of the chat path; a second
+# knob would let the extractor silently drift onto a different model than the
+# one every latency decision in rag/config.py was made for.
+from stratpoint_rag.rag.config import (
+    llm_model,
+    llm_timeout,
+    nvidia_api_key,
+    nvidia_base_url,
+)
 
 load_dotenv()
 
 __all__ = [
+    "EXTRACTION_MAX_TOKENS",
     "MAX_TOKENS",
     "TEMPERATURE",
     "VISION_TIMEOUT",
     "concurrency",
+    "extraction_group_pages",
+    "extraction_token_budget",
+    "llm_model",
     "llm_timeout",
     "max_pages",
+    "nvidia_api_key",
     "nvidia_base_url",
     "nvidia_vision_api_key",
     "text_layer_min_chars",
@@ -57,6 +70,11 @@ MAX_TOKENS = 2048
 # but it converts an indefinite stall into one recorded entry in pages_failed —
 # the same soft degradation the rest of the page loop already assumes.
 VISION_TIMEOUT = 90
+
+# Hop-2 reply ceiling. An extraction over a 20-page RFP is a long JSON object —
+# a dozen features, a dozen constraints — and truncation here does not look like
+# a failure, it looks like a brief with fewer requirements than it has.
+EXTRACTION_MAX_TOKENS = 2048
 
 
 def _int_env(var: str, default: int) -> int:
@@ -113,6 +131,26 @@ def concurrency() -> int:
     the exposure, and two simultaneous uploads reach the ceiling.
     """
     return _int_env("DOCPARSE_CONCURRENCY", 4)
+
+
+def extraction_token_budget() -> int:
+    """Above this estimated prompt size, hop 2 switches to map-reduce.
+
+    Llama 3.1 8B nominally handles 128k, but extraction quality collapses long
+    before that (lost-in-the-middle) and the failure is SILENT: constraints
+    buried on page 22 are dropped and the result is a clean, well-formed object
+    that is simply missing half the brief. Nothing in the contract can express
+    "I only read the first 12 pages."
+
+    ~12k tokens is roughly 8-10 transcribed pages, which covers most real briefs
+    outright; the 20-page cap from hop 1 bounds the worst case at 4 groups.
+    """
+    return _int_env("DOCPARSE_EXTRACTION_TOKEN_BUDGET", 12_000)
+
+
+def extraction_group_pages() -> int:
+    """Pages per map-reduce group."""
+    return _int_env("DOCPARSE_EXTRACTION_GROUP_PAGES", 5)
 
 
 def text_layer_min_chars() -> int:

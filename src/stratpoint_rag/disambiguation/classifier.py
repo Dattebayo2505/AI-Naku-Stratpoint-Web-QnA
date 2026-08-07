@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import httpx
 
@@ -53,12 +54,34 @@ _STRATPOINT_KEYWORDS = [
     "address", "phone", "email",
 ]
 
+# A request for a scoped proposal for the VISITOR'S OWN project — not a
+# question about Stratpoint. Checked ahead of _STRATPOINT_KEYWORDS, which
+# contains "project", "cost" and "service" and would otherwise swallow every
+# one of these. Deliberately narrow: it has to be about producing a quote,
+# because a false positive costs the visitor a naming question they did not
+# need. "How much do you charge for consulting?" stays ASK_STRATPOINT.
+_PROPOSAL_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\b(?:a |the )?proposal\b",
+        r"\bquote (?:me|us|for|this)\b|\bgive me a quote\b|\ba quote for\b",
+        r"\b(?:scope|estimate|price|cost|budget) (?:out |up )?(?:this|my|our|the) "
+        r"(?:project|brief|rfp|document|build|app|idea)\b",
+        r"\bhow (?:much|long) (?:would|will|does) (?:this|my|our|it) "
+        r"(?:cost|take|be)\b",
+        r"\b(?:statement of work|sow|rfp response)\b",
+        r"\b(?:estimate|scope) (?:this|my|our) (?:out)?\b",
+    )
+]
+
 _QUESTION_STARTERS = ("what", "where", "when", "why", "how", "who", "which", "do", "does", "is", "are", "can", "could", "would", "should", "tell", "give", "show", "list", "explain", "describe")
 
 _CLASSIFIER_SYSTEM_PROMPT = (
     "You are a strict intent classifier for a chatbot about Stratpoint (stratpoint.com), "
     "a software consulting company. Classify the user's input into exactly one category:\n\n"
     "- ask_stratpoint: asking about Stratpoint services, projects, blog, company\n"
+    "- request_proposal: asking for a scoped proposal, quote, or estimate for "
+    "the visitor's OWN project or uploaded brief\n"
     "- greeting: simple greetings or thanks\n"
     "- off_topic: completely outside Stratpoint's domain\n"
     "- needs_clarification: too vague or ambiguous to determine intent\n"
@@ -108,6 +131,14 @@ def _heuristic_classify(user_input: str, context: str | None = None) -> IntentQu
         if kw in text:
             return IntentQuery(
                 intent=IntentCategory.HARMFUL, confidence=0.9, reasoning=f"Matched harmful keyword: {kw}"
+            )
+
+    for pattern in _PROPOSAL_PATTERNS:
+        if pattern.search(text):
+            return IntentQuery(
+                intent=IntentCategory.REQUEST_PROPOSAL,
+                confidence=0.85,
+                reasoning=f"Matched proposal request: {pattern.pattern}",
             )
 
     off_topic_matches = [kw for kw in _OFF_TOPIC_KEYWORDS if kw in text]

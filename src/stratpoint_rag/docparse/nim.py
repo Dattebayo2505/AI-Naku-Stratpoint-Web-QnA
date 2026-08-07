@@ -45,7 +45,7 @@ from tenacity import (
 
 from stratpoint_rag.docparse import config
 
-__all__ = ["NimVisionClient"]
+__all__ = ["NimTextClient", "NimVisionClient"]
 
 # 429 is the one that matters: 40 requests/min per model, and a 20-page parse
 # burns 20 of them. 5xx is transient endpoint load. 4xx is not retried — a 400
@@ -65,12 +65,8 @@ class _Retryable(Exception):
         self.error = error
 
 
-class NimVisionClient:
-    """Transcribes one page image per call. Returns ``(markdown, usage)``.
-
-    Usage is returned, never accumulated — page work runs on a thread pool and
-    ``llmops`` is thread-local. See ``docparse/clients.py``.
-    """
+class _NimClient:
+    """Shared retry + POST machinery for the two NIM clients below."""
 
     def __init__(
         self,
@@ -82,6 +78,45 @@ class NimVisionClient:
         self.max_attempts = max_attempts
         self._backoff_multiplier = backoff_multiplier
         self._backoff_max = backoff_max
+
+    def _call(self, body: dict, key: str, timeout: float) -> tuple[str, dict]:
+        retryer = Retrying(
+            stop=stop_after_attempt(self.max_attempts),
+            wait=wait_exponential(
+                multiplier=self._backoff_multiplier, max=self._backoff_max
+            ),
+            retry=retry_if_exception_type(_Retryable),
+            reraise=True,  # surface the last _Retryable, not tenacity's RetryError
+        )
+        try:
+            return retryer(self._post_once, body, key, timeout)
+        except _Retryable as e:
+            raise e.error from None
+
+    def _post_once(self, body: dict, key: str, timeout: float) -> tuple[str, dict]:
+        resp = httpx.post(
+            f"{config.nvidia_base_url()}/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json=body,
+            timeout=timeout,
+        )
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if resp.status_code in _RETRY_STATUSES:
+                raise _Retryable(e) from None
+            raise
+
+        data = resp.json()
+        return data["choices"][0]["message"]["content"], data.get("usage") or {}
+
+
+class NimVisionClient(_NimClient):
+    """Transcribes one page image per call. Returns ``(markdown, usage)``.
+
+    Usage is returned, never accumulated — page work runs on a thread pool and
+    ``llmops`` is thread-local. See ``docparse/clients.py``.
+    """
 
     def describe(self, image_jpeg: bytes, prompt: str) -> tuple[str, dict]:
         key = config.nvidia_vision_api_key()
@@ -114,33 +149,39 @@ class NimVisionClient:
             "temperature": config.TEMPERATURE,
             "stream": False,
         }
+        return self._call(body, key, config.VISION_TIMEOUT)
 
-        retryer = Retrying(
-            stop=stop_after_attempt(self.max_attempts),
-            wait=wait_exponential(
-                multiplier=self._backoff_multiplier, max=self._backoff_max
-            ),
-            retry=retry_if_exception_type(_Retryable),
-            reraise=True,  # surface the last _Retryable, not tenacity's RetryError
-        )
-        try:
-            return retryer(self._post_once, body, key)
-        except _Retryable as e:
-            raise e.error from None
 
-    def _post_once(self, body: dict, key: str) -> tuple[str, dict]:
-        resp = httpx.post(
-            f"{config.nvidia_base_url()}/chat/completions",
-            headers={"Authorization": f"Bearer {key}"},
-            json=body,
-            timeout=config.VISION_TIMEOUT,
-        )
-        try:
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            if resp.status_code in _RETRY_STATUSES:
-                raise _Retryable(e) from None
-            raise
+class NimTextClient(_NimClient):
+    """Text-only completion — the production ``TextClient`` for hop 2.
 
-        data = resp.json()
-        return data["choices"][0]["message"]["content"], data.get("usage") or {}
+    Runs on ``LLM_MODEL``, the same model as the rest of the chat path, and on
+    ``LLM_TIMEOUT`` rather than ``VISION_TIMEOUT``: hop 2 issues at most five
+    ordinary text calls on the request thread, not twenty image calls on a pool,
+    so the throttle-by-delaying failure mode that forced the 90s vision ceiling
+    does not apply here.
+
+    ``response_format=json_object`` is sent because the reply is machine-parsed
+    and there is no prose preamble to preserve (unlike ``rag/answer.py``'s
+    reasoning path). The caller still strips code fences defensively — the
+    endpoint has been observed to fence JSON when the mode is absent, and the
+    cost of being wrong about that is a silent extraction failure.
+    """
+
+    def complete(self, system: str, user: str) -> tuple[str, dict]:
+        key = config.nvidia_api_key()
+        if not key:
+            raise RuntimeError("NVIDIA_API_KEY is not set (see .envexample)")
+
+        body = {
+            "model": config.llm_model(),
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": config.EXTRACTION_MAX_TOKENS,
+            "temperature": config.TEMPERATURE,
+            "response_format": {"type": "json_object"},
+            "stream": False,
+        }
+        return self._call(body, key, config.llm_timeout())

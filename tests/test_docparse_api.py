@@ -325,15 +325,23 @@ def test_chat_rejects_a_malformed_attachments_field(monkeypatch):
     assert r.status_code == 422
 
 
-def test_chat_does_not_yet_forward_attachments_to_the_agent(monkeypatch):
-    """Hop 1 accepts the field; hop 2 teaches the loop to use it.
+def test_chat_forwards_resolved_briefs_not_raw_ids(monkeypatch, pdf_bytes):
+    """Ids are resolved against the session at the boundary that knows it.
 
-    Forwarding now would TypeError against the real run_with_guardrails, which
-    has no such parameter. Wiring it up needs the attachment manifest in the
-    loop's context, the tool rename, and conditional registration — all hop 2.
-    Delete this test when that lands.
+    The agent never receives an id it has not had checked, and never receives a
+    path at all — the whole reason /chat takes ids rather than filenames.
     """
     from stratpoint_rag.agent import AgentResult
+
+    uid = _upload(pdf_bytes).json()["upload_id"]
+    monkeypatch.setattr(
+        app_module, "transcribe_document",
+        lambda path: TranscriptionResult(
+            markdown="## Page 1\ntext", source_file="brief.pdf", sha256="s",
+            pages_total=3, pages_parsed=3,
+        ),
+    )
+    client.post(f"/upload/{uid}/parse", params={"session_id": SESSION})
 
     seen = {}
     monkeypatch.setattr(
@@ -341,9 +349,36 @@ def test_chat_does_not_yet_forward_attachments_to_the_agent(monkeypatch):
         lambda *a, **kw: seen.update(kw) or AgentResult(answer="ok"),
     )
 
-    client.post("/chat", json={"message": "hi", "attachments": ["a3f9c2"]})
+    client.post(
+        "/chat",
+        json={"message": "what's the timeline?", "session_id": SESSION,
+              "attachments": [uid]},
+    )
 
-    assert "attachments" not in seen
+    briefs = seen["briefs"]
+    assert [b.upload_id for b in briefs] == [uid]
+    assert briefs[0].transcribed
+    assert briefs[0].pages_total == 3
+
+
+def test_chat_drops_an_attachment_id_from_another_session(monkeypatch, pdf_bytes):
+    """A stale or foreign id becomes a conversation without that attachment,
+    not a 500 mid-turn — and never another session's document."""
+    from stratpoint_rag.agent import AgentResult
+
+    uid = _upload(pdf_bytes, session="alice").json()["upload_id"]
+    seen = {}
+    monkeypatch.setattr(
+        app_module, "run_with_guardrails",
+        lambda *a, **kw: seen.update(kw) or AgentResult(answer="ok"),
+    )
+
+    r = client.post(
+        "/chat", json={"message": "hi", "session_id": "bob", "attachments": [uid]}
+    )
+
+    assert r.status_code == 200
+    assert seen["briefs"] == []
 
 
 def test_chat_call_matches_the_real_agent_signature(monkeypatch):
@@ -355,7 +390,7 @@ def test_chat_call_matches_the_real_agent_signature(monkeypatch):
     from stratpoint_rag.agent import guardrail_agent
 
     params = inspect.signature(guardrail_agent.run_with_guardrails).parameters
-    for kwarg in ("history", "session_id", "use_nemo", "enable_reasoning"):
+    for kwarg in ("history", "session_id", "use_nemo", "enable_reasoning", "briefs"):
         assert kwarg in params, f"/chat passes {kwarg}= but the agent has no such parameter"
 
 

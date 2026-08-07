@@ -11,6 +11,17 @@ _FALLBACK_QUESTIONS = {
     "topic": "What would you like to know about Stratpoint?",
     "project_name": "Do you have a specific Stratpoint project in mind?",
     "service_type": "What type of service are you interested in?",
+    # Both offer declining in the question itself. The proposal can be produced
+    # without either name, so an answer of "leave them blank" has to read as a
+    # normal choice rather than as a refusal to cooperate.
+    "brief_client_name": (
+        "Before I put this together — is there a client or company name you'd "
+        "like on the proposal? You can also say 'skip' to leave it blank."
+    ),
+    "brief_project_name": (
+        "And a project name for the proposal? 'Skip' is fine if you'd rather "
+        "leave it blank."
+    ),
 }
 
 _MULTI_TURN_GREETING = (
@@ -47,7 +58,14 @@ class ClarificationLoop:
 
         slot_name = self.missing_slots[0]
 
-        if len(self.session.turns) == 0 and len(self.missing_slots) >= 2:
+        # The "what would you like to explore?" opener is an ASK_STRATPOINT
+        # message. Serving it for a proposal's naming question would read as the
+        # bot losing the thread of a conversation it started.
+        if (
+            self.intent == IntentCategory.ASK_STRATPOINT
+            and len(self.session.turns) == 0
+            and len(self.missing_slots) >= 2
+        ):
             return _HIGHER_LEVEL
 
         return _FALLBACK_QUESTIONS.get(slot_name)
@@ -66,13 +84,24 @@ class ClarificationLoop:
         self.session.turns.append(turn)
 
         all_history = list(self.session.turns)
-        slot_query = extract_slots(answer, self.intent, history=all_history)
+        # target_slot tells the extractor which slot an unlabelled answer
+        # belongs to — the visitor typing a bare name at a question about the
+        # client name means the client name.
+        slot_query = extract_slots(
+            answer, self.intent, history=all_history, target_slot=current_slot
+        )
 
         for name, value in slot_query.slots.items():
             if value is not None:
                 self.session.confirmed_slots[name] = value
 
         self.missing_slots = [s for s in self.missing_slots if s not in self.session.confirmed_slots]
+
+        # An optional slot that has been asked is finished, whatever came back.
+        # Without this a declination leaves the slot "missing" and the loop asks
+        # again — which is precisely the coercion required=False exists to avoid.
+        if self.intent == IntentCategory.REQUEST_PROPOSAL:
+            self.missing_slots = [s for s in self.missing_slots if s != current_slot]
 
         return SlotQuery(
             intent=self.intent,
