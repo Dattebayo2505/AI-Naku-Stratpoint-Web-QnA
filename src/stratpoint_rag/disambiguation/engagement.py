@@ -60,6 +60,8 @@ from .slots import is_declination
 
 __all__ = [
     "Engagement",
+    "Resumption",
+    "abandon",
     "clear",
     "get",
     "needs_ask",
@@ -180,18 +182,77 @@ class Resumption:
     request: str
     names: tuple[str | None, str | None]
     declined: bool
+    # False when the reply was not an answer at all. The caller must then route
+    # the visitor's message as a fresh turn instead of replaying `request`.
+    consumed: bool = True
+
+
+# A reply that is plainly not a name: a question, or an instruction to do
+# something else. Asked "is there a client name for the proposal?", a visitor
+# may reasonably say "wait, what document did I give you?" — and the old code
+# stored that sentence as the client name and printed it on the proposal.
+#
+# Deliberately a *rejection* test, not a name recogniser: real client names are
+# unconstrained text and any positive pattern would reject the legitimate ones.
+# The bar is only "could this plausibly be a name", so an unrecognised reply
+# still counts as an answer, as it did before.
+_NOT_A_NAME = re.compile(
+    r"^\s*(?:what|which|who|where|when|why|how|whats|what'?s|can|could|would|"
+    r"should|do|does|did|is|are|tell|give|show|list|explain|describe|"
+    r"summari[sz]e|wait|actually|no wait|hold on|first|instead)\b",
+    re.IGNORECASE,
+)
+
+# Names are short. A sentence this long is a request, not a company name;
+# `_clean_name` in slots.py caps at 80 for the same reason.
+_MAX_NAME_CHARS = 80
+
+
+def _is_an_answer(reply: str) -> bool:
+    """True when the reply could plausibly be settling the naming question."""
+    text = (reply or "").strip()
+    if not text:  # silence is a declination, which IS an answer
+        return True
+    if _AFFIRM.match(text) or is_declination(text):
+        return True
+    if "?" in text:
+        return False
+    if len(text) > _MAX_NAME_CHARS:
+        return False
+    return not _NOT_A_NAME.match(text)
+
+
+def abandon(session_id: str | None) -> None:
+    """Drop an unanswered ask without recording an answer.
+
+    Not the same as a declination: the visitor never addressed the question, so
+    `settled` stays False and a later proposal request may ask again. Recording
+    silence as "leave it blank" would put words in their mouth.
+    """
+    engagement = get(session_id)
+    engagement.loop = None
+    engagement.pending_request = None
 
 
 def record_answer(session_id: str | None, answer: str) -> Resumption:
     """Consume the visitor's reply to the naming question.
 
-    Always settles: a name, an affirmation of the document's suggestion, or a
-    declination. There is no path that asks again, which is the point — both
-    slots are optional and the proposal is producible without either.
+    Settles on a name, an affirmation of the document's suggestion, or a
+    declination — but only when the reply is *addressing the question*. A reply
+    that plainly is not (a question of their own, a correction) abandons the ask
+    and is handed back untouched via ``consumed=False``, because the alternative
+    is what shipped: the visitor's question stored as the client name and their
+    original request replayed at them as a finished quote.
     """
     engagement = get(session_id)
     loop = engagement.loop
     request = engagement.pending_request or answer
+
+    if not _is_an_answer(answer):
+        abandon(session_id)
+        return Resumption(
+            request=answer, names=engagement.names, declined=False, consumed=False
+        )
 
     engagement.asked = True
     engagement.loop = None

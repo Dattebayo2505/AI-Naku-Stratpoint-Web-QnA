@@ -74,6 +74,39 @@ _PROPOSAL_PATTERNS = [
     )
 ]
 
+# A visitor who says "not a proposal" must not thereby request one. The
+# proposal patterns match a bare noun, so every *negated* mention matched too:
+# "Not asking about a proposal, tell me what this document says" scored
+# REQUEST_PROPOSAL at 0.85 — above the escalation threshold, so the LLM
+# classifier that would have read the negation correctly was never consulted.
+# Declining a proposal was the single most reliable way to be sent one.
+#
+# Scoped to the text immediately preceding the match rather than the whole
+# message, so "we don't have a budget yet — can you do a proposal?" still reads
+# as a request.
+_NEGATION_WINDOW = 40
+# The contractions are spelled out rather than matched as `\w+n'?t`: that
+# shorthand also matches "want", which would turn "I want a proposal" into a
+# refusal of one.
+_NEGATION_CUE = re.compile(
+    r"\b(?:not|no|never|cannot|without|besides|other than|instead of|"
+    r"rather than|apart from|aside from|"
+    r"(?:do|does|did|is|are|was|were|wo|ca|could|would|should|ai|has|have|had)"
+    r"n['’]?t)\b[^.?!]*$",
+    re.IGNORECASE,
+)
+
+# A question about a document the visitor has attached. Checked after the
+# proposal patterns (so "quote this brief" still routes to a quote) but before
+# the Stratpoint keyword sweep, which does not carry these words and would drop
+# the turn to the 0.5 fallback — and from there the router bounces it to
+# clarification for being neither a keyword match nor question-shaped.
+_DOCUMENT_REFERENCE = re.compile(
+    r"\b(?:document|brief|rfp|attachment|upload(?:ed)?|the file|my file|"
+    r"the pdf|this pdf)\b",
+    re.IGNORECASE,
+)
+
 _QUESTION_STARTERS = ("what", "where", "when", "why", "how", "who", "which", "do", "does", "is", "are", "can", "could", "would", "should", "tell", "give", "show", "list", "explain", "describe")
 
 _CLASSIFIER_SYSTEM_PROMPT = (
@@ -90,6 +123,22 @@ _CLASSIFIER_SYSTEM_PROMPT = (
 )
 
 
+def _is_negated(text: str, match_start: int) -> bool:
+    """True when a negation cue sits just before a proposal phrase.
+
+    Looks back a bounded window from the match and stops at sentence
+    punctuation, so the cue has to govern *this* clause.
+    """
+    window = text[max(0, match_start - _NEGATION_WINDOW) : match_start]
+    return bool(_NEGATION_CUE.search(window))
+
+
+def _has_negated_proposal(text: str) -> bool:
+    """True when the text mentions a proposal and every mention is negated."""
+    found = [m for p in _PROPOSAL_PATTERNS if (m := p.search(text))]
+    return bool(found) and all(_is_negated(text, m.start()) for m in found)
+
+
 def classify(user_input: str, conversation_context: str | None = None) -> IntentQuery:
     result = _heuristic_classify(user_input, context=conversation_context)
 
@@ -102,6 +151,16 @@ def classify(user_input: str, conversation_context: str | None = None) -> Intent
         llm_result = _llm_classify(user_input)
 
     if llm_result and llm_result.confidence > result.confidence:
+        # The escalation exists to break ties the heuristic could not, but it is
+        # not allowed to overturn an explicit refusal. The LLM is handed the raw
+        # message and reads "proposal" as the salient token: asked about
+        # "I don't want a proposal yet" it returns request_proposal at 0.85,
+        # which is exactly the answer the visitor took the trouble to rule out.
+        if llm_result.intent == IntentCategory.REQUEST_PROPOSAL and _has_negated_proposal(
+            user_input.lower()
+        ):
+            log.info("Ignoring LLM request_proposal: the visitor negated it")
+            return result
         return llm_result
 
     return result
@@ -134,7 +193,8 @@ def _heuristic_classify(user_input: str, context: str | None = None) -> IntentQu
             )
 
     for pattern in _PROPOSAL_PATTERNS:
-        if pattern.search(text):
+        m = pattern.search(text)
+        if m and not _is_negated(text, m.start()):
             return IntentQuery(
                 intent=IntentCategory.REQUEST_PROPOSAL,
                 confidence=0.85,
@@ -147,6 +207,13 @@ def _heuristic_classify(user_input: str, context: str | None = None) -> IntentQu
             intent=IntentCategory.OFF_TOPIC,
             confidence=0.95,
             reasoning=f"Matched off-topic keywords: {off_topic_matches[:3]}",
+        )
+
+    if _DOCUMENT_REFERENCE.search(text):
+        return IntentQuery(
+            intent=IntentCategory.ASK_STRATPOINT,
+            confidence=0.8,
+            reasoning="Asked about an attached document, not for a proposal",
         )
 
     stratpoint_matches = [kw for kw in _STRATPOINT_KEYWORDS if kw in check_text]

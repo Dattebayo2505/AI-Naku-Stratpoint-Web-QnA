@@ -24,6 +24,7 @@ def run_agent(
     enable_reasoning: bool = False,
     briefs: list[BriefRef] | None = None,
     names: tuple[str | None, str | None] = (None, None),
+    proposal_mode: bool = True,
 ) -> AgentResult:
     """Run one turn of the ReAct agent and return a structured AgentResult.
 
@@ -40,6 +41,8 @@ def run_agent(
                 non-empty list is what registers the brief-extraction tool and
                 puts the attachment manifest in the loop's system prompt.
         names: `(client_name, project_name)` the visitor supplied this session.
+        proposal_mode: True when the visitor asked for a proposal/quote; False
+                       casts the loop as document Q&A instead.
 
     Returns:
         Structured AgentResult containing answer, trace, citations, resources, and proposal_data.
@@ -57,4 +60,5 @@ def run_agent(
         enable_reasoning=enable_reasoning,
         briefs=briefs,
         names=names,
+        proposal_mode=proposal_mode,
     )

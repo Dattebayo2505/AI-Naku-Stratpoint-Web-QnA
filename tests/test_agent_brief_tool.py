@@ -55,17 +55,29 @@ def test_the_tool_is_not_called_parse_client_brief():
     assert tools.BRIEF_TOOL_NAME == "extract_brief_requirements"
 
 
-def test_the_description_asks_for_an_id_and_never_a_path():
-    spec = next(
-        s for s in tools.build_tool_specs([brief()]) if s.name == tools.BRIEF_TOOL_NAME
-    )
+@pytest.mark.parametrize(
+    "tool_name", [tools.BRIEF_TOOL_NAME, tools.READ_BRIEF_TOOL_NAME]
+)
+def test_the_description_asks_for_an_id_and_never_a_path(tool_name):
+    spec = next(s for s in tools.build_tool_specs([brief()]) if s.name == tool_name)
 
     assert "upload id" in spec.description
     assert ".pdf" not in spec.description
     assert "file path" not in spec.description.lower()
-    # The phrasings a visitor actually uses, so the loop knows when to reach.
+
+
+def test_the_visitor_phrasings_reach_the_right_brief_tool():
+    """The phrasings a visitor actually uses, so the loop knows when to reach —
+    and, since there are now two brief tools, which one to reach for. These live
+    in the manifest rather than on one description: "this document" is a
+    question about the file under `read_brief`, and scope to be priced under
+    `extract_brief_requirements`."""
+    manifest = react.render_attachment_manifest([brief()])
+
     for phrase in ("the brief", "the RFP", "this document"):
-        assert phrase in spec.description
+        assert phrase in manifest
+    assert tools.READ_BRIEF_TOOL_NAME in manifest
+    assert tools.BRIEF_TOOL_NAME in manifest
 
 
 # ── the attachment manifest ─────────────────────────────────────────────────

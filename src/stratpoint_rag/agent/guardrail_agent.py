@@ -228,11 +228,18 @@ def run_with_guardrails(
     # Consumed BEFORE routing: "Northwind Retail" classified on its own is a
     # vague fragment that the router would bounce straight back to
     # clarification. It is an answer to a question we asked, not a new request.
+    #
+    # But only when it IS one. Consuming unconditionally meant any follow-up —
+    # "what document did I just give you?" — was swallowed as the name and the
+    # original request replayed, so the visitor's question came back as a
+    # finished quote. A non-answer abandons the ask and falls through to be
+    # routed on its own terms.
     if engagement.get(session_id).loop is not None:
         resumed = engagement.record_answer(session_id, processed_input)
-        memory.add_turn("user", message)
-        # Replay what they actually wanted; they should not have to retype it.
-        message = processed_input = resumed.request
+        if resumed.consumed:
+            memory.add_turn("user", message)
+            # Replay what they actually wanted; they should not have to retype it.
+            message = processed_input = resumed.request
 
     # ── Disambiguation ────────────────────────────────────────────────
     route_result = route(processed_input, session_memory=memory)
@@ -303,6 +310,11 @@ def run_with_guardrails(
                 enable_reasoning=enable_reasoning,
                 briefs=briefs,
                 names=engagement.get(session_id).names,
+                # The loop reaches the brief either way; this decides whether it
+                # is scoping the work or answering a question about it. Without
+                # it every attachment question ran under the proposal prompt and
+                # came back as a quote.
+                proposal_mode=route_result.intent == IntentCategory.REQUEST_PROPOSAL,
             )
             source_chunks = agent_tools.captured_chunks()
             grounded_list = agent_tools.captured_grounded()

@@ -23,6 +23,7 @@ from stratpoint_rag import llmops
 from stratpoint_rag.agent.models import AgentResult, Link, Step
 from stratpoint_rag.agent.tools import (
     BRIEF_TOOL_NAME,
+    READ_BRIEF_TOOL_NAME,
     ToolSpec,
     begin_capture,
     build_tool_registry,
@@ -154,46 +155,92 @@ def render_attachment_manifest(briefs: list[BriefRef] | None) -> str:
     return (
         "\nThe visitor has attached these documents:\n"
         + "\n".join(lines)
-        + f"\nWhen they refer to 'the brief', 'the RFP', 'this document', or their "
-        f"own project, call {BRIEF_TOOL_NAME} with the id above.\n"
+        + "\nWhen they refer to 'the brief', 'the RFP', 'this document', or "
+        "their own project, they mean the file above — use its id.\n"
+        f"Call {READ_BRIEF_TOOL_NAME} to answer a question about what it says, "
+        f"and {BRIEF_TOOL_NAME} to scope or price the work in it.\n"
     )
 
 
 def render_system_prompt(
     briefs: list[BriefRef] | None = None,
     specs: list[ToolSpec] | None = None,
+    *,
+    proposal_mode: bool = True,
 ) -> str:
-    """Build the loop's system prompt from this request's tool specs plus rules."""
+    """Build the loop's system prompt from this request's tool specs plus rules.
+
+    ``proposal_mode`` is the difference between "quote this brief" and "what is
+    this brief about". It was not a parameter, and every attachment question
+    therefore ran under a prompt whose identity line was *"you help prospects
+    create scoped project proposals"*, whose only worked example was the
+    four-step proposal chain, and which carried the standing rule *"summarize
+    cost, timeline in weeks, and download links in your final Answer"*. Asked
+    for a two-sentence description of an uploaded document, the loop did as it
+    was told and returned a $27k quote.
+
+    Both modes get the same tools: narrowing the toolset instead would leave the
+    loop unable to change course when the visitor's next message asks for the
+    proposal after all.
+    """
     specs = specs if specs is not None else build_tool_specs(briefs)
     tool_lines = "\n".join(f"- {s.name}: {s.description}" for s in specs)
 
     if briefs:
         file_ctx = render_attachment_manifest(briefs)
-        steps = [f"{BRIEF_TOOL_NAME}(upload_id)"]
     else:
         file_ctx = (
             "\nNo document is attached. If the visitor typed their project "
             "requirements directly in text, work from those. Do not ask them to "
             "upload anything unless they bring it up.\n"
         )
-        steps = []
-    steps += [
-        "estimate_cost_and_timeline(scope_input)",
-        "generate_proposal_pdf(proposal_details)",
-        "Answer: Summarize the proposal findings (cost, timeline, PDF link).",
-    ]
-    chain = "".join(f"{i}. {s}\n" for i, s in enumerate(steps, start=1))
+
+    header = (
+        "You are Stratpoint's business-development AI assistant. You help client "
+        "prospects and team members create scoped project proposals (timeline, "
+        "cost, and downloadable proposal PDF).\n\n"
+        if proposal_mode
+        else "You are Stratpoint's AI assistant. You answer visitors' questions "
+        "about Stratpoint and about any document they have uploaded.\n\n"
+    )
+
+    if proposal_mode:
+        steps = [f"{BRIEF_TOOL_NAME}(upload_id)"] if briefs else []
+        steps += [
+            "estimate_cost_and_timeline(scope_input)",
+            "generate_proposal_pdf(proposal_details)",
+            "Answer: Summarize the proposal findings (cost, timeline, PDF link).",
+        ]
+        chain = "".join(f"{i}. {s}\n" for i, s in enumerate(steps, start=1))
+        task = f"Proposal Chaining Sequence when building a proposal:\n{chain}\n"
+    else:
+        task = (
+            "The visitor is NOT asking for a proposal. Answer the question they "
+            "actually asked.\n"
+            f"- To answer anything about an uploaded document — what it is, what "
+            f"it says, a summary — call {READ_BRIEF_TOOL_NAME} and answer from "
+            "what it returns.\n"
+            "- For questions about Stratpoint, call search_stratpoint.\n\n"
+        )
+
+    closing = (
+        "- Summarize cost, timeline in weeks, and download links in your final "
+        "Answer.\n"
+        if proposal_mode
+        else "- Do NOT produce a cost, a timeline, a role breakdown, or a "
+        "proposal PDF. The visitor did not ask for one; offer to build one only "
+        "if it is genuinely useful, and wait for them to say yes.\n"
+        "- Match the length the visitor asked for. If they asked for two "
+        "sentences, give two sentences.\n"
+    )
 
     return (
-        "You are Stratpoint's business-development AI assistant. You help client "
-        "prospects and team members create scoped project proposals (timeline, cost, "
-        "and downloadable proposal PDF).\n\n"
+        f"{header}"
         f"{file_ctx}"
         "You run in a loop of Thought, Action, Observation.\n\n"
         "Tools:\n"
         f"{tool_lines}\n\n"
-        "Proposal Chaining Sequence when building a proposal:\n"
-        f"{chain}\n"
+        f"{task}"
         "Respond in exactly this format:\n"
         "Thought: what you need next and why\n"
         "Action: <tool name>(<input>)\n"
@@ -208,7 +255,7 @@ def render_system_prompt(
         "the visitor.\n"
         "- Never invent a client name, a company name, or a project name. If the "
         "document does not state one, leave it out.\n"
-        "- Summarize cost, timeline in weeks, and download links in your final Answer.\n"
+        f"{closing}"
     )
 
 
@@ -322,6 +369,7 @@ def run_react(
     enable_reasoning: bool = False,
     briefs: list[BriefRef] | None = None,
     names: tuple[str | None, str | None] = (None, None),
+    proposal_mode: bool = True,
 ) -> AgentResult:
     """Run one turn of the plain-text ReAct loop.
 
@@ -337,6 +385,9 @@ def run_react(
         briefs: Uploads resolved for this session. Non-empty is what registers
             the brief tool and puts the attachment manifest in the prompt.
         names: ``(client_name, project_name)`` the visitor supplied, if any.
+        proposal_mode: True when the visitor asked for a proposal/quote. False
+            casts the same tools as document Q&A instead, and drops the standing
+            instruction to end every Answer with cost, timeline and a PDF link.
 
     Returns:
         Structured AgentResult containing answer, trace, proposal_data, and links.
@@ -353,7 +404,12 @@ def run_react(
     begin_capture()
     try:
         messages: list[dict] = [
-            {"role": "system", "content": render_system_prompt(briefs, specs)}
+            {
+                "role": "system",
+                "content": render_system_prompt(
+                    briefs, specs, proposal_mode=proposal_mode
+                ),
+            }
         ]
         messages += [{"role": h["role"], "content": h["content"]} for h in (history or [])]
         messages.append({"role": "user", "content": message})

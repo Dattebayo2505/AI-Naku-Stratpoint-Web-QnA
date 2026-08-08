@@ -26,6 +26,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from stratpoint_rag.agent.contracts import (
@@ -253,6 +254,65 @@ def extract_brief_requirements(
     return result
 
 
+# Hop-1 transcriptions run to tens of thousands of characters; the loop resends
+# every Observation on each subsequent turn, so an unbounded read would blow the
+# context window several turns before the model answers.
+BRIEF_EXCERPT_CHARS = 6000
+
+
+def read_brief(
+    input_data: str | dict[str, Any],
+    briefs: list[BriefRef] | None = None,
+) -> str:
+    """Read what an uploaded brief actually says, in the document's own words.
+
+    The counterpart to `extract_brief_requirements`, and not a duplicate of it.
+    That tool returns `ExtractedRequirements` — platforms, features,
+    constraints, complexity — which are *scoping* fields. Nothing in that shape
+    can answer "what is this document about", so a visitor who asked was served
+    a feature list or, worse, a full quote. This returns hop 1's Markdown, which
+    is the only artifact that carries the document's prose.
+
+    Truncation is stated, never silent — the same rule hop 2 follows. An excerpt
+    presented as the whole document is how "I only read the first few pages"
+    becomes an unqualified summary.
+
+    Args:
+        input_data: The upload id from the attachment manifest.
+        briefs: Uploads resolved for this session, bound per request.
+
+    Returns:
+        The transcription text, prefixed with its page accounting.
+    """
+    brief = _resolve_upload_id(input_data, briefs or [])
+    if brief is None:
+        raise ValueError(
+            "No attached brief matches that id. Use an id from the attachment list."
+        )
+    if not brief.transcribed:
+        return f"'{brief.filename}' has not been transcribed yet."
+
+    try:
+        text = Path(brief.markdown_path).read_text(encoding="utf-8")
+    except OSError as ex:
+        return f"Could not read '{brief.filename}': {type(ex).__name__}."
+
+    header = [f"Contents of '{brief.filename}'"]
+    if brief.pages_total:
+        header.append(f"({brief.pages_parsed} of {brief.pages_total} pages readable)")
+    if brief.pages_failed:
+        failed = ", ".join(str(n) for n in brief.pages_failed)
+        header.append(f"- pages that could NOT be read: {failed}")
+
+    body = text[:BRIEF_EXCERPT_CHARS]
+    if len(text) > BRIEF_EXCERPT_CHARS:
+        body += (
+            f"\n\n[truncated here: this is the first {BRIEF_EXCERPT_CHARS} "
+            "characters of a longer document. Say so if you summarize it.]"
+        )
+    return f"{' '.join(header)}:\n\n{body}"
+
+
 def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any]) -> EstimationResult:
     """Compute estimated project cost (USD), timeline in weeks, role breakdown, and phase roadmap from extracted requirements.
 
@@ -473,6 +533,15 @@ def _format_requirements(res: ExtractedRequirements) -> str:
     return "\n".join(lines)
 
 
+def _wrap_read_brief(briefs: list[BriefRef]) -> Callable[[str], str]:
+    """Bind the session's resolved uploads to the loop's `(str) -> str` shape."""
+
+    def run(raw_input: str) -> str:
+        return read_brief(raw_input, briefs)
+
+    return run
+
+
 def _wrap_extract_brief_requirements(briefs: list[BriefRef]) -> Callable[[str], str]:
     """Bind the session's resolved uploads to the loop's `(str) -> str` shape."""
 
@@ -523,18 +592,29 @@ class ToolSpec:
 
 
 BRIEF_TOOL_NAME = "extract_brief_requirements"
+READ_BRIEF_TOOL_NAME = "read_brief"
 
 # The old name, `parse_client_brief`, was wrong in every particular and is kept
 # here only as a reminder not to reintroduce it. Tool names are part of the
 # prompt: "parse" implies the tool performs the parsing, which invites the model
 # to call it *instead of* asking the visitor to upload something — and by the
 # time the loop runs, hop 1 has already parsed the document.
+# The two brief tools are described against each other on purpose. Given only
+# the extraction tool, a model asked "what is this document about" calls it and
+# answers with a feature list — the closest thing it was offered.
+_READ_BRIEF_DESCRIPTION = (
+    "Read what an uploaded document actually says, in its own words. Use this "
+    "to answer questions ABOUT a document: what it is, what it says, who sent "
+    "it, or to summarize or quote it. Input: the upload id from the attachment "
+    "list, e.g. 'a3f9c2'."
+)
+
 _BRIEF_TOOL_DESCRIPTION = (
     "Extract structured requirements, target platforms, features, and "
     "constraints from a client brief the visitor has already uploaded. Use this "
-    "whenever the visitor asks about 'the brief', 'the RFP', 'this document', "
-    "or their own project. Input: the upload id from the attachment list, e.g. "
-    "'a3f9c2'."
+    "when SCOPING the work — building an estimate or a proposal. To answer a "
+    f"question about what the document says, use {READ_BRIEF_TOOL_NAME} "
+    "instead. Input: the upload id from the attachment list, e.g. 'a3f9c2'."
 )
 
 
@@ -576,6 +656,14 @@ def build_tool_specs(
 
     # Conditional: a tool that cannot succeed should not be offered.
     if briefs:
+        specs.append(
+            ToolSpec(
+                name=READ_BRIEF_TOOL_NAME,
+                fn=_wrap_read_brief(briefs),
+                arg="upload_id",
+                description=_READ_BRIEF_DESCRIPTION,
+            )
+        )
         specs.append(
             ToolSpec(
                 name=BRIEF_TOOL_NAME,
