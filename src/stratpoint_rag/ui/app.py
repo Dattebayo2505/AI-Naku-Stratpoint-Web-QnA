@@ -20,13 +20,15 @@ def _confirm_dialog(pending: dict):
     st.caption(f"Transcription takes roughly {seconds}s. You can keep typing while it runs.")
 
     left, right = st.columns(2)
+    # st.rerun() is what closes the dialog: a full script run tears the modal
+    # down, whereas a button click on its own only reruns the dialog fragment.
+    # `pending_upload` is already gone by now (the caller popped it), so neither
+    # branch clears it — clearing it here is what used to re-arm the uploader.
     if left.button("Transcribe", type="primary", use_container_width=True):
-        st.session_state.pending_upload = None
         st.session_state.confirmed_upload = pending
         st.rerun()
     if right.button("Cancel", use_container_width=True):
         api_client.delete_upload(st.session_state.session_id, pending["upload_id"])
-        st.session_state.pending_upload = None
         st.rerun()
 
 
@@ -44,23 +46,43 @@ def _render_brief_uploader():
         "Drop a PDF or image", type=ACCEPTED_TYPES, label_visibility="collapsed"
     )
 
-    if uploaded is not None:
+    if uploaded is None:
+        # The widget was cleared, so forget the file we already dealt with —
+        # re-dropping the same bytes should ask again.
+        st.session_state.settled_upload_hash = None
+    else:
         data = uploaded.getvalue()
         digest = hashlib.sha256(data).hexdigest()
         # Streamlit hands back the same file on every rerun, including each chat
-        # message. Without this hash guard the UI re-POSTs /upload every turn.
-        known = att.find_by_hash(st.session_state.attachments, digest)
-        pending = st.session_state.get("pending_upload")
-        if known is None and (pending is None or pending["sha256"] != digest):
+        # message. Without a content gate the UI re-POSTs /upload every turn.
+        #
+        # The gate is "have we already offered this file to the user", NOT "is it
+        # attached yet". Keying it off `pending_upload`/`attachments` re-armed the
+        # upload on the very rerun a dialog button had just disarmed it — the
+        # click cleared `pending_upload`, the attachment did not exist yet, so the
+        # file was re-uploaded, `pending_upload` was re-set, and the dialog
+        # reopened on every subsequent run with no way out but the window's X.
+        if att.find_by_hash(st.session_state.attachments, digest) is not None:
+            st.session_state.settled_upload_hash = digest  # already in the chips
+        elif digest != st.session_state.get("settled_upload_hash"):
             try:
                 meta = api_client.upload_file(
                     st.session_state.session_id, uploaded.name, data
                 )
-                st.session_state.pending_upload = meta
             except api_client.APIError as e:
+                # Left unsettled on purpose: the next rerun retries the upload.
                 st.error(str(e))
+            else:
+                st.session_state.settled_upload_hash = digest
+                st.session_state.pending_upload = meta
 
-    pending = st.session_state.get("pending_upload")
+    # Pop, don't peek. The dialog is opened on the run that created the upload
+    # and never re-derived from lingering state — while it is open the only full
+    # script run comes from its own st.rerun(), and a modal dismissed with the X
+    # leaves no flag behind, so peeking made it reappear over the chat on the
+    # next interaction. The dialog body reads `pending` from its argument, which
+    # Streamlit replays on fragment reruns, so popping does not break the buttons.
+    pending = st.session_state.pop("pending_upload", None)
     if pending:
         _confirm_dialog(pending)
 
