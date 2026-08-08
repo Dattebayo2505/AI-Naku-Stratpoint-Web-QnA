@@ -3,7 +3,7 @@ and PDF generation tools, with pluggable telemetry and optional guardrails wrapp
 """
 from stratpoint_rag.agent.agent import AgentResult, Link, ProposalData, Step, run_agent
 from stratpoint_rag.agent.contracts import (
-    BriefParserInput,
+    BriefExtractionInput,
     EstimationInput,
     EstimationResult,
     ExtractedRequirements,
@@ -26,7 +26,7 @@ __all__ = [
     "AgentTracer",
     "NoOpTracer",
     "ConsoleTracer",
-    "BriefParserInput",
+    "BriefExtractionInput",
     "ExtractedRequirements",
     "EstimationInput",
     "EstimationResult",

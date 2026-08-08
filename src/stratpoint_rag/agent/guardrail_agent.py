@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 
 from stratpoint_rag.agent import tools as agent_tools
 from stratpoint_rag.agent.agent import AgentResult, Link, run_agent
+from stratpoint_rag.disambiguation import engagement
 from stratpoint_rag.disambiguation.router import route
 from stratpoint_rag.disambiguation.schemas import IntentCategory
+from stratpoint_rag.docparse import BriefRef, suggest_names
 from stratpoint_rag.guardrails.memory import ConversationMemory
 from stratpoint_rag.guardrails.pipeline import GuardrailPipeline
 from stratpoint_rag.guardrails.schemas import GuardrailConfig
@@ -93,6 +96,31 @@ def _get_memory(session_id: str | None = None) -> ConversationMemory:
 def clear_memory(session_id: str | None = None) -> None:
     sid = session_id or "default"
     _memories.pop(sid, None)
+    # The naming answer is scoped to the engagement, so it dies with the
+    # conversation — same lifetime as the uploads the UI deletes on reset.
+    engagement.clear(sid)
+
+
+def _name_suggestion(briefs: list[BriefRef] | None) -> tuple[str | None, str | None]:
+    """What the attached document claims its client and project are called.
+
+    A suggestion, attributed to the document, and nothing more — it becomes a
+    usable value only if the visitor affirms it. Read from the first transcribed
+    brief; with several attached, "whose client wins?" is a question this
+    iteration does not answer.
+    """
+    for brief in briefs or []:
+        if not brief.transcribed:
+            continue
+        try:
+            markdown = Path(brief.markdown_path).read_text(encoding="utf-8")
+        except OSError as ex:  # swept, deleted, or never written
+            log.info("could not read transcription for %s: %s", brief.upload_id, ex)
+            continue
+        seen = suggest_names(markdown)
+        if not seen.is_empty:
+            return seen.client_name, seen.project_name
+    return None, None
 
 
 def _run_input_guardrails(
@@ -183,6 +211,7 @@ def run_with_guardrails(
     guardrail_config: GuardrailConfig | None = None,
     use_nemo: bool = True,
     enable_reasoning: bool = False,
+    briefs: list[BriefRef] | None = None,
 ) -> AgentResult:
     memory = _get_memory(session_id)
     config = guardrail_config or GuardrailConfig()
@@ -195,8 +224,40 @@ def run_with_guardrails(
         memory.add_turn("assistant", _user_facing_block(block_reason))
         return AgentResult(answer=_user_facing_block(block_reason), guardrail_reason=block_reason)
 
+    # ── The naming answer, if we asked last turn ──────────────────────
+    # Consumed BEFORE routing: "Northwind Retail" classified on its own is a
+    # vague fragment that the router would bounce straight back to
+    # clarification. It is an answer to a question we asked, not a new request.
+    #
+    # But only when it IS one. Consuming unconditionally meant any follow-up —
+    # "what document did I just give you?" — was swallowed as the name and the
+    # original request replayed, so the visitor's question came back as a
+    # finished quote. A non-answer abandons the ask and falls through to be
+    # routed on its own terms.
+    if engagement.get(session_id).loop is not None:
+        resumed = engagement.record_answer(session_id, processed_input)
+        if resumed.consumed:
+            memory.add_turn("user", message)
+            # Replay what they actually wanted; they should not have to retype it.
+            message = processed_input = resumed.request
+
     # ── Disambiguation ────────────────────────────────────────────────
     route_result = route(processed_input, session_memory=memory)
+
+    # ── The naming ask, once per session, at the moment it is needed ──
+    if route_result.intent == IntentCategory.REQUEST_PROPOSAL and engagement.needs_ask(
+        session_id
+    ):
+        question = engagement.start_ask(
+            session_id, processed_input, _name_suggestion(briefs)
+        )
+        memory.add_turn("user", message)
+        memory.add_turn("assistant", question)
+        # Deliberately does NOT touch clarify_streak: this is a productive
+        # question we chose to ask, not the bot failing to understand.
+        return AgentResult(
+            answer=question, guardrail_reason="Asked how to name the proposal"
+        )
 
     if route_result.intent in (IntentCategory.HARMFUL, IntentCategory.OFF_TOPIC):
         reason = route_result.rejection_reason or "I can't process that request."
@@ -227,14 +288,33 @@ def run_with_guardrails(
 
     # ── Answer ────────────────────────────────────────────────────────
     source_chunks: list = []
-    if _wants_resource(message):
+    # An attachment or a proposal request goes through the ReAct loop, not
+    # straight to RAG: only the loop can reach the brief. Sending "what's the
+    # timeline on this?" to answer_grounded() would search the website corpus
+    # and reply confidently about the wrong thing.
+    use_agent = (
+        _wants_resource(message)
+        or bool(briefs)
+        or route_result.intent == IntentCategory.REQUEST_PROPOSAL
+    )
+    if use_agent:
         # The ReAct agent grounds inside its tools; capture the chunks it
         # retrieves so the output guardrails can actually verify the answer
         # (otherwise the hallucination check sees no source and blocks it).
         agent_tools.begin_capture()
         try:
             result = run_agent(
-                message, history=history, chat=agent, enable_reasoning=enable_reasoning
+                message,
+                history=history,
+                chat=agent,
+                enable_reasoning=enable_reasoning,
+                briefs=briefs,
+                names=engagement.get(session_id).names,
+                # The loop reaches the brief either way; this decides whether it
+                # is scoping the work or answering a question about it. Without
+                # it every attachment question ran under the proposal prompt and
+                # came back as a quote.
+                proposal_mode=route_result.intent == IntentCategory.REQUEST_PROPOSAL,
             )
             source_chunks = agent_tools.captured_chunks()
             grounded_list = agent_tools.captured_grounded()

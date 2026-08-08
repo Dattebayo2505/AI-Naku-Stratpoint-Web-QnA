@@ -4,52 +4,55 @@ Teammates implementing real tool logic should maintain these input/output
 Pydantic contracts so the orchestrator loop and API layer remain unchanged.
 
 Tools & Owners:
-1. `parse_client_brief` (teammate: cv_parser)
+1. `extract_brief_requirements` (owner: docparse — hops 1 and 2, built)
 2. `estimate_cost_and_timeline` (owner: scoping_calculator)
 3. `generate_proposal_pdf` (teammate: pdf_gen)
+
+**Two contract changes landed with docparse hop 2. Both are breaking:**
+
+- ``ExtractedRequirements`` no longer carries ``client_name`` or
+  ``project_name``, and is now defined in ``stratpoint_rag.docparse.schema``
+  (re-exported here, so existing imports keep resolving). A required name field
+  is an instruction to hallucinate one — the old stub literally defaulted to
+  "Acme Innovations". It gained provenance fields instead:
+  ``source_markdown_path``, ``pages_total``, ``pages_parsed``, ``pages_failed``,
+  ``extraction_notes``. ``complexity`` is now a ``Literal["low","medium","high"]``.
+- ``ProposalPDFInput.client_name`` / ``.project_name`` are therefore
+  ``str | None``. **``pdf_gen`` must render a generic heading and build a
+  filename when both are None** — that is now the *normal* path, not an edge
+  case, because declining to give a name is an offered choice (see
+  ``disambiguation/engagement.py``).
+
+A visitor-supplied name arrives on ``ProposalPDFInput``, never on
+``ExtractedRequirements``: that model is the parser's statement about what the
+*document* contained, and merging a human-typed value into it would make
+"the brief said it" and "the visitor typed it" indistinguishable.
 """
 from __future__ import annotations
 
 from typing import Any
 from pydantic import BaseModel, Field
 
-
-# ── 1. CV Brief Parsing Tool Contracts ──────────────────────────────────────
-
-
-class BriefParserInput(BaseModel):
-    """Input payload for extracting requirements from a client brief PDF/image."""
-
-    file_path: str = Field(
-        ..., description="Path to the uploaded client brief PDF or image file."
-    )
-    client_name: str | None = Field(
-        None, description="Optional override for client company name if known."
-    )
+# The hop-2 output contract lives in the package that produces it. Re-exported
+# here so `from stratpoint_rag.agent.contracts import ExtractedRequirements`
+# keeps working; the dependency runs agent -> docparse and must not be inverted.
+from stratpoint_rag.docparse.schema import ExtractedRequirements
 
 
-class ExtractedRequirements(BaseModel):
-    """Output payload containing extracted requirements, features, and constraints."""
+# ── 1. Brief Extraction Tool Contracts ──────────────────────────────────────
 
-    client_name: str = Field(..., description="Name of the client company.")
-    project_name: str = Field(..., description="Title/name of the project.")
-    target_platform: list[str] = Field(
-        default_factory=list,
-        description="Target platforms (e.g. Mobile iOS, Android, Web).",
-    )
-    features: list[str] = Field(
-        default_factory=list, description="List of required project features."
-    )
-    constraints: list[str] = Field(
-        default_factory=list,
-        description="Project constraints (e.g. timeline, compliance, budget).",
-    )
-    tech_stack: list[str] = Field(
-        default_factory=list,
-        description="Suggested or required tech stack components.",
-    )
-    complexity: str = Field(
-        "medium", description="Overall complexity assessment (low, medium, high)."
+
+class BriefExtractionInput(BaseModel):
+    """Input payload for extracting requirements from an uploaded client brief.
+
+    **An id, never a path.** A path here would be LLM-generated free text
+    flowing into ``open()``, and ``guardrails`` guards the visitor's *message*,
+    not tool arguments. The id is resolved against the caller's session before
+    anything is read.
+    """
+
+    upload_id: str = Field(
+        ..., description="Opaque id of an upload from the attachment list."
     )
 
 
@@ -116,8 +119,15 @@ class EstimationResult(BaseModel):
 class ProposalPDFInput(BaseModel):
     """Input payload for generating the final proposal PDF."""
 
-    client_name: str = Field(..., description="Client company name.")
-    project_name: str = Field(..., description="Project title.")
+    # None is the normal case, not an edge case: neither hop supplies these, and
+    # the visitor is free to decline when asked. pdf_gen must build a filename
+    # and render a heading without them.
+    client_name: str | None = Field(
+        None, description="Client company name, if the visitor supplied one."
+    )
+    project_name: str | None = Field(
+        None, description="Project title, if the visitor supplied one."
+    )
     requirements: ExtractedRequirements | dict[str, Any] = Field(
         ..., description="Extracted requirements or features dictionary."
     )

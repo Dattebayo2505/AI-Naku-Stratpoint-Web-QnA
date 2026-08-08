@@ -4,6 +4,7 @@ slots, and run a clarification loop before committing to retrieval.
 
 from __future__ import annotations
 
+from . import engagement
 from .clarification import ClarificationLoop
 from .classifier import classify
 from .router import route
@@ -30,5 +31,6 @@ __all__ = [
     "SlotDef",
     "SlotQuery",
     "INTENT_SLOTS",
+    "engagement",
     "extract_slots",
 ]

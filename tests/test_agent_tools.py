@@ -113,15 +113,21 @@ def test_tools_are_plain_callables():
 
 
 def test_registry_maps_names_to_functions():
-    assert tools.TOOL_REGISTRY["search_stratpoint"] is tools.search_stratpoint
-    assert tools.TOOL_REGISTRY["find_resource"] is tools.find_resource
-    assert set(tools.TOOL_REGISTRY) == {"search_stratpoint", "find_resource"}
+    registry = tools.build_tool_registry(tools.build_tool_specs())
+    assert registry["search_stratpoint"] is tools.search_stratpoint
+    assert registry["find_resource"] is tools.find_resource
+    assert set(registry) == {
+        "search_stratpoint",
+        "find_resource",
+        "estimate_cost_and_timeline",
+        "generate_proposal_pdf",
+    }
 
 
 def test_specs_carry_arg_names_for_the_trace():
     """tool_input keys must stay 'query'/'topic' so the UI debug panel renders
     the same JSON it did under native function-calling."""
-    by_name = {s.name: s for s in tools.TOOL_SPECS}
+    by_name = {s.name: s for s in tools.build_tool_specs()}
     assert by_name["search_stratpoint"].arg == "query"
     assert by_name["find_resource"].arg == "topic"
 
@@ -129,12 +135,12 @@ def test_specs_carry_arg_names_for_the_trace():
 def test_find_resource_description_keeps_the_full_wording_rule():
     """Load-bearing: tuned live on llama. Shortening the topic to keywords
     misses the document that mentions it."""
-    by_name = {s.name: s for s in tools.TOOL_SPECS}
+    by_name = {s.name: s for s in tools.build_tool_specs()}
     desc = by_name["find_resource"].description
     assert "FULL" in desc
     assert "figures and years" in desc
 
 
 def test_search_stratpoint_description_marks_it_the_default():
-    by_name = {s.name: s for s in tools.TOOL_SPECS}
+    by_name = {s.name: s for s in tools.build_tool_specs()}
     assert "default" in by_name["search_stratpoint"].description.lower()

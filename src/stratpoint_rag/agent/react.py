@@ -22,12 +22,16 @@ import httpx
 from stratpoint_rag import llmops
 from stratpoint_rag.agent.models import AgentResult, Link, Step
 from stratpoint_rag.agent.tools import (
-    TOOL_REGISTRY,
-    TOOL_SPECS,
+    BRIEF_TOOL_NAME,
+    READ_BRIEF_TOOL_NAME,
+    ToolSpec,
     begin_capture,
+    build_tool_registry,
+    build_tool_specs,
     captured_proposal_data,
     end_capture,
 )
+from stratpoint_rag.docparse import BriefRef
 from stratpoint_rag.agent.tracer import AgentTracer, get_default_tracer
 from stratpoint_rag.rag import config
 
@@ -122,29 +126,121 @@ def _parse_link_lines(text: str) -> list[Link]:
     return [Link(title=t.strip(), url=u.strip()) for t, u in _LINK_LINE.findall(text or "")]
 
 
-def render_system_prompt(uploaded_file: str | None = None) -> str:
-    """Build the loop's system prompt from TOOL_SPECS plus rules."""
-    tool_lines = "\n".join(f"- {s.name}: {s.description}" for s in TOOL_SPECS)
-    file_ctx = (
-        f"\nAn uploaded client brief is available at: '{uploaded_file}'. "
-        f"You should start by calling parse_client_brief('{uploaded_file}').\n"
-        if uploaded_file
-        else "\nNo file uploaded. If the visitor typed their project requirements directly in text, skip brief parsing and proceed directly to estimate_cost_and_timeline using their features.\n"
+def render_attachment_manifest(briefs: list[BriefRef] | None) -> str:
+    """List the visitor's uploads, with their ids, for the system prompt.
+
+    **This is non-negotiable when an attachment exists.** The tool takes an
+    opaque `upload_id`, and without the manifest that id never reaches the model
+    — the tool is uncallable by construction. Worse, the failure is silent and
+    confident: asked "what's the timeline on this?" with a brief attached, a
+    model that does not know a document exists calls `search_stratpoint`, whose
+    description says it is the default tool, and answers from the website corpus
+    about entirely the wrong thing.
+
+    Example line::
+
+        - client-brief.pdf | id=a3f9c2 | 12 pages, transcribed
+    """
+    if not briefs:
+        return ""
+
+    lines = []
+    for brief in briefs:
+        pages = f"{brief.pages_total} page" + ("" if brief.pages_total == 1 else "s")
+        state = "transcribed" if brief.transcribed else "not transcribed yet"
+        if brief.pages_failed:
+            state += f", {len(brief.pages_failed)} page(s) unreadable"
+        lines.append(f"- {brief.filename} | id={brief.upload_id} | {pages}, {state}")
+
+    return (
+        "\nThe visitor has attached these documents:\n"
+        + "\n".join(lines)
+        + "\nWhen they refer to 'the brief', 'the RFP', 'this document', or "
+        "their own project, they mean the file above — use its id.\n"
+        f"Call {READ_BRIEF_TOOL_NAME} to answer a question about what it says, "
+        f"and {BRIEF_TOOL_NAME} to scope or price the work in it.\n"
+    )
+
+
+def render_system_prompt(
+    briefs: list[BriefRef] | None = None,
+    specs: list[ToolSpec] | None = None,
+    *,
+    proposal_mode: bool = True,
+) -> str:
+    """Build the loop's system prompt from this request's tool specs plus rules.
+
+    ``proposal_mode`` is the difference between "quote this brief" and "what is
+    this brief about". It was not a parameter, and every attachment question
+    therefore ran under a prompt whose identity line was *"you help prospects
+    create scoped project proposals"*, whose only worked example was the
+    four-step proposal chain, and which carried the standing rule *"summarize
+    cost, timeline in weeks, and download links in your final Answer"*. Asked
+    for a two-sentence description of an uploaded document, the loop did as it
+    was told and returned a $27k quote.
+
+    Both modes get the same tools: narrowing the toolset instead would leave the
+    loop unable to change course when the visitor's next message asks for the
+    proposal after all.
+    """
+    specs = specs if specs is not None else build_tool_specs(briefs)
+    tool_lines = "\n".join(f"- {s.name}: {s.description}" for s in specs)
+
+    if briefs:
+        file_ctx = render_attachment_manifest(briefs)
+    else:
+        file_ctx = (
+            "\nNo document is attached. If the visitor typed their project "
+            "requirements directly in text, work from those. Do not ask them to "
+            "upload anything unless they bring it up.\n"
+        )
+
+    header = (
+        "You are Stratpoint's business-development AI assistant. You help client "
+        "prospects and team members create scoped project proposals (timeline, "
+        "cost, and downloadable proposal PDF).\n\n"
+        if proposal_mode
+        else "You are Stratpoint's AI assistant. You answer visitors' questions "
+        "about Stratpoint and about any document they have uploaded.\n\n"
+    )
+
+    if proposal_mode:
+        steps = [f"{BRIEF_TOOL_NAME}(upload_id)"] if briefs else []
+        steps += [
+            "estimate_cost_and_timeline(scope_input)",
+            "generate_proposal_pdf(proposal_details)",
+            "Answer: Summarize the proposal findings (cost, timeline, PDF link).",
+        ]
+        chain = "".join(f"{i}. {s}\n" for i, s in enumerate(steps, start=1))
+        task = f"Proposal Chaining Sequence when building a proposal:\n{chain}\n"
+    else:
+        task = (
+            "The visitor is NOT asking for a proposal. Answer the question they "
+            "actually asked.\n"
+            f"- To answer anything about an uploaded document — what it is, what "
+            f"it says, a summary — call {READ_BRIEF_TOOL_NAME} and answer from "
+            "what it returns.\n"
+            "- For questions about Stratpoint, call search_stratpoint.\n\n"
+        )
+
+    closing = (
+        "- Summarize cost, timeline in weeks, and download links in your final "
+        "Answer.\n"
+        if proposal_mode
+        else "- Do NOT produce a cost, a timeline, a role breakdown, or a "
+        "proposal PDF. The visitor did not ask for one; offer to build one only "
+        "if it is genuinely useful, and wait for them to say yes.\n"
+        "- Match the length the visitor asked for. If they asked for two "
+        "sentences, give two sentences.\n"
     )
 
     return (
-        "You are Stratpoint's business-development AI assistant. You help client "
-        "prospects and team members create scoped project proposals (timeline, cost, "
-        "and downloadable proposal PDF).\n\n"
+        f"{header}"
         f"{file_ctx}"
         "You run in a loop of Thought, Action, Observation.\n\n"
         "Tools:\n"
         f"{tool_lines}\n\n"
-        "Proposal Chaining Sequence when building a proposal:\n"
-        "1. parse_client_brief(file_path)\n"
-        "2. estimate_cost_and_timeline(scope_input)\n"
-        "3. generate_proposal_pdf(proposal_details)\n"
-        "4. Answer: Summarize the proposal findings (cost, timeline, PDF link).\n\n"
+        f"{task}"
         "Respond in exactly this format:\n"
         "Thought: what you need next and why\n"
         "Action: <tool name>(<input>)\n"
@@ -157,7 +253,9 @@ def render_system_prompt(uploaded_file: str | None = None) -> str:
         "- Never mention a tool, a function name, its arguments, or any JSON. "
         "Never say what you 'called' or what something 'returns'. Just answer "
         "the visitor.\n"
-        "- Summarize cost, timeline in weeks, and download links in your final Answer.\n"
+        "- Never invent a client name, a company name, or a project name. If the "
+        "document does not state one, leave it out.\n"
+        f"{closing}"
     )
 
 
@@ -184,8 +282,8 @@ def _default_chat(messages: list[dict], stop: list[str]) -> str:
     return data["choices"][0]["message"].get("content") or ""
 
 
-def _arg_name(tool: str) -> str:
-    for s in TOOL_SPECS:
+def _arg_name(tool: str, specs: list[ToolSpec]) -> str:
+    for s in specs:
         if s.name == tool:
             return s.arg
     return "input"
@@ -222,10 +320,11 @@ def _fallback(
     thoughts: list[str],
     enable_reasoning: bool,
     tracer: AgentTracer,
+    registry: dict[str, Any],
 ) -> AgentResult:
     """Answer via search_stratpoint directly when the loop can't finish."""
     trace.append(Step(type="fallback", content=reason))
-    text = TOOL_REGISTRY["search_stratpoint"](message)
+    text = registry["search_stratpoint"](message)
     citations.extend(_parse_link_lines(text))
     trace.append(Step(type="observation", tool="search_stratpoint", content=text))
     trace.append(Step(type="answer", content=text))
@@ -268,16 +367,27 @@ def run_react(
     chat=None,
     tracer: AgentTracer | None = None,
     enable_reasoning: bool = False,
+    briefs: list[BriefRef] | None = None,
+    names: tuple[str | None, str | None] = (None, None),
+    proposal_mode: bool = True,
 ) -> AgentResult:
     """Run one turn of the plain-text ReAct loop.
 
     Args:
         message: The user prompt or request.
-        uploaded_file: Optional path to uploaded client brief PDF or image.
+        uploaded_file: Legacy display label for the tracer only. It no longer
+            reaches the prompt: the loop addresses uploads by id via ``briefs``,
+            never by path.
         history: Prior conversation turns.
         chat: Callable seam for LLM completion (messages, stop) -> str.
         tracer: Pluggable telemetry tracer.
         enable_reasoning: Surface thoughts in AgentResult.reasoning.
+        briefs: Uploads resolved for this session. Non-empty is what registers
+            the brief tool and puts the attachment manifest in the prompt.
+        names: ``(client_name, project_name)`` the visitor supplied, if any.
+        proposal_mode: True when the visitor asked for a proposal/quote. False
+            casts the same tools as document Q&A instead, and drops the standing
+            instruction to end every Answer with cost, timeline and a PDF link.
 
     Returns:
         Structured AgentResult containing answer, trace, proposal_data, and links.
@@ -286,9 +396,21 @@ def run_react(
     tracer = tracer or get_default_tracer()
     tracer.on_agent_start(message, uploaded_file)
 
+    # Built per request: the tool list depends on what is attached, and the PDF
+    # tool closes over the visitor's answer about naming.
+    specs = build_tool_specs(briefs, names)
+    registry = build_tool_registry(specs)
+
     begin_capture()
     try:
-        messages: list[dict] = [{"role": "system", "content": render_system_prompt(uploaded_file)}]
+        messages: list[dict] = [
+            {
+                "role": "system",
+                "content": render_system_prompt(
+                    briefs, specs, proposal_mode=proposal_mode
+                ),
+            }
+        ]
         messages += [{"role": h["role"], "content": h["content"]} for h in (history or [])]
         messages.append({"role": "user", "content": message})
 
@@ -319,14 +441,14 @@ def run_react(
                     Step(
                         type="action",
                         tool=step.tool,
-                        tool_input={_arg_name(step.tool): step.tool_input},
+                        tool_input={_arg_name(step.tool, specs): step.tool_input},
                     )
                 )
-                fn = TOOL_REGISTRY.get(step.tool)
+                fn = registry.get(step.tool)
                 if fn is None:
                     observation = (
                         f"Error: tool '{step.tool}' does not exist. "
-                        f"Available: {', '.join(TOOL_REGISTRY)}."
+                        f"Available: {', '.join(registry)}."
                     )
                     tracer.on_error(step.tool or "unknown", observation)
                 else:
@@ -353,6 +475,7 @@ def run_react(
                     thoughts,
                     enable_reasoning,
                     tracer,
+                    registry,
                 )
             reprompted = True
             messages.append({"role": "user", "content": _REPROMPT})
@@ -366,6 +489,7 @@ def run_react(
             thoughts,
             enable_reasoning,
             tracer,
+            registry,
         )
     finally:
         end_capture()
