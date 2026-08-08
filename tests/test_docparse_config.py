@@ -39,7 +39,7 @@ def clean_env(monkeypatch):
         ("upload_dir", "data/uploads"),
         ("upload_ttl_seconds", 3600),
         ("upload_max_bytes", 25_000_000),
-        ("max_pages", 20),
+        ("max_pages", 40),
         ("concurrency", 4),
         ("text_layer_min_chars", 100),
     ],
@@ -67,7 +67,7 @@ def test_env_overrides_default(clean_env, fn_name, var, raw, expected):
 
 def test_env_is_read_at_call_time_not_import(clean_env):
     """The load-bearing idiom: rag/config.py:3 says so, and the suite relies on it."""
-    assert config.max_pages() == 20
+    assert config.max_pages() == 40
     clean_env.setenv("DOCPARSE_MAX_PAGES", "7")
     assert config.max_pages() == 7
 
@@ -77,7 +77,7 @@ def test_env_is_read_at_call_time_not_import(clean_env):
     [
         ("upload_ttl_seconds", "UPLOAD_TTL_SECONDS", 3600),
         ("upload_max_bytes", "UPLOAD_MAX_BYTES", 25_000_000),
-        ("max_pages", "DOCPARSE_MAX_PAGES", 20),
+        ("max_pages", "DOCPARSE_MAX_PAGES", 40),
         ("concurrency", "DOCPARSE_CONCURRENCY", 4),
         ("text_layer_min_chars", "DOCPARSE_TEXT_LAYER_MIN_CHARS", 100),
     ],

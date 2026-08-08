@@ -120,15 +120,30 @@ def upload_max_bytes() -> int:
 
 
 def max_pages() -> int:
-    """Hard cap on pages parsed per upload — abuse guard and latency guard."""
-    return _int_env("DOCPARSE_MAX_PAGES", 20)
+    """Hard cap on pages parsed per upload — abuse guard and latency guard.
+
+    40 rather than 20 because real RFPs routinely run past 20 pages and the
+    truncation is invisible in the answer: the brief is simply missing its back
+    half. The cost is bounded by the text-layer route — a digital RFP of any
+    length costs zero vision calls — so 40 only bites on a fully scanned
+    document, where it is exactly the case worth covering.
+
+    Sizing at the ceiling: 40 pages / concurrency 4 x ~5s is ~50s typical, and
+    the worst case (every page stalling into VISION_TIMEOUT) is 10 x 90s = 900s,
+    past the 300s parse timeout. A wholly-stalled parse was already going to
+    fail at 20 pages (450s); raising the cap widens the band in which a *partly*
+    slow scan times out client-side. Lower DOCPARSE_MAX_PAGES if that shows up.
+    """
+    return _int_env("DOCPARSE_MAX_PAGES", 40)
 
 
 def concurrency() -> int:
     """Page-level worker count.
 
     Bounded by NIM's 40 requests/min per model: max_pages() x concurrency() is
-    the exposure, and two simultaneous uploads reach the ceiling.
+    the exposure, and with a 40-page cap a *single* fully-scanned upload now
+    spends the whole minute's quota. Raising this multiplies the burst, it does
+    not shorten the queue.
     """
     return _int_env("DOCPARSE_CONCURRENCY", 4)
 
@@ -143,7 +158,7 @@ def extraction_token_budget() -> int:
     "I only read the first 12 pages."
 
     ~12k tokens is roughly 8-10 transcribed pages, which covers most real briefs
-    outright; the 20-page cap from hop 1 bounds the worst case at 4 groups.
+    outright; the 40-page cap from hop 1 bounds the worst case at 8 groups.
     """
     return _int_env("DOCPARSE_EXTRACTION_TOKEN_BUDGET", 12_000)
 

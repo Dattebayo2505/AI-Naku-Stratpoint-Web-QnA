@@ -47,8 +47,8 @@ from stratpoint_rag.docparse import config
 
 __all__ = ["NimTextClient", "NimVisionClient"]
 
-# 429 is the one that matters: 40 requests/min per model, and a 20-page parse
-# burns 20 of them. 5xx is transient endpoint load. 4xx is not retried — a 400
+# 429 is the one that matters: 40 requests/min per model, and a fully-scanned
+# parse at the 40-page cap burns the lot. 5xx is transient endpoint load. 4xx is not retried — a 400
 # means the payload is wrong, and retrying only burns more of the rate limit.
 _RETRY_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 

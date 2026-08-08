@@ -7,7 +7,7 @@ between them.
 uploaded brief that preserves the document's own visual hierarchy. It does not
 reorganize content into Requirements / Constraints / Timeline sections; that
 inference is hop 2's job, and splitting it across two models makes a wrong
-output untraceable. Runs **eagerly at upload** — up to 20 vision calls, 25-100s,
+output untraceable. Runs **eagerly at upload** — up to 40 vision calls, 25-200s,
 with its own timeout — so the wait lands where the user just dropped a file and
 expects a spinner.
 

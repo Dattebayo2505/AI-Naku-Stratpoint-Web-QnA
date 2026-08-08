@@ -18,7 +18,7 @@ Four rules here are easy to break and expensive to debug:
    token usage land in ``llmops``'s thread-local accumulator and get recorded
    under ``/chat``. Fanning it out across a pool would silently drop it, exactly
    as it would have in hop 1 (see ``docparse/clients.py``). Hop 2 is 1-5 text
-   calls, ~3-20s, which fits the 120s chat timeout; hop 1's 20 vision calls
+   calls, ~3-20s, which fits the 120s chat timeout; hop 1's up-to-40 vision calls
    would not, which is why hop 1 is eager at upload and this is lazy.
 3. **Provenance is copied, never re-derived and never asked of the model.**
    ``pages_total``/``pages_parsed``/``pages_failed`` come from hop 1's run. A
