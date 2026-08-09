@@ -18,6 +18,11 @@ class PageResult:
     failed: bool = False
     failure_reason: str | None = None
     usage: dict | None = None
+    # Set when the page parsed but was repaired on the way out — currently only
+    # a collapsed degeneration loop. Stamped into the page's provenance comment
+    # for the same reason ``pages_failed`` exists: a page the pipeline had to
+    # edit must not read as a clean transcription.
+    note: str | None = None
 
 
 @dataclass(frozen=True)

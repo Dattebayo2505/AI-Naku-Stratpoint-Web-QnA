@@ -45,6 +45,23 @@ JPEG_QUALITY = 85
 # logo, a rule) rather than a diagram worth spending a vision call on.
 _LARGE_IMAGE_AREA_RATIO = 0.15
 
+# ...but a figure is routinely placed as SEVERAL images, and then no single one
+# clears the bar. Measured on a real RFP: a page carrying two stacked aerial
+# maps — 27% of the page between them — scored 0.1361 and 0.1358 and took the
+# text-only route, so both maps were dropped from the transcription entirely.
+# The page above it, with two comparable maps, cleared by 0.0004. That is a
+# coin-flip, not a threshold. Combined coverage is the honest question: "how
+# much of this page is picture", not "is any one picture big".
+#
+# Overlapping bboxes are double-counted rather than unioned. The error only
+# ever pushes a page TOWARD vision, which is the safe direction — a needless
+# vision call costs ~1,600 tokens, a missed diagram costs a requirement.
+_COMBINED_IMAGE_AREA_RATIO = 0.20
+
+# Images under this are excluded from the combined sum, so a row of icons or a
+# repeated header logo cannot accumulate its way into a vision call.
+_DECORATION_AREA_RATIO = 0.02
+
 _PDF_MAGIC = b"%PDF-"
 _IMAGE_MAGICS = (
     b"\x89PNG\r\n\x1a\n",  # png
@@ -105,21 +122,30 @@ class Document:
         return self._doc[index].get_text()
 
     def page_has_large_image(self, index: int) -> bool:
-        """True when the page carries an image big enough to be a diagram.
+        """True when the page carries enough picture to be worth a vision call.
 
         Architecture slides carry real constraints — on-prem, specific clouds,
         microservices — that exist *only* as boxes and arrows, so a page with
         both text and a diagram still needs the vision path.
+
+        Two ways to qualify, because one image is not the only way to draw a
+        figure: a single image over ``_LARGE_IMAGE_AREA_RATIO``, or several
+        non-decorative ones covering ``_COMBINED_IMAGE_AREA_RATIO`` together.
         """
         page = self._doc[index]
         page_area = abs(page.rect.width * page.rect.height)
         if not page_area:
             return False
+
+        combined = 0.0
         for block in page.get_image_info():
             bbox = pymupdf.Rect(block["bbox"])
-            if abs(bbox.width * bbox.height) / page_area >= _LARGE_IMAGE_AREA_RATIO:
+            ratio = abs(bbox.width * bbox.height) / page_area
+            if ratio >= _LARGE_IMAGE_AREA_RATIO:
                 return True
-        return False
+            if ratio >= _DECORATION_AREA_RATIO:
+                combined += ratio
+        return combined >= _COMBINED_IMAGE_AREA_RATIO
 
     @staticmethod
     def _native_zoom(page: pymupdf.Page, width_pt: float) -> float:

@@ -25,6 +25,7 @@ load_dotenv()
 
 __all__ = [
     "EXTRACTION_MAX_TOKENS",
+    "FREQUENCY_PENALTY",
     "MAX_TOKENS",
     "TEMPERATURE",
     "VISION_TIMEOUT",
@@ -57,6 +58,26 @@ __all__ = [
 # instead of transcribing.
 TEMPERATURE = 0.1
 MAX_TOKENS = 2048
+
+# Vision only. At temperature 0.1 with no penalty this model reliably falls into
+# a degeneration loop on sparse, image-dominated pages and runs to MAX_TOKENS.
+# Measured on an RFP cover page (one photo, four lines of text), twice: 2,048
+# completion tokens, finish_reason="length", the same eight lines emitted 40x,
+# 77s. It is not a harmless artifact — it is 2,048 billed tokens, most of a
+# VISION_TIMEOUT, and ~10 KB of duplicated text handed to hop 2 as requirements.
+#
+# 0.3, not higher: the penalty scales with a token's COUNT, so it dissolves a
+# 40x loop while barely touching the 2x repeats that dense tables legitimately
+# contain. Measured token-recall against the pages' own text layer, at 0/0.3/0.5:
+#   insurance table (repeated dollar limits)  100% / 99.0% / 95.7%  <- 0.5 costs cells
+#   dense prose page                          77.1% / 97.5% / 98.3%
+#   maps page, diagram page                    100% / 100%  / unchanged
+#   cover page                     2048 tok, looping / 214 tok, clean
+# 0.5 starts eating table cells — exactly the content this model is best at.
+#
+# This is a mitigation of a stochastic failure, not a guarantee; the
+# deterministic backstop is _collapse_repetition in transcribe.py.
+FREQUENCY_PENALTY = 0.3
 
 # Per-page ceiling on one vision call, deliberately far below LLM_TIMEOUT (300s).
 #

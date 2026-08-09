@@ -127,6 +127,21 @@ def test_sends_the_tuning_constants(client):
 
 
 @respx.mock
+def test_sends_a_frequency_penalty(client):
+    """Without it this model falls into a repetition loop on sparse, image-heavy
+    pages and runs to max_tokens: measured twice on an RFP cover page at 2,048
+    completion tokens, finish_reason="length", the same eight lines 40x, 77s.
+    At 0.3 the same page returned 214 tokens, clean, in 12s."""
+    route = respx.post(URL).mock(return_value=_ok())
+
+    client.describe(JPEG, "prompt")
+
+    body = __import__("json").loads(route.calls.last.request.read())
+    assert body["frequency_penalty"] == config.FREQUENCY_PENALTY
+    assert 0 < body["frequency_penalty"] < 0.5  # 0.5 measurably ate table cells
+
+
+@respx.mock
 def test_uses_the_vision_timeout_not_the_chat_one(client):
     """Observed live: under rate limiting NVIDIA throttles by DELAYING rather
     than returning 429, so tenacity never fires — one page took 173s against a

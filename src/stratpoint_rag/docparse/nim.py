@@ -147,6 +147,12 @@ class NimVisionClient(_NimClient):
             ],
             "max_tokens": config.MAX_TOKENS,
             "temperature": config.TEMPERATURE,
+            # Vision-only, and load-bearing: without it this model degenerates
+            # into a repetition loop on sparse image-heavy pages and burns the
+            # whole MAX_TOKENS budget. See config.FREQUENCY_PENALTY for the
+            # measurements. NimTextClient deliberately does not send it — hop 2
+            # emits JSON, where repeated key tokens are the format, not a loop.
+            "frequency_penalty": config.FREQUENCY_PENALTY,
             "stream": False,
         }
         return self._call(body, key, config.VISION_TIMEOUT)

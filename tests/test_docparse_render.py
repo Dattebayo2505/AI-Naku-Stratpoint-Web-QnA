@@ -275,3 +275,106 @@ def test_rasterize_rejects_an_out_of_range_page(text_pdf):
     with render.open_document(text_pdf) as doc:
         with pytest.raises(IndexError):
             doc.rasterize(5)
+
+
+# ── combined image coverage ─────────────────────────────────────────────────
+#
+# Regression: a real RFP page carrying two stacked aerial maps took the
+# text-only route and lost both. Neither map cleared the per-image 0.15 bar
+# (0.1361 and 0.1358) though together they covered 27% of the page, while the
+# page after it cleared by 0.0004. The single-image test was a coin flip.
+
+
+@pytest.fixture
+def two_figure_pdf(tmp_path):
+    """One A4 page, two images at ~13% of page area each — 26% combined.
+
+    Deliberately straddles the thresholds: under _LARGE_IMAGE_AREA_RATIO
+    individually, over _COMBINED_IMAGE_AREA_RATIO together.
+    """
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4_W, height=A4_H)
+    page.insert_text((72, 60), "Site Information", fontsize=14)
+
+    box_w, box_h = 440, 148  # 440*148 / (595*842) = 0.130 of the page
+    # The pixmap's aspect must match the target rect: insert_image preserves
+    # proportion, so a mismatched source silently lands smaller than the rect
+    # and the fixture stops testing what it says it tests.
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, box_w * 2, box_h * 2))
+    pix.clear_with(180)
+    page.insert_image(pymupdf.Rect(72, 100, 72 + box_w, 100 + box_h), pixmap=pix)
+    page.insert_image(pymupdf.Rect(72, 300, 72 + box_w, 300 + box_h), pixmap=pix)
+
+    path = tmp_path / "two_figures.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+@pytest.fixture
+def icon_row_pdf(tmp_path):
+    """Twenty-four small icons — ~1% of the page each, ~23% combined.
+
+    Deliberately sums to MORE than _COMBINED_IMAGE_AREA_RATIO, so the only
+    thing standing between this page and a wasted vision call is the
+    per-image decoration floor. A fixture that stayed under the combined bar
+    would pass whether or not that floor existed.
+    """
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4_W, height=A4_H)
+    page.insert_text((72, 60), "Body text " * 30, fontsize=11)
+
+    side = 70  # 70*70 / (595*842) = 0.0098 each, 0.235 for twenty-four
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, side, side))
+    pix.clear_with(90)
+    for i in range(24):
+        x, y = 72 + (i % 6) * 80, 150 + (i // 6) * 80
+        page.insert_image(pymupdf.Rect(x, y, x + side, y + side), pixmap=pix)
+
+    path = tmp_path / "icons.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def _image_ratios(doc, index=0):
+    """Each embedded image's share of the page, as page_has_large_image sees it."""
+    import pymupdf
+
+    page = doc._doc[index]
+    area = abs(page.rect.width * page.rect.height)
+    out = []
+    for b in page.get_image_info():
+        r = pymupdf.Rect(b["bbox"])
+        out.append(abs(r.width * r.height) / area)
+    return out
+
+
+def test_two_medium_figures_together_earn_a_vision_call(two_figure_pdf):
+    """The reported bug: a figure split across two images was routed to text."""
+    with render.open_document(two_figure_pdf) as doc:
+        ratios = _image_ratios(doc)
+        # The premise of the regression — without it this test could pass for
+        # the wrong reason, e.g. if the fixture's images landed oversized.
+        assert len(ratios) == 2, ratios
+        assert all(r < render._LARGE_IMAGE_AREA_RATIO for r in ratios), ratios
+        assert sum(ratios) >= render._COMBINED_IMAGE_AREA_RATIO, ratios
+
+        assert doc.page_has_large_image(0) is True
+
+
+def test_a_row_of_icons_does_not_accumulate_into_a_vision_call(icon_row_pdf):
+    """Decoration must not sum its way past the bar — that is the cost guard."""
+    with render.open_document(icon_row_pdf) as doc:
+        ratios = _image_ratios(doc)
+        assert len(ratios) == 24, ratios
+        # Individually decoration, but they out-total the combined bar; only the
+        # per-image floor keeps them from buying a vision call.
+        assert all(r < render._DECORATION_AREA_RATIO for r in ratios), ratios
+        assert sum(ratios) > render._COMBINED_IMAGE_AREA_RATIO, sum(ratios)
+
+        assert doc.page_has_large_image(0) is False

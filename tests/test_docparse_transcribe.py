@@ -432,3 +432,72 @@ def test_each_page_is_a_separate_call_carrying_jpeg_bytes(scanned_pdf):
     for image, prompt in vision.calls:
         assert image[:3] == b"\xff\xd8\xff"  # jpeg
         assert prompt == transcribe.prompts.TRANSCRIPTION_PROMPT
+
+
+# ── degeneration loops ──────────────────────────────────────────────────────
+#
+# Regression: an RFP cover page (one photo, four lines of text) came back with
+# eight distinct lines repeated 40x, 2,048 completion tokens, truncated at the
+# ceiling mid-loop. config.FREQUENCY_PENALTY is the primary fix; this collapse
+# is the deterministic backstop, and it must keep the real transcription that
+# preceded the loop.
+
+
+def test_a_runaway_repetition_loop_is_collapsed(scanned_pdf, serial):
+    real = "### Request for Proposal\n\nHemisfair Augmented Reality Project."
+    loop = "\n\n".join(["**Request for Proposal**"] * 40)
+    vision = FakeVisionClient(reply=f"{real}\n\n{loop}")
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    body = result.markdown
+    assert body.count("**Request for Proposal**") == 3 * 3  # 3 pages x cap of 3
+    # the genuine transcription that preceded the loop survives
+    assert "Hemisfair Augmented Reality Project." in body
+    assert result.pages_failed == []
+    assert result.pages_parsed == 3
+
+
+def test_a_collapsed_page_says_so_in_its_provenance_marker(scanned_pdf, serial):
+    """A page the pipeline had to repair must not read as a clean parse."""
+    vision = FakeVisionClient(reply="\n\n".join(["Same line."] * 30))
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert "| collapsed 27 repeated lines -->" in result.markdown
+
+
+def test_an_ordinary_page_is_left_byte_identical(scanned_pdf, serial):
+    """Real pages repeat lines a little; only a genuine loop may be touched."""
+    reply = (
+        "### Insurance\n\n"
+        "| Coverage | Limit |\n| --- | --- |\n"
+        "| Bodily Injury | $1,000,000 |\n"
+        "| Property Damage | $1,000,000 |\n"
+        "| Umbrella | $1,000,000 |"
+    )
+    vision = FakeVisionClient(reply=reply)
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert reply in result.markdown
+    assert "collapsed" not in result.markdown
+
+
+def test_a_reply_that_is_nothing_but_loop_fails_the_page(scanned_pdf, serial):
+    """Collapsing can leave too little to be a transcription — that is a failure,
+    not a three-line page silently presented as the client's document."""
+    vision = FakeVisionClient(reply="\n\n".join(["Hi."] * 50))
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert result.pages_failed == [1, 2, 3]
+    assert "response too short to be a transcription" in result.markdown
+
+
+def test_collapse_preserves_order_and_keeps_the_first_occurrences():
+    text = "A\n\nB\n\nA\n\nC\n\nA\n\nA\n\nA\n\nD"
+    out, dropped = transcribe._collapse_repetition(text)
+
+    assert dropped == 2
+    assert [ln for ln in out.splitlines() if ln.strip()] == ["A", "B", "A", "C", "A", "D"]
