@@ -22,7 +22,8 @@ LLM_TIMEOUT=300
 # docparse — vision model for transcribing uploaded client briefs.
 # One key works for any NIM model, so NVIDIA_VISION_API_KEY is OPTIONAL: blank
 # falls back to NVIDIA_API_KEY. A second key is only a quota lever (40 RPM per
-# model). Blank VISION_MODEL = the docparse/config.py default.
+# model). Blank VISION_MODEL = the docparse/config.py default,
+# nvidia/nemotron-nano-12b-v2-vl.
 VISION_MODEL=
 NVIDIA_VISION_API_KEY=
 

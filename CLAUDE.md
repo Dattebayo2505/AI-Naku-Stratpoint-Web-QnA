@@ -136,7 +136,8 @@ keeping it there makes a swap to `pypdfium2` a contained change).
 
 ### Key design decisions (read before editing)
 
-These came out of a live probe of `meta/llama-3.2-11b-vision-instruct` and are
+These came out of live probes of `meta/llama-3.2-11b-vision-instruct` and, from
+2026-08-09, `nvidia/nemotron-nano-12b-v2-vl`. They are
 counter-intuitive enough that they *will* be re-litigated by anyone reading only
 the NVIDIA docs.
 
@@ -149,18 +150,16 @@ the NVIDIA docs.
   form. The HTML form belongs to the legacy `ai.api.nvidia.com/v1/vlm/...`
   NVCF endpoints.
 
-- **1120px is a TILE cap, not a size cap.** Billing is exactly 1,601 tokens per
-  tile + 27 overhead, hard-capped at 4 tiles, so everything past ~1120px on the
-  long edge is silently discarded. Higher resolution costs the *same* and
-  transcribes *worse*: an invoice page that transcribed perfectly at 1120x1456
-  dropped its entire Overview body at 2240x2912. There is **no ~180 KB payload
-  limit** here (a 25.6 MB base64 body returned 200); that figure belongs to the
-  legacy NVCF endpoints. Do not build a downscale ladder or an asset-upload path.
+- **1120px is a LATENCY cap.** It was a billing cap under meta (1,601
+  tokens/tile, 4 tiles). Nemotron bills the same at 1536x1988 as at 1120x1449 —
+  but that raster ran 3.3x slower on a 10-page scan and lost a page to
+  `VISION_TIMEOUT`. There is still **no ~180 KB payload limit**; that belongs to
+  the legacy NVCF endpoints. Do not build a downscale ladder.
 
-- **One image per request.** Two gets `"At most 1 image(s) may be provided in
-  one prompt."` — HTTP 400, refused before inference. A multi-page PDF is N
-  separate calls with no cross-page context, which is *why* Python owns the
-  `## Page N` wrapper and the model is restricted to `###` and deeper.
+- **One image per request.** Meta refused two with HTTP 400; nemotron accepts 5.
+  Batching 2-5 pages was probed and rejected — no throughput gain, ~10% of
+  prompt tokens, and recall 1.000 -> 0.63 at 4 pages via silent page
+  misattribution. Python still owns the `## Page N` wrapper.
 
 - **Workers return usage; the parent accumulates.** `llmops/usage.py` is a
   `threading.local()` that assumes one request per thread. Calling `add_usage()`
@@ -186,10 +185,15 @@ the NVIDIA docs.
   carries a large image. A 30-page digital RFP therefore costs **zero** vision
   calls; the text layer is ground truth and vision is a guess at it.
 
-- **`VISION_TIMEOUT` is 90s, deliberately below `LLM_TIMEOUT`.** Under rate
+- **`VISION_TIMEOUT` is 45s, deliberately below `LLM_TIMEOUT`.** Under rate
   limiting this endpoint throttles by *delaying*, not by returning 429, so
-  tenacity never fires — one measured page took 173s against a 1.5s baseline.
-  The ceiling converts an indefinite stall into one entry in `pages_failed`.
+  tenacity never fires. The ceiling converts an indefinite stall into one entry
+  in `pages_failed`. 45s is ~2.4x the slowest nemotron page observed (3.5-19s).
+
+- **Nemotron ignores the heading rule about half the time.**
+  `transcribe._clamp_headings` demotes model-emitted `#`/`##` to `###` inside a
+  page body. That is in-page only and is not the cross-page heading
+  normalization `prompts.py` forbids.
 
 - **No clock inside the package.** `store.sweep(now=...)` takes the timestamp
   from the API layer, the same rule that keeps the crawler deterministic.
