@@ -154,18 +154,19 @@ def test_user_turn_defaults_to_the_transcription_turn(client):
 
 
 @respx.mock
-def test_sends_a_frequency_penalty(client):
-    """Without it this model falls into a repetition loop on sparse, image-heavy
-    pages and runs to max_tokens: measured twice on an RFP cover page at 2,048
-    completion tokens, finish_reason="length", the same eight lines 40x, 77s.
-    At 0.3 the same page returned 214 tokens, clean, in 12s."""
+def test_sends_no_frequency_penalty(client):
+    """meta/llama-3.2-11b needed frequency_penalty=0.3 or it degenerated into a
+    repetition loop on sparse image-heavy pages and ran to max_tokens. Nemotron
+    does not: measured 3 runs with the penalty and 3 without over the same
+    10-page scan, well-formed table separator rows came out 0/1/3 either way and
+    no call ever approached the ceiling. A sampling knob with no measured effect
+    is a knob whose next reader will assume it was measured."""
     route = respx.post(URL).mock(return_value=_ok())
 
     client.describe(JPEG, "prompt")
 
     body = __import__("json").loads(route.calls.last.request.read())
-    assert body["frequency_penalty"] == config.FREQUENCY_PENALTY
-    assert 0 < body["frequency_penalty"] < 0.5  # 0.5 measurably ate table cells
+    assert "frequency_penalty" not in body
 
 
 @respx.mock
