@@ -114,8 +114,16 @@ def _int_env(var: str, default: int) -> int:
 
 
 def vision_model() -> str:
+    """The hop-1 vision model.
+
+    Nemotron rather than meta/llama-3.2-11b-vision-instruct since 2026-08-09.
+    Measured on a 10-page RFP supplied both digitally and fully rasterized:
+    1.000 content-word recall on every scanned page against the digital file's
+    own text layer, at 3,755 prompt tokens per page against meta's 6,431, with
+    no degeneration loops and no refusals in six runs.
+    """
     val = os.getenv("VISION_MODEL")
-    return val if val else "meta/llama-3.2-11b-vision-instruct"
+    return val if val else "nvidia/nemotron-nano-12b-v2-vl"
 
 
 def nvidia_vision_api_key() -> str:
