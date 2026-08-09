@@ -127,6 +127,33 @@ def test_sends_the_tuning_constants(client):
 
 
 @respx.mock
+def test_user_turn_is_overridable_for_the_figure_pass(client):
+    """The figure pass reuses this client with a different system prompt AND a
+    different user turn — "Describe the pictures on this page." The default must
+    stay the terse transcription turn, which is deliberately short so it cannot
+    compete with the page for the model's attention."""
+    route = respx.post(URL).mock(return_value=_ok())
+
+    client.describe(JPEG, "sys", "Describe the pictures on this page.")
+
+    body = __import__("json").loads(route.calls.last.request.read())
+    parts = body["messages"][1]["content"]
+    assert parts[0] == {"type": "text", "text": "Describe the pictures on this page."}
+    assert parts[1]["type"] == "image_url"  # still the OpenAI multimodal form
+    assert body["messages"][0]["content"] == "sys"
+
+
+@respx.mock
+def test_user_turn_defaults_to_the_transcription_turn(client):
+    route = respx.post(URL).mock(return_value=_ok())
+
+    client.describe(JPEG, "sys")
+
+    body = __import__("json").loads(route.calls.last.request.read())
+    assert body["messages"][1]["content"][0]["text"] == "Transcribe this page."
+
+
+@respx.mock
 def test_sends_a_frequency_penalty(client):
     """Without it this model falls into a repetition loop on sparse, image-heavy
     pages and runs to max_tokens: measured twice on an RFP cover page at 2,048

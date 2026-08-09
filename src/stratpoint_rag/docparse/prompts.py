@@ -51,7 +51,14 @@ constraints are noted there.
 
 from __future__ import annotations
 
-__all__ = ["EXTRACTION_PROMPT", "EXTRACTION_USER_TEMPLATE", "TRANSCRIPTION_PROMPT"]
+__all__ = [
+    "EXTRACTION_PROMPT",
+    "EXTRACTION_USER_TEMPLATE",
+    "FIGURE_PROMPT",
+    "FIGURE_USER_TURN",
+    "NO_FIGURES_MARKERS",
+    "TRANSCRIPTION_PROMPT",
+]
 
 
 TRANSCRIPTION_PROMPT = """\
@@ -87,6 +94,84 @@ fence around the whole answer.
 Only if the page is entirely empty — no text, no figures, nothing to transcribe \
 — your whole reply must be exactly: (blank page)
 Otherwise never write those words anywhere in your reply."""
+
+
+# ── the figure pass ─────────────────────────────────────────────────────────
+#
+# A second, figure-only call for the pages where the transcription pass returned
+# nothing the embedded text layer did not already have. See transcribe.py for
+# when it fires; this is why it exists.
+#
+# The transcription prompt above is, in aggregate, an instruction to be a *text
+# transcriber* — "transcribe EVERY word", "do not add commentary", "do not
+# interpret", "say nothing about the page's layout". On a page whose pictures
+# are already introduced by printed captions, that posture is fully satisfiable
+# without ever looking at the pictures, and this model duly does not look.
+# Measured on an RFP page carrying two labelled aerial maps: the reply
+# reproduced the page's own text layer and added *one* word.
+#
+# Three findings pin this prompt's shape; none of them are guesses:
+#
+# 1. **No single rule above causes it.** Ablating each of the ten bullets in
+#    turn left the page's novelty unchanged at 1.6% — all ten. Removing the
+#    system prompt entirely took it to 42%. The posture is emergent, so the
+#    repair cannot be a clause tweak; it has to be a separate request.
+# 2. **The model can see the page perfectly well.** Asked point blank, on the
+#    exact production raster, it read "Civic Park - 2023", "Tower Park - 2025"
+#    and "Yanaguana Garden - 2015" off the map. This was never a resolution
+#    problem, and the tile budget in render.py does not need revisiting.
+# 3. **Reordering the jobs in one call is NOT the cheap fix — it fabricates.**
+#    Asking for pictures before text ("First, look at every picture...") did
+#    recover the map, but on two text-only pages the model then invented a
+#    flowchart, one of them "two boxes, one labeled A and the other labeled B",
+#    on pages carrying no embedded image at all. A missed figure costs a
+#    requirement; an invented one *adds* a false requirement to a priced
+#    proposal. Do not reintroduce that ordering into TRANSCRIPTION_PROMPT.
+#
+# The decline instruction is load-bearing and its wording is not: this model
+# refuses in ordinary prose ("There are no pictures on this page.") and will not
+# reliably emit a sentinel token. Match it leniently — see NO_FIGURES_MARKERS.
+FIGURE_PROMPT = """\
+You are looking at one page of a document. Your ONLY job is the pictures on it: \
+photographs, maps, site plans, aerial views, charts, diagrams, screenshots.
+
+Ignore the page's paragraphs, headings, lists and tables. They are already \
+transcribed; repeating them here is wasted work.
+
+For each picture, in the order they appear down the page, write one block:
+
+> **Figure:** <Copy every word printed INSIDE the picture — place names, labels, \
+dates, legend entries, callouts, axis labels, units. Then say in one sentence \
+what it shows. If it is a diagram of boxes joined by arrows, also give each \
+connection as "A -> B".>
+
+Rules:
+- The words printed inside a picture are the point. Copy them exactly, including \
+numbers and years.
+- A caption printed above or below a picture is NOT the picture's contents. \
+Describe what is drawn, not what the caption claims.
+- Report only what is actually drawn. Do not invent a picture, a label, or a \
+connection that is not there.
+- If the page has no picture on it at all — only text, headings, lists and \
+tables — say exactly: There are no pictures on this page."""
+
+
+# Naming the job in the user turn too. The transcription pass deliberately keeps
+# its user turn terse so it cannot compete with the page; here the user turn IS
+# the job, and the system prompt agrees with it rather than pulling the other way.
+FIGURE_USER_TURN = "Describe the pictures on this page."
+
+
+# Substrings that mean "declined, nothing to report". Lenient by necessity: the
+# model phrases this freely, and a decline mistaken for content appends a
+# sentence of denial to the artifact as though it were a figure.
+NO_FIGURES_MARKERS = (
+    "no pictures on this page",
+    "no picture on this page",
+    "there are no pictures",
+    "there are no figures",
+    "no figures on this page",
+)
 
 
 # ── hop 2: transcription -> structured requirements ─────────────────────────

@@ -43,8 +43,9 @@ class FakeVisionClient:
     """
 
     def __init__(self, reply="### Transcribed heading\n\nSome real body text.",
-                 usage=None, fail_on=()):
+                 usage=None, fail_on=(), figure_reply="> **Figure:** A map."):
         self._reply = reply
+        self._figure_reply = figure_reply
         self._usage = usage or {
             "prompt_tokens": 6431,
             "completion_tokens": 400,
@@ -52,16 +53,30 @@ class FakeVisionClient:
         }
         self._fail_on = set(fail_on)  # 1-based page numbers that raise
         self.calls = []
+        self.user_turns = []
         self.threads = set()
         self._lock = threading.Lock()
 
-    def describe(self, image_jpeg: bytes, prompt: str) -> tuple[str, dict]:
+    @property
+    def figure_calls(self) -> list:
+        return [c for c in self.calls if c[1] is transcribe.prompts.FIGURE_PROMPT]
+
+    def describe(
+        self, image_jpeg: bytes, prompt: str, user_turn: str = "Transcribe this page."
+    ) -> tuple[str, dict]:
         with self._lock:
             n = len(self.calls) + 1
             self.calls.append((image_jpeg, prompt))
+            self.user_turns.append(user_turn)
             self.threads.add(threading.get_ident())
         if n in self._fail_on:
             raise RuntimeError("endpoint exploded")
+        # The figure pass is a second, differently-prompted call on the same
+        # image; a test that exercises it needs its reply to differ.
+        if prompt is transcribe.prompts.FIGURE_PROMPT:
+            if callable(self._figure_reply):
+                return self._figure_reply(n), dict(self._usage)
+            return self._figure_reply, dict(self._usage)
         reply = self._reply(n) if callable(self._reply) else self._reply
         return reply, dict(self._usage)
 
@@ -501,3 +516,151 @@ def test_collapse_preserves_order_and_keeps_the_first_occurrences():
 
     assert dropped == 2
     assert [ln for ln in out.splitlines() if ln.strip()] == ["A", "B", "A", "C", "A", "D"]
+
+
+# ── the figure pass ─────────────────────────────────────────────────────────
+#
+# Regression: an RFP page carrying two labelled aerial maps was routed to vision
+# and came back holding nothing its own text layer did not already have — the
+# maps' printed labels ("Civic Park - 2023", "Tower Park - 2025") were lost, and
+# the reply's captions were the page's own printed captions, re-typed. Cause is
+# NOT any single rule in TRANSCRIPTION_PROMPT: ablating each of its ten bullets
+# left the page unchanged, while dropping the system prompt entirely fixed it.
+# The prompt's aggregate posture is "text transcriber", and that page is where
+# the posture is fully satisfiable without looking at the pictures.
+
+
+@pytest.fixture
+def figure_page_pdf(tmp_path):
+    """One page: a substantial text layer AND an image big enough to route to
+    vision. This is the shape the bug needs — a scan or a bare image cannot
+    reproduce it, because novelty is meaningless without a text layer."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4_W, height=A4_H)
+    page.insert_textbox(
+        pymupdf.Rect(50, 400, A4_W - 50, A4_H - 50),
+        "The green space in the garden and the park covers thirteen acres "
+        "downtown. Donor sponsored trees have already been planted there, so "
+        "launching a pilot programme this year is necessary. " * 3,
+        fontsize=10,
+    )
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 900, 500))
+    pix.clear_with(170)
+    page.insert_image(pymupdf.Rect(50, 50, 500, 300), pixmap=pix)
+
+    path = tmp_path / "figure_page.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+# A reply that merely echoes the page's own text layer — the measured failure.
+_ECHO = (
+    "The green space in the garden and the park covers thirteen acres "
+    "downtown. Donor sponsored trees have already been planted there, so "
+    "launching a pilot programme this year is necessary."
+)
+
+
+def test_a_vision_call_that_added_nothing_triggers_the_figure_pass(figure_page_pdf):
+    vision = FakeVisionClient(
+        reply=_ECHO,
+        figure_reply="> **Figure:** Civic Park - 2023, Tower Park - 2025.",
+    )
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert len(vision.figure_calls) == 1
+    assert "Civic Park - 2023" in result.markdown
+    assert "| figure pass -->" in result.markdown
+    # the transcription itself is kept, not replaced
+    assert "thirteen acres" in result.markdown
+
+
+def test_the_figure_pass_uses_its_own_prompt_and_user_turn(figure_page_pdf):
+    vision = FakeVisionClient(reply=_ECHO)
+
+    transcribe_document(figure_page_pdf, vision=vision)
+
+    assert vision.calls[0][1] is transcribe.prompts.TRANSCRIPTION_PROMPT
+    assert vision.calls[1][1] is transcribe.prompts.FIGURE_PROMPT
+    assert vision.user_turns[1] == transcribe.prompts.FIGURE_USER_TURN
+
+
+def test_a_vision_call_that_added_real_content_pays_for_no_second_call(figure_page_pdf):
+    """The gate is the whole point: pages 1, 3 and 6 of the live RFP worked and
+    must not pay a second call each."""
+    vision = FakeVisionClient(
+        reply=_ECHO + "\n\n> **Figure:** Sycamores flank the promenade, "
+        "twenty feet apart east-west, eighteen north-south, marked by yellow dots."
+    )
+
+    transcribe_document(figure_page_pdf, vision=vision)
+
+    assert vision.figure_calls == []
+
+
+def test_a_declined_figure_pass_appends_nothing(figure_page_pdf):
+    """The model declines in prose, not a sentinel. A decline appended verbatim
+    would put 'There are no pictures on this page.' into the artifact."""
+    vision = FakeVisionClient(
+        reply=_ECHO, figure_reply="There are no pictures on this page."
+    )
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert len(vision.figure_calls) == 1
+    assert "no pictures on this page" not in result.markdown
+    assert "figure pass" not in result.markdown
+
+
+def test_a_scan_never_pays_for_a_figure_pass(scanned_pdf):
+    """No text layer means novelty is trivially 1.0 and says nothing. Guessing
+    there would put a second call on every page of every scanned brief."""
+    vision = FakeVisionClient(reply=_ECHO)
+
+    transcribe_document(scanned_pdf, vision=vision)
+
+    assert vision.figure_calls == []
+
+
+def test_figure_pass_tokens_are_accounted(figure_page_pdf):
+    """Two calls, two bills. Usage is summed on the request thread — a figure
+    pass whose tokens vanish from /metrics is the hop-1 threading bug again."""
+    usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
+    vision = FakeVisionClient(reply=_ECHO, usage=usage)
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert len(vision.calls) == 2
+    assert result.usage["total_tokens"] == 220
+    assert result.usage["prompt_tokens"] == 200
+
+
+def test_a_failing_figure_pass_still_keeps_the_page(figure_page_pdf):
+    """The first pass produced usable text; losing the figure block is a
+    degradation, never a reason to fail the page."""
+
+    def boom(n):
+        raise RuntimeError("endpoint exploded")
+
+    vision = FakeVisionClient(reply=_ECHO, figure_reply=boom)
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert result.pages_failed == []
+    assert "thirteen acres" in result.markdown
+
+
+def test_novelty_scores_an_echo_near_zero_and_new_content_high():
+    layer = "The green space in the garden covers thirteen acres downtown."
+
+    assert transcribe._novelty(layer, layer) == 0.0
+    assert transcribe._novelty("Civic Park 2023 Tower Park 2025", layer) > 0.9
+    # Reordered and re-punctuated, but still only the layer's own words: the
+    # measured failure looked exactly like this, not like a verbatim copy.
+    assert transcribe._novelty("Thirteen acres downtown; green garden.", layer) == 0.0
+    # Scaffolding the prompt itself supplies is not evidence the model looked.
+    assert transcribe._novelty("**Figure:** the table on this page", layer) == 0.0

@@ -22,9 +22,17 @@ __all__ = ["TextClient", "VisionClient"]
 
 class VisionClient(Protocol):
     """Transcribes one page image. One image per request — the endpoint
-    hard-refuses two with HTTP 400 before inference."""
+    hard-refuses two with HTTP 400 before inference.
 
-    def describe(self, image_jpeg: bytes, prompt: str) -> tuple[str, dict]: ...
+    ``user_turn`` varies because the same client serves two different jobs: the
+    transcription pass and the figure pass (see ``prompts.FIGURE_PROMPT``). It
+    is a parameter rather than a second method because the wire call is
+    identical — only the two message bodies differ.
+    """
+
+    def describe(
+        self, image_jpeg: bytes, prompt: str, user_turn: str = ...
+    ) -> tuple[str, dict]: ...
 
 
 class TextClient(Protocol):

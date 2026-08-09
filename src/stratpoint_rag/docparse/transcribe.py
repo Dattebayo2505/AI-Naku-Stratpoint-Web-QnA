@@ -16,6 +16,11 @@ Three rules here are easy to break and expensive to debug:
 3. **Python owns the page wrapper.** The ``## Page N`` heading and the
    provenance comment are emitted here, never asked of the model, because
    ``pages_failed`` accounting depends on the numbering being exact.
+4. **A figure page may cost a second call.** When the transcription reply holds
+   nothing the page's embedded text layer already had, the vision call bought
+   no information and ``_figure_pass`` asks again with a picture-only prompt.
+   It is gated on novelty rather than run unconditionally because on a real RFP
+   only one page in ten needed it. See ``prompts.FIGURE_PROMPT``.
 """
 
 from __future__ import annotations
@@ -78,6 +83,42 @@ def _is_unusable(text: str) -> str | None:
     return None
 
 
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9'-]+")
+
+# Words that say nothing about whether the model looked at the picture: function
+# words, and the scaffolding this pipeline's own prompts inject. Counting them
+# would let a reply that merely echoed the page score as informative.
+_NOVELTY_STOPWORDS = frozenset(
+    """
+    figure figures table tables page pages image images picture pictures
+    the and for with that this are from not but its his her one two
+    their will has have was were been being can could would should may might
+    all any each some such than then there these those they them our
+    your into over under also more most other only same very when where which
+    who whom what how why between during before after above below out off
+    on in at to of by as is be it or if no do so up we us an am no yes
+    """.split()
+)
+
+
+def _content_words(text: str) -> set[str]:
+    return {w.lower() for w in _WORD_RE.findall(text)} - _NOVELTY_STOPWORDS
+
+
+def _novelty(reply: str, text_layer: str) -> float:
+    """Share of the reply's content words absent from the page's text layer.
+
+    The question this answers is "did the vision call tell us anything the free
+    text extraction did not". Near zero on a page that carries a figure means
+    the model transcribed the words it could already read and never looked at
+    the picture — see prompts.FIGURE_PROMPT for why that happens.
+    """
+    words = _content_words(reply)
+    if not words:
+        return 0.0
+    return len(words - _content_words(text_layer)) / len(words)
+
+
 def _collapse_repetition(text: str) -> tuple[str, int]:
     """Drop runaway repeated lines. Returns ``(text, lines_dropped)``.
 
@@ -126,7 +167,39 @@ def _needs_vision(doc: render.Document, index: int, min_chars: int) -> bool:
     return doc.page_has_large_image(index)
 
 
-def _render_page(page_no: int, image: bytes, vision: VisionClient) -> PageResult:
+def _figure_pass(
+    page_no: int, image: bytes, vision: VisionClient
+) -> tuple[str, dict]:
+    """Second, figure-only call. Returns ``(block, usage)``; block may be ''.
+
+    Soft-fails to '' on any error: this runs only on a page whose first pass
+    already produced usable text, so losing the figure block is a degradation,
+    never a reason to fail the page.
+    """
+    try:
+        reply, usage = vision.describe(
+            image, prompts.FIGURE_PROMPT, prompts.FIGURE_USER_TURN
+        )
+    except Exception as e:
+        log.warning("page %d figure pass failed: %s", page_no, e)
+        return "", {}
+
+    text = (reply or "").strip()
+    low = text.lower()
+    if not text or any(m in low for m in prompts.NO_FIGURES_MARKERS):
+        return "", usage  # declined: the page has no picture. Usage still counts.
+    if _is_unusable(text):
+        return "", usage
+    block, _ = _collapse_repetition(text)
+    return block, usage
+
+
+def _render_page(
+    page_no: int,
+    image: bytes,
+    vision: VisionClient,
+    text_layer: str = "",
+) -> PageResult:
     """Runs in a worker thread. Returns usage; never accumulates it."""
     try:
         markdown, usage = vision.describe(image, prompts.TRANSCRIPTION_PROMPT)
@@ -147,6 +220,22 @@ def _render_page(page_no: int, image: bytes, vision: VisionClient) -> PageResult
     reason = _is_unusable(markdown)
     if reason:
         return PageResult(page_no, "", "vision", failed=True, failure_reason=reason)
+
+    # This page was routed to vision because it carries a figure. If the reply
+    # holds nothing the text layer did not already have, the call bought no
+    # information — ask again, with a prompt whose only job is the picture.
+    if (
+        len(text_layer.strip()) >= config.figure_pass_min_text_chars()
+        and _novelty(markdown, text_layer) < config.figure_pass_novelty()
+    ):
+        block, fig_usage = _figure_pass(page_no, image, vision)
+        for k in _USAGE_KEYS:
+            usage[k] = (usage.get(k) or 0) + (fig_usage.get(k) or 0)
+        if block:
+            markdown = f"{markdown}\n\n{block}"
+            note = "; ".join(filter(None, [note, "figure pass"]))
+            log.info("page %d: figure pass added %d chars", page_no, len(block))
+
     return PageResult(page_no, markdown, "vision", usage=usage, note=note)
 
 
@@ -210,11 +299,13 @@ def transcribe_document(
         # Phase 1 — route, and rasterize what needs the model. Single-threaded:
         # PyMuPDF pages are not thread-safe and rendering is milliseconds.
         done: list[PageResult] = []
-        pending: list[tuple[int, bytes]] = []
+        # The text layer rides along so a worker can tell whether its reply added
+        # anything to it; the document is closed before the pool starts.
+        pending: list[tuple[int, bytes, str]] = []
         for i in range(limit):
             page_no = i + 1
             if _needs_vision(doc, i, min_chars):
-                pending.append((page_no, doc.rasterize(i)))
+                pending.append((page_no, doc.rasterize(i), doc.page_text(i)))
             else:
                 done.append(PageResult(page_no, doc.page_text(i).strip(), "text"))
 
@@ -225,7 +316,9 @@ def transcribe_document(
         vision = vision or NimVisionClient()
         workers = max(1, min(config.concurrency(), len(pending)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            done.extend(pool.map(lambda a: _render_page(a[0], a[1], vision), pending))
+            done.extend(
+                pool.map(lambda a: _render_page(a[0], a[1], vision, a[2]), pending)
+            )
 
     pages = sorted(done, key=lambda p: p.number)
 

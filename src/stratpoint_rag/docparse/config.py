@@ -32,6 +32,8 @@ __all__ = [
     "concurrency",
     "extraction_group_pages",
     "extraction_token_budget",
+    "figure_pass_min_text_chars",
+    "figure_pass_novelty",
     "llm_model",
     "llm_timeout",
     "max_pages",
@@ -187,6 +189,43 @@ def extraction_token_budget() -> int:
 def extraction_group_pages() -> int:
     """Pages per map-reduce group."""
     return _int_env("DOCPARSE_EXTRACTION_GROUP_PAGES", 5)
+
+
+def figure_pass_novelty() -> float:
+    """Below this novelty, a page's vision call is judged to have bought nothing.
+
+    "Novelty" is the share of content words in the transcription that the page's
+    embedded text layer did not already contain. A figure page whose vision call
+    scores near zero returned only what a free text extraction would have — the
+    ~6,400 tokens bought no information — which is exactly the case the figure
+    pass exists to repair.
+
+    Measured on a real RFP, transcription-pass novelty by page:
+
+        page 1 (photo)         52.2%   worked
+        page 6 (site plan)     32.1%   worked
+        page 3 (two maps)      17.7%   worked, weakest success
+        page 5 (two maps)       1.6%   returned the text layer and one word
+
+    0.10 sits with margin on both sides of the gap between 1.6% and 17.7%.
+    Raising it past ~0.15 starts paying for pages that did not need help.
+    """
+    val = os.getenv("DOCPARSE_FIGURE_PASS_NOVELTY")
+    try:
+        return float(val) if val else 0.10
+    except ValueError:
+        return 0.10
+
+
+def figure_pass_min_text_chars() -> int:
+    """Novelty is only meaningful against a text layer worth comparing to.
+
+    A scanned page has no text layer, so *everything* the model returns is
+    "novel" and the ratio says nothing about whether the figure was read. Below
+    this many characters the figure pass is skipped rather than guessed at —
+    the transcription pass is doing the whole job there anyway.
+    """
+    return _int_env("DOCPARSE_FIGURE_PASS_MIN_TEXT_CHARS", 200)
 
 
 def text_layer_min_chars() -> int:

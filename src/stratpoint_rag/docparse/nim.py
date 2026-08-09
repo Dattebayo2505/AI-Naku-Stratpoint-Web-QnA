@@ -118,7 +118,9 @@ class NimVisionClient(_NimClient):
     ``llmops`` is thread-local. See ``docparse/clients.py``.
     """
 
-    def describe(self, image_jpeg: bytes, prompt: str) -> tuple[str, dict]:
+    def describe(
+        self, image_jpeg: bytes, prompt: str, user_turn: str = _USER_TURN
+    ) -> tuple[str, dict]:
         key = config.nvidia_vision_api_key()
         if not key:
             raise RuntimeError(
@@ -140,7 +142,7 @@ class NimVisionClient(_NimClient):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": _USER_TURN},
+                        {"type": "text", "text": user_turn},
                         {"type": "image_url", "image_url": {"url": data_uri}},
                     ],
                 },
