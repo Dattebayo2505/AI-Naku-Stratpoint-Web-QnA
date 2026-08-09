@@ -27,15 +27,18 @@ __all__ = [
 ]
 
 
-# The vision endpoint bills exactly 1,601 tokens per tile + 27 overhead, and
-# hard-caps at 4 tiles. Everything beyond ~1120px on the long edge is silently
-# discarded — you pay upload time for pixels the model never sees. Worse, on a
-# synthetic invoice page 2240x2912 (identical 6,431-token cost to 1120x1456)
-# dropped the entire Overview body and only summarized. Higher resolution is
-# not free and not better; it is the same price and worse.
+# The cap is a LATENCY budget, not a billing one.
+#
+# Under meta it was billing: 1,601 tokens per tile + 27 overhead, hard-capped at
+# 4 tiles, so pixels past ~1120px were paid for and discarded. Nemotron does not
+# bill that way — a 1536x1988 raster costs the SAME ~3,755 prompt tokens as
+# 1120x1449. It is still the wrong trade: measured on a 10-page scan, the larger
+# raster ran 3.3x slower (111.7s vs 33.7s), lost a page to VISION_TIMEOUT, and
+# dropped mean recall 1.000 -> 0.900 as a result. No quality gain was observed
+# on any page to offset it.
 MAX_WIDTH = 1120
 
-# Portrait pages get the taller box: still 4 tiles, materially more legible.
+# Portrait pages get the taller box: materially more legible, same cost.
 MAX_HEIGHT_PORTRAIT = 1456
 
 # JPEG, never PNG for pages and scans — ~25x the bytes for zero accuracy gain.

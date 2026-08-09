@@ -102,8 +102,11 @@ def test_image_is_sent_as_a_jpeg_data_uri(client):
 
 @respx.mock
 def test_exactly_one_image_per_request(client):
-    """'At most 1 image(s) may be provided in one prompt.' — HTTP 400, refused
-    before inference."""
+    """Nemotron accepts up to 5. Batching 2-5 pages per call was probed and
+    rejected: no throughput gain, ~10% of prompt tokens, and recall falling
+    1.000 -> 0.63 at 4 pages because content slides across page markers while
+    the marker COUNT stays correct — a clean-looking artifact with two pages
+    filed under one number."""
     route = respx.post(URL).mock(return_value=_ok())
 
     client.describe(JPEG, "prompt")
@@ -339,7 +342,9 @@ def test_live_endpoint_accepts_the_payload_form():
 
     assert markdown.strip()
     assert usage.get("prompt_tokens", 0) > 0
-    # ~1,601 tokens/tile + 27 overhead. Text-tokenized base64 would bill
-    # thousands more for this tiny image — that gap is the regression signal.
-    assert usage["prompt_tokens"] < 3000
+    # Nemotron bills a roughly flat ~3,530-3,755 prompt tokens per image, so the
+    # ceiling is set above that rather than at meta's 1,601/tile. The signal is
+    # unchanged: under the HTML-<img> form the base64 is tokenized as TEXT and
+    # scales with its length, billing far more than any flat per-image rate.
+    assert usage["prompt_tokens"] < 6000
     assert "INV-2026-00815" in markdown

@@ -139,7 +139,7 @@ def _needs_vision(doc: render.Document, index: int, min_chars: int) -> bool:
     """Decide the route for one page.
 
     Most real briefs are digitally generated and carry a perfect embedded text
-    layer. Running those through an 11B vision model pays latency and tokens to
+    layer. Running those through a vision model pays latency and tokens to
     lossily re-derive text we already have *exactly* — a 30-page digital RFP
     would cost 30 vision calls (~150s, past the UI's client timeout) instead of
     zero. Accuracy runs the same direction: the text layer is ground truth, the
@@ -288,9 +288,9 @@ def transcribe_document(
             else:
                 done.append(PageResult(page_no, doc.page_text(i).strip(), "text"))
 
-    # Phase 2 — fan out the model calls only. One image per request: the
-    # endpoint hard-refuses two with HTTP 400 before inference. The client is
-    # built lazily, so a fully digital brief parses with no key configured.
+    # Phase 2 — fan out the model calls only. One image per request: batching
+    # was probed at 2-5 pages and rejected — see nim.py. The client is built
+    # lazily, so a fully digital brief parses with no key configured.
     if pending:
         vision = vision or NimVisionClient()
         workers = max(1, min(config.concurrency(), len(pending)))

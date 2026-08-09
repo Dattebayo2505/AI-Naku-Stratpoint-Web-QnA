@@ -17,7 +17,10 @@ long, flowing hair sitting on a rock."* Token accounting confirms the
 mechanism: an 11,268-char base64 billed **8,058** prompt tokens under HTML-img
 (~1.4 chars/token — text tokenization) versus **1,628** under the OpenAI form.
 That form belongs to the legacy ``ai.api.nvidia.com/v1/vlm/...`` NVCF
-endpoints; it does not belong here.
+endpoints; it does not belong here. (Those token figures were measured on
+meta/llama-3.2-11b-vision-instruct; the trap is a property of the payload form,
+not the model. Nemotron bills a flat ~3,755 prompt tokens for a 1120x1449 page
+under the OpenAI form.)
 
 Two corollaries worth not re-deriving:
 
@@ -27,8 +30,20 @@ Two corollaries worth not re-deriving:
   *text* context (180 KB of base64 ~= 128k tokens — exactly where the number
   comes from). Do not build a downscale ladder, an oversize fallback, or an
   asset-upload path.
-- **One image per request.** Two gets ``"At most 1 image(s) may be provided in
-  one prompt."`` — HTTP 400 in 0.82s, refused before inference.
+- **One image per request, by measurement rather than by refusal.** Meta
+  rejected a second image with ``"At most 1 image(s) may be provided in one
+  prompt."`` — HTTP 400 before inference. Nemotron accepts up to 5, so that
+  guardrail is gone and the decision now rests on a probe: batching 2-5 pages
+  per call bought **no** throughput (wall clock 26-47s for a 10-page scan at
+  every batch size, worst at 5, because output generation is serial inside a
+  call while the worker pool has fewer units to spread), saved ~10% of prompt
+  tokens (all of it the per-call system prompt — images cost a flat ~3,530
+  each whatever the batch), and cost accuracy: mean content-word recall fell
+  1.000 -> 0.79 at 3 pages -> 0.63 at 4 -> 0.46 at 5. The mechanism is why it
+  is closed rather than deferred — at 3 pages the model emits the correct
+  number of page markers while content slides across them identically every
+  run, yielding an empty ``pages_failed`` beside a blank page 6 and two pages
+  filed under one number.
 """
 
 from __future__ import annotations

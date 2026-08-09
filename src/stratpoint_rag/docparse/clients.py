@@ -21,8 +21,10 @@ __all__ = ["TextClient", "VisionClient"]
 
 
 class VisionClient(Protocol):
-    """Transcribes one page image. One image per request — the endpoint
-    hard-refuses two with HTTP 400 before inference.
+    """Transcribes one page image. One image per request — nemotron accepts up
+    to 5, but batching was probed at 2-5 pages and rejected: no throughput gain,
+    ~10% of prompt tokens, and recall falling 1.000 -> 0.63 at 4 pages through
+    silent page misattribution. See ``nim.py``.
 
     ``user_turn`` varies because the same client serves two different jobs: the
     transcription pass and the figure pass (see ``prompts.FIGURE_PROMPT``). It

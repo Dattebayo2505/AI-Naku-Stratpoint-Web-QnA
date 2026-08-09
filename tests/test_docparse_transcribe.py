@@ -438,7 +438,8 @@ def test_text_only_document_needs_no_vision_client_at_all(make_pdf, monkeypatch)
 
 
 def test_each_page_is_a_separate_call_carrying_jpeg_bytes(scanned_pdf):
-    """One image per request — the endpoint hard-refuses two with HTTP 400."""
+    """One image per request — batching 2-5 pages per call was probed and
+    rejected; recall fell 1.000 -> 0.63 at 4 pages. See nim.py."""
     vision = FakeVisionClient()
 
     transcribe_document(scanned_pdf, vision=vision)

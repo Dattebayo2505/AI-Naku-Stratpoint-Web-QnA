@@ -37,6 +37,14 @@ this content enters via ``/upload``. Two structural mitigations *are* in place
 and should not be mistaken for a solution: the hop-2 schema has no free-text
 channel except a length-capped ``extraction_notes``, and the client/project
 names never come from the document unaided (see ``names.py``).
+
+Known limitation, not mitigated: **the vision model occasionally fabricates a
+table.** Measured once in six runs of the same 10-page scan — a "Characteristic
+/ Number of people" demographic table, complete with rows, on a page carrying
+two aerial maps and no table at all. Hop 1's output is free-form Markdown by
+design, so no schema can catch it, and it reaches hop 2 as though the client had
+written it. It is rare and it is real; treat a surprising table in a
+transcription as suspect before treating it as a requirement.
 """
 
 from stratpoint_rag.docparse.clients import TextClient, VisionClient

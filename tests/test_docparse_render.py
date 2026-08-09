@@ -207,9 +207,11 @@ def test_page_carries_large_image_is_false_for_pure_text(text_pdf):
 
 # ── rasterization: the tile budget ──────────────────────────────────────────
 #
-# The constraint is TILES, not bytes: 1,601 tokens per tile + 27 overhead, hard
-# capped at 4 tiles. Everything above ~1120px is silently discarded, and
-# measurably *hurt* transcription in the endpoint probe.
+# The constraint is LATENCY, not bytes. Under meta it was a tile budget (1,601
+# tokens per tile + 27 overhead, capped at 4), so pixels past ~1120px were paid
+# for and discarded. Nemotron bills a 1536x1988 raster the same as 1120x1449 —
+# but that raster ran 3.3x slower on a 10-page scan and lost a page to
+# VISION_TIMEOUT. Same cap, different reason. See render.py.
 
 
 def test_portrait_page_renders_within_the_portrait_cap(text_pdf):
