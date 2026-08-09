@@ -5,7 +5,7 @@ Shape of the run::
     open+validate -> route each page (text layer vs vision) -> rasterize
                   -> fan out vision calls -> assemble -> accumulate usage
 
-Four rules here are easy to break and expensive to debug:
+Five rules here are easy to break and expensive to debug:
 
 1. **Rasterization happens on the calling thread, not in a worker.** PyMuPDF
    page objects are not thread-safe, and rendering is milliseconds against a
@@ -21,6 +21,11 @@ Four rules here are easy to break and expensive to debug:
    no information and ``_figure_pass`` asks again with a picture-only prompt.
    It is gated on novelty rather than run unconditionally because on a real RFP
    only one page in ten needed it. See ``prompts.FIGURE_PROMPT``.
+5. **Shallow headings are clamped, in-page only.** Nemotron emits ``#`` and
+   ``##`` headings in about half of runs despite the prompt rule, and a ``##``
+   in a page body collides with the wrapper in rule 3. ``_clamp_headings``
+   demotes them to ``###``. This never compares two pages — it is not the
+   cross-page heading normalization ``prompts.py`` forbids.
 """
 
 from __future__ import annotations
@@ -65,6 +70,33 @@ def _is_unusable(text: str) -> str | None:
     if len(stripped) < _MIN_PAGE_CHARS and stripped != "(blank page)":
         return "response too short to be a transcription"
     return None
+
+
+# The prompt restricts the model to ### and deeper; nemotron obeys it in about
+# half of runs. Measured over six runs of one 10-page scan, three emitted
+# shallow headings: "# General Information", "## Deliverables" (x3),
+# "## Site Information", "# Major Tree Varieties in new Civic Park" (x3).
+#
+# A ## in a page body claims the level of the `## Page N` wrapper Python owns,
+# and pages_failed accounting depends on that wrapper being unambiguous. This
+# follows the precedent frequency_penalty set before it was removed: a prompt
+# rule is a nudge, and where the cost of it not landing is a corrupted artifact,
+# the backstop is deterministic.
+#
+# This is a WITHIN-page clamp and is NOT the cross-page heading normalization
+# prompts.py forbids. That rule bans inferring one document hierarchy from N
+# independent page guesses; this never compares two pages, and never moves a
+# heading relative to its neighbours on the same page.
+#
+# Accepted limitation: a "# comment" line inside a fenced code block would also
+# be demoted. Briefs are prose, tables and diagrams; the trade is worth it and
+# the alternative is a fence-state parser for a case not yet observed.
+_SHALLOW_HEADING = re.compile(r"^#{1,2}(?!#)(?=\s|$)", re.M)
+
+
+def _clamp_headings(text: str) -> str:
+    """Demote level-1 and level-2 headings in a page body to level 3."""
+    return _SHALLOW_HEADING.sub("###", text)
 
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9'-]+")
@@ -145,7 +177,7 @@ def _figure_pass(
         return "", usage  # declined: the page has no picture. Usage still counts.
     if _is_unusable(text):
         return "", usage
-    return text, usage
+    return _clamp_headings(text), usage
 
 
 def _render_page(
@@ -165,7 +197,7 @@ def _render_page(
     if reason:
         return PageResult(page_no, "", "vision", failed=True, failure_reason=reason)
 
-    markdown = markdown.strip()
+    markdown = _clamp_headings(markdown.strip())
     note = None
 
     # This page was routed to vision because it carries a figure. If the reply

@@ -595,3 +595,75 @@ def test_novelty_scores_an_echo_near_zero_and_new_content_high():
     assert transcribe._novelty("Thirteen acres downtown; green garden.", layer) == 0.0
     # Scaffolding the prompt itself supplies is not evidence the model looked.
     assert transcribe._novelty("**Figure:** the table on this page", layer) == 0.0
+
+
+# ── heading clamp ───────────────────────────────────────────────────────────
+#
+# Regression: nemotron ignores the prompt's "### or deeper ONLY" rule in about
+# half of runs, emitting "# General Information", "## Deliverables" and
+# "## Site Information". A ## in a page body collides with the `## Page N`
+# wrapper Python owns, and pages_failed accounting depends on that wrapper
+# being unambiguous. The prompt rule stays as the nudge; this is the backstop.
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("# General Information", "### General Information"),
+        ("## Deliverables", "### Deliverables"),
+        ("### Site Information", "### Site Information"),
+        ("#### Sub point", "#### Sub point"),
+        ("Body text\n\n## Deliverables\n\nMore body",
+         "Body text\n\n### Deliverables\n\nMore body"),
+    ],
+)
+def test_clamp_demotes_only_shallow_headings(raw, expected):
+    assert transcribe._clamp_headings(raw) == expected
+
+
+def test_clamp_leaves_hashes_that_are_not_headings_alone():
+    """A page may print "Item # 4" or "#1 priority"; neither is a heading, and
+    CommonMark requires the space, so the clamp requires it too."""
+    text = "Ref # 4 applies.\n#1 priority\nTotal: 5 # of units"
+
+    assert transcribe._clamp_headings(text) == text
+
+
+def test_clamp_preserves_relative_hierarchy_within_a_page():
+    """Both levels land on ###, which flattens — that is accepted. What must not
+    happen is a body heading outranking the page wrapper."""
+    out = transcribe._clamp_headings("# Top\n\n## Second\n\n### Third")
+
+    assert out == "### Top\n\n### Second\n\n### Third"
+
+
+def test_a_shallow_heading_never_reaches_the_artifact(scanned_pdf):
+    """The wrapper must remain the only ## in the document."""
+    vision = FakeVisionClient(reply="## Deliverables\n\nThe scope of work is:")
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert "### Deliverables" in result.markdown
+    shallow = [
+        ln for ln in result.markdown.splitlines()
+        if ln.startswith("# ") or (ln.startswith("## ") and not ln.startswith("## Page "))
+    ]
+    assert shallow == []
+
+
+def test_the_figure_block_is_clamped_too(figure_page_pdf):
+    """The figure pass is a second model call and obeys the prompt no better.
+
+    ``_ECHO`` is the module-level reply that scores near-zero novelty against
+    ``figure_page_pdf``'s text layer — it is what makes the figure pass fire at
+    all. Any other reply skips the second call and this test would pass
+    vacuously."""
+    vision = FakeVisionClient(
+        reply=_ECHO,
+        figure_reply="## Figure\n\n> **Figure:** An aerial map of the district.",
+    )
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert "### Figure" in result.markdown
+    assert "\n## Figure" not in result.markdown
