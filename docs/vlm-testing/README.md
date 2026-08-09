@@ -36,3 +36,18 @@ Headline: `nvidia/nemotron-nano-12b-v2-vl` scores 1.000 recall on all ten
 scanned pages at 3,755 prompt tokens per page, against meta's 6,431. Raising
 the raster to 1536x1988 and batching multiple pages per call were both probed
 and both rejected.
+
+## Post-switch validation, 2026-08-09
+
+Run against the shipped implementation (nemotron default, no frequency penalty,
+`VISION_TIMEOUT=45`, `_clamp_headings` live), one run per file:
+
+| File | `pages_failed` | vision calls | total tokens | recall, pages 1-10 | shallow headings |
+|---|---|---|---|---|---|
+| `[TECH] rfp16.pdf` | `[]` | 4 | 23,202 | 1.000 on every page | none |
+| `[TECH] rfp16_IMAGE.pdf` | `[]` | 10 | 40,124 | 1.000 on every page | none |
+
+No drift from the numbers above. The empty `shallow_headings` column is the
+clamp doing its job — the raw model output in three of six pre-switch runs
+carried `#`/`##` headings, and none reach the artifact now.
+
