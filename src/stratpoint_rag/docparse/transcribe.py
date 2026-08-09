@@ -5,7 +5,7 @@ Shape of the run::
     open+validate -> route each page (text layer vs vision) -> rasterize
                   -> fan out vision calls -> assemble -> accumulate usage
 
-Three rules here are easy to break and expensive to debug:
+Four rules here are easy to break and expensive to debug:
 
 1. **Rasterization happens on the calling thread, not in a worker.** PyMuPDF
    page objects are not thread-safe, and rendering is milliseconds against a
@@ -45,22 +45,6 @@ _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
 # Output shorter than this is not a transcription of anything.
 _MIN_PAGE_CHARS = 20
-
-# A line the model emitted more than this many times is a degeneration loop, not
-# the page. Measured: an RFP cover page — one photo, four lines of text — came
-# back with eight distinct lines repeated 40x each, 2,048 tokens, truncated at
-# the ceiling mid-loop. config.FREQUENCY_PENALTY is the primary fix; this is the
-# deterministic backstop, because a sampling parameter is a nudge and the cost
-# of it not landing is ~10 KB of invented repetition presented to hop 2 as the
-# client's requirements.
-#
-# 3, not 1: real pages repeat lines a little and legitimately — a table of
-# contents with several "Page 9" entries, a table column of identical values, a
-# recurring "$1,000,000" limit. Those sit at 2-3; the failure mode sits at 40.
-# Occurrences past the third are dropped and the rest of the page is KEPT: the
-# cover page's real transcription was correct, only its tail ran away, and
-# failing the whole page would have thrown away good content.
-_MAX_LINE_REPEATS = 3
 
 # The model sometimes declines instead of transcribing. Treat that as a failed
 # page rather than pasting the refusal into the artifact as if it were content.
@@ -119,35 +103,6 @@ def _novelty(reply: str, text_layer: str) -> float:
     return len(words - _content_words(text_layer)) / len(words)
 
 
-def _collapse_repetition(text: str) -> tuple[str, int]:
-    """Drop runaway repeated lines. Returns ``(text, lines_dropped)``.
-
-    Order is preserved and the first ``_MAX_LINE_REPEATS`` occurrences of every
-    line survive, so a page that merely repeats a value stays byte-identical and
-    only a genuine loop is trimmed. Blank lines are never counted — they are
-    Markdown's paragraph separator, not content.
-    """
-    counts: dict[str, int] = {}
-    kept: list[str] = []
-    dropped = 0
-    for line in text.splitlines():
-        key = line.strip()
-        if not key:
-            kept.append(line)
-            continue
-        counts[key] = counts.get(key, 0) + 1
-        if counts[key] > _MAX_LINE_REPEATS:
-            dropped += 1
-            continue
-        kept.append(line)
-    if not dropped:
-        return text, 0
-    # A trimmed loop leaves a run of blank lines behind it; collapse them so the
-    # artifact does not end in a page of whitespace.
-    out = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
-    return out, dropped
-
-
 def _needs_vision(doc: render.Document, index: int, min_chars: int) -> bool:
     """Decide the route for one page.
 
@@ -190,8 +145,7 @@ def _figure_pass(
         return "", usage  # declined: the page has no picture. Usage still counts.
     if _is_unusable(text):
         return "", usage
-    block, _ = _collapse_repetition(text)
-    return block, usage
+    return text, usage
 
 
 def _render_page(
@@ -211,15 +165,8 @@ def _render_page(
     if reason:
         return PageResult(page_no, "", "vision", failed=True, failure_reason=reason)
 
-    markdown, dropped = _collapse_repetition(markdown.strip())
+    markdown = markdown.strip()
     note = None
-    if dropped:
-        note = f"collapsed {dropped} repeated lines"
-        log.warning("page %d: %s (model degeneration loop)", page_no, note)
-    # Collapsing can strip a reply that was *entirely* loop; re-check.
-    reason = _is_unusable(markdown)
-    if reason:
-        return PageResult(page_no, "", "vision", failed=True, failure_reason=reason)
 
     # This page was routed to vision because it carries a figure. If the reply
     # holds nothing the text layer did not already have, the call bought no
@@ -233,7 +180,7 @@ def _render_page(
             usage[k] = (usage.get(k) or 0) + (fig_usage.get(k) or 0)
         if block:
             markdown = f"{markdown}\n\n{block}"
-            note = "; ".join(filter(None, [note, "figure pass"]))
+            note = "figure pass"
             log.info("page %d: figure pass added %d chars", page_no, len(block))
 
     return PageResult(page_no, markdown, "vision", usage=usage, note=note)
