@@ -203,6 +203,19 @@ def figure_pass_novelty() -> float:
 
     0.10 sits with margin on both sides of the gap between 1.6% and 17.7%.
     Raising it past ~0.15 starts paying for pages that did not need help.
+
+    Since 2026-08-09 this is the *second* of two triggers, not the only one --
+    ``transcribe._render_page`` fires the pass whenever no figure block came back
+    at all, whatever the novelty. Page 6 above is why: its 32.1% is real, but all
+    of it came from a colour legend the model read off the site plan into a
+    Markdown table, and reading a legend is not describing a picture. Novelty
+    answers "did the reply add words", which stops proxying for "did the model
+    look at the picture" as soon as a legend or table sits beside the figure.
+
+    The threshold is also applied to the figure pass's OWN reply, against the
+    same text layer: the model returns the page's printed captions often enough
+    that an unchecked block puts a re-typed caption in the artifact dressed as a
+    description of a picture nothing looked at.
     """
     val = os.getenv("DOCPARSE_FIGURE_PASS_NOVELTY")
     try:

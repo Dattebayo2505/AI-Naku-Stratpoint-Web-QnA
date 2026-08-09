@@ -135,6 +135,118 @@ def _novelty(reply: str, text_layer: str) -> float:
     return len(words - _content_words(text_layer)) / len(words)
 
 
+# Both prompts ask for the figure as a bold-labelled blockquote, so its presence
+# is a direct answer to "did a figure come back" — the question novelty only ever
+# approximated. The bold marker is what makes this safe to match: a page's own
+# printed caption ("Figure 3: Layout of Civic Park...") is plain text and must
+# NOT count, or a captioned page would suppress the pass that page most needs.
+#
+# The unbolded "Figure:" form is matched too, because the model drops the bold
+# about as reliably as it drops the heading level — page 3's pass returned two
+# maps' worth of correct labels as one run-on line of "Figure: ... Figure: ...".
+# It is matched ONLY without a number, and that is the whole safety margin: a
+# caption printed on the page is numbered ("Figure 3: Layout of Civic Park..."),
+# and rewriting one into a > **Figure:** block would dress the document's own
+# caption up as a reading of the picture — the precise confusion the figure pass
+# exists to end, re-created by the formatter.
+_FIGURE_LINE = re.compile(r"^\s*>?\s*(?:\*\*Figure\b|Figure\s*:)", re.I)
+_FIGURE_MARK = re.compile(r">?\s*(?:\*\*Figure[^*\n]{0,24}\*\*:?|Figure\s*:)", re.I)
+
+# Both prompts hand the model a template whose payload is an angle-bracket
+# placeholder — "> **Figure:** <what it depicts. Name every box...>" — and it
+# returns the brackets. Measured live: page 3 of the RFP came back with
+# "**Figure:** <Map of the Hemisfair District with labeled streets and
+# landmarks.>" on a page whose two maps carry street names, a route number and
+# an acreage printed inside them. That is the template echoed, not a picture
+# read, so it must not satisfy the figure-block gate.
+#
+# It is kept in the artifact (brackets stripped) rather than deleted: it is weak,
+# not false, and if the second call then declines it is all the page has. The
+# asymmetry is the one that governs routing throughout this module — a needless
+# call costs tokens, a dropped figure costs a requirement.
+_PLACEHOLDER = re.compile(r"^<[^<>]*>$", re.S)
+
+# "This figure shows X" and "X" are the same sentence twice. The model restates
+# its own description this way, and TRANSCRIPTION_PROMPT already bans the form
+# outright ("Never write 'This slide shows...'"), so stripping the lead-in before
+# comparing costs nothing and catches the near-duplicate the exact match misses.
+_RESTATEMENT = re.compile(
+    r"^(?:this|the)\s+(?:figure|image|picture|photo|diagram|map|drawing)\s+"
+    r"(?:shows|depicts|displays|illustrates|represents)\s*(?:that\s+)?:?\s*",
+    re.I,
+)
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _figure_payloads(text: str) -> list[str]:
+    """The payload of every figure block on the page, in order.
+
+    A single line may carry several: the model restates a whole description
+    after its own block rather than stopping, so "> **Figure:** A. > **Figure:**
+    A." arrives as one line holding the same figure twice.
+    """
+    out: list[str] = []
+    for line in (text or "").splitlines():
+        if not _FIGURE_LINE.match(line):
+            continue
+        parts = _FIGURE_MARK.split(line)
+        out.extend(p.strip().lstrip(">").strip() for p in parts[1:])
+    return [p for p in out if p]
+
+
+def _is_placeholder(payload: str) -> bool:
+    return bool(_PLACEHOLDER.match(payload.strip()))
+
+
+def _has_figure_block(text: str) -> bool:
+    """True when a *described* figure came back, not merely a labelled one."""
+    return any(not _is_placeholder(p) for p in _figure_payloads(text))
+
+
+def _sentence_key(sentence: str) -> str:
+    body = _RESTATEMENT.sub("", sentence.strip().strip("<>").strip())
+    return re.sub(r"[^a-z0-9 ]+", "", body.lower()).strip()
+
+
+def _dedupe_sentences(payload: str, seen: set[str]) -> str:
+    """Drop sentences of ``payload`` already emitted elsewhere on this page."""
+    kept = []
+    for sentence in _SENTENCE_SPLIT.split(payload):
+        key = _sentence_key(sentence)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        kept.append(_RESTATEMENT.sub("", sentence.strip()))
+    return " ".join(kept)
+
+
+def _normalize_figures(text: str) -> str:
+    """Rewrite the page's figure blocks: one per line, unbracketed, no repeats.
+
+    Deduplication is page-wide and sentence-level, so a figure pass that re-serves
+    what the transcription pass already said collapses into it rather than
+    doubling it. Non-figure lines are passed through untouched.
+    """
+    if not _figure_payloads(text):
+        return text
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in text.splitlines():
+        if not _FIGURE_LINE.match(line):
+            out.append(line)
+            continue
+        for part in _FIGURE_MARK.split(line)[1:]:
+            payload = part.strip().lstrip(">").strip()
+            if _is_placeholder(payload):
+                payload = payload.strip()[1:-1].strip()
+            payload = _dedupe_sentences(payload, seen)
+            if payload:
+                out.append(f"> **Figure:** {payload}")
+    return "\n".join(out)
+
+
 def _needs_vision(doc: render.Document, index: int, min_chars: int) -> bool:
     """Decide the route for one page.
 
@@ -155,13 +267,22 @@ def _needs_vision(doc: render.Document, index: int, min_chars: int) -> bool:
 
 
 def _figure_pass(
-    page_no: int, image: bytes, vision: VisionClient
+    page_no: int, image: bytes, vision: VisionClient, text_layer: str = ""
 ) -> tuple[str, dict]:
     """Second, figure-only call. Returns ``(block, usage)``; block may be ''.
 
     Soft-fails to '' on any error: this runs only on a page whose first pass
     already produced usable text, so losing the figure block is a degradation,
     never a reason to fail the page.
+
+    The reply is held to the same novelty bar as the first pass. FIGURE_PROMPT
+    tells the model that a caption printed above or below a picture is not the
+    picture's contents; measured on a live RFP page carrying two labelled aerial
+    maps, it returned exactly those printed captions anyway, and every content
+    word of the reply was already in the page's text layer. Appended unchecked,
+    that puts a duplicated caption into the artifact dressed as a description of
+    a picture nothing ever looked at. Dropping it leaves the page honestly
+    without a figure block, which is the recoverable failure.
     """
     try:
         reply, usage = vision.describe(
@@ -176,6 +297,12 @@ def _figure_pass(
     if not text or any(m in low for m in prompts.NO_FIGURES_MARKERS):
         return "", usage  # declined: the page has no picture. Usage still counts.
     if _is_unusable(text):
+        return "", usage
+    if (
+        len(text_layer.strip()) >= config.figure_pass_min_text_chars()
+        and _novelty(text, text_layer) < config.figure_pass_novelty()
+    ):
+        log.info("page %d: figure pass echoed the text layer, dropped", page_no)
         return "", usage
     return _clamp_headings(text), usage
 
@@ -200,20 +327,36 @@ def _render_page(
     markdown = _clamp_headings(markdown.strip())
     note = None
 
-    # This page was routed to vision because it carries a figure. If the reply
-    # holds nothing the text layer did not already have, the call bought no
-    # information — ask again, with a prompt whose only job is the picture.
-    if (
-        len(text_layer.strip()) >= config.figure_pass_min_text_chars()
-        and _novelty(markdown, text_layer) < config.figure_pass_novelty()
+    # This page was routed to vision because it carries a figure. Two ways the
+    # first call can have failed to describe it, and either one earns a second
+    # call with a prompt whose only job is the picture:
+    #
+    # - No figure block came back at all. This is the direct test and it is the
+    #   one that catches a page whose picture has a legend or table beside it:
+    #   measured live, a colour-coded site plan whose legend the model read into
+    #   a Markdown table scored 0.315 novelty, so novelty alone judged the call
+    #   informative and the map went undescribed. Reading a legend is not
+    #   describing a picture.
+    # - A figure block came back, but the reply holds nothing the text layer did
+    #   not already have, so the block is the page's own caption re-typed.
+    #
+    # Novelty is kept as the second trigger rather than replaced by the first:
+    # it is what catches a well-formed block with no information in it.
+    if len(text_layer.strip()) >= config.figure_pass_min_text_chars() and (
+        not _has_figure_block(markdown)
+        or _novelty(markdown, text_layer) < config.figure_pass_novelty()
     ):
-        block, fig_usage = _figure_pass(page_no, image, vision)
+        block, fig_usage = _figure_pass(page_no, image, vision, text_layer)
         for k in _USAGE_KEYS:
             usage[k] = (usage.get(k) or 0) + (fig_usage.get(k) or 0)
         if block:
             markdown = f"{markdown}\n\n{block}"
             note = "figure pass"
             log.info("page %d: figure pass added %d chars", page_no, len(block))
+
+    # Last, and over the combined text: a figure pass that re-served what the
+    # transcription pass already said must collapse into it, not double it.
+    markdown = _normalize_figures(markdown)
 
     return PageResult(page_no, markdown, "vision", usage=usage, note=note)
 

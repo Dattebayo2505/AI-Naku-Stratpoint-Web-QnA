@@ -188,9 +188,15 @@ def test_page_with_text_and_a_diagram_still_uses_vision(tmp_path, make_pdf):
     doc.close()
 
     vision = FakeVisionClient()
-    transcribe_document(path, vision=vision)
+    result = transcribe_document(path, vision=vision)
 
-    assert len(vision.calls) == 1
+    # The subject here is the ROUTE, not the call count: this page must not take
+    # the free text-layer path. It also earns a figure pass, because the reply
+    # carries no figure block and a page routed for a diagram that came back
+    # without one is precisely what that second call is for.
+    assert result.pages_via_vision == 1
+    assert vision.calls[0][1] is transcribe.prompts.TRANSCRIPTION_PROMPT
+    assert len(vision.figure_calls) == 1
 
 
 def test_bare_image_skips_the_text_check_entirely(tmp_path):
@@ -584,6 +590,175 @@ def test_a_failing_figure_pass_still_keeps_the_page(figure_page_pdf):
 
     assert result.pages_failed == []
     assert "thirteen acres" in result.markdown
+
+
+# Regression, 2026-08-09, same live RFP, two pages the novelty gate alone got
+# wrong. Page 6 carries a colour-coded site plan whose legend sits beside it; the
+# transcription pass read the legend into a Markdown table and scored 0.315
+# novelty, so the gate judged the call informative and skipped the figure pass —
+# the map itself was never described. Page 5 fired the pass and got the page's
+# own printed captions back, which were appended as though they were a figure.
+#
+# Novelty answers "did the reply add words", which is only a proxy for "did the
+# model look at the picture", and a legend or table beside the figure breaks the
+# proxy. The direct question is whether a figure block came back at all.
+
+
+def test_a_reply_with_no_figure_block_triggers_the_pass_despite_high_novelty(
+    figure_page_pdf,
+):
+    """Page 6: the novelty came entirely from a legend read off the map."""
+    legend = (
+        "| Colour | Description |\n"
+        "| :--- | :--- |\n"
+        "| Red | Oaks, Elms and Sycamores |\n"
+        "| Yellow | Sycamores along the promenade |\n"
+        "| Blue | Burr Oaks beside the lawn |"
+    )
+    vision = FakeVisionClient(
+        reply=_ECHO + "\n\n" + legend,
+        figure_reply="> **Figure:** Civic Park layout, Zocalo, Monterrey Oaks.",
+    )
+
+    assert transcribe._novelty(_ECHO + "\n\n" + legend, _ECHO) > 0.10, (
+        "fixture must reproduce the high-novelty condition, else the test is vacuous"
+    )
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert len(vision.figure_calls) == 1
+    assert "Zocalo" in result.markdown
+    assert "| figure pass -->" in result.markdown
+    # the legend the transcription pass did read is kept, not replaced
+    assert "Burr Oaks beside the lawn" in result.markdown
+
+
+def test_a_figure_pass_that_only_echoes_the_captions_appends_nothing(figure_page_pdf):
+    """Page 5: the model returned the page's own printed captions.
+
+    FIGURE_PROMPT says a caption is not the picture's contents; the model ignores
+    that, and an unvalidated echo puts a duplicated caption into the artifact
+    dressed as a figure description. Absent beats confidently wrong.
+    """
+    vision = FakeVisionClient(
+        reply=_ECHO,
+        figure_reply="> **Figure:** The garden and the park, thirteen acres downtown.",
+    )
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert len(vision.figure_calls) == 1
+    assert "figure pass" not in result.markdown
+    assert result.markdown.count("thirteen acres") == 1
+    assert result.pages_failed == []
+
+
+# Both prompts hand the model a template — "> **Figure:** <what it depicts...>"
+# — and it returns the angle brackets, filled with a caption-level restatement.
+# Measured live on the same RFP: page 3 came back with
+# "**Figure:** <Map of the Hemisfair District with labeled streets and
+# landmarks.>" on a page whose two maps carry street names, a route number and
+# an acreage printed inside them. That satisfied a naive figure-block test and
+# scored 17.7% novelty, so it fell through both triggers and the maps went
+# unread. A block in the template's own placeholder form is the template echoed,
+# not a picture described.
+
+
+def test_a_placeholder_figure_block_does_not_satisfy_the_gate(figure_page_pdf):
+    """Page 3: high novelty AND a figure block, but the block is the template."""
+    placeholder = "**Figure:** <Map of the district with labeled streets.>"
+    reply = (
+        _ECHO + "\n\nCivic Park hosts Monterrey Oaks beside the Zocalo "
+        "promenade.\n\n" + placeholder
+    )
+    vision = FakeVisionClient(
+        reply=reply,
+        figure_reply="> **Figure:** US-281, Market Street, nineteen acres.",
+    )
+
+    assert transcribe._novelty(reply, _ECHO) > 0.10, "test must isolate the placeholder"
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert len(vision.figure_calls) == 1
+    assert "US-281" in result.markdown
+    # Weak, not false: kept in the artifact, with the template brackets stripped.
+    assert "Map of the district with labeled streets." in result.markdown
+    assert "<Map of the district" not in result.markdown
+
+
+def test_a_repeated_figure_description_is_emitted_once(figure_page_pdf):
+    """Page 1: the model restated its whole description on the same line."""
+    desc = (
+        "A tree with a colorful mural behind it. The sky is clear and blue."
+    )
+    vision = FakeVisionClient(
+        reply=_ECHO, figure_reply=f"> **Figure:** {desc} > **Figure:** {desc}"
+    )
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert result.markdown.count("colorful mural") == 1
+    assert result.markdown.count("clear and blue") == 1
+
+
+def test_a_restated_figure_sentence_is_dropped(figure_page_pdf):
+    """The same sentence re-served as commentary is still the same sentence."""
+    vision = FakeVisionClient(
+        reply=_ECHO,
+        figure_reply=(
+            "> **Figure:** A mural of swirling blue patterns. "
+            "This figure shows a mural of swirling blue patterns."
+        ),
+    )
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert result.markdown.count("swirling blue patterns") == 1
+    assert "This figure shows" not in result.markdown
+
+
+def test_unbolded_figure_markers_are_split_and_formatted(figure_page_pdf):
+    """Page 3: the figure pass returns the right labels in the wrong shape.
+
+    Two maps arrive as one run-on line with plain "Figure:" markers and no
+    blockquote. The content is what the pass exists for; the shape is Python's.
+    """
+    vision = FakeVisionClient(
+        reply=_ECHO,
+        figure_reply=(
+            "Figure: South Alamo Street US-281 Market Street "
+            "Figure: Yanaguana Garden Tower Park Currently dedicated parkland"
+        ),
+    )
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert "> **Figure:** South Alamo Street US-281 Market Street" in result.markdown
+    assert (
+        "> **Figure:** Yanaguana Garden Tower Park Currently dedicated parkland"
+        in result.markdown
+    )
+
+
+def test_a_printed_numbered_caption_is_never_rewritten_as_a_figure_block():
+    """The document's OWN caption is transcribed content, not a description.
+
+    "Figure 3: Layout of Civic Park..." is printed on the page; rewriting it into
+    a > **Figure:** block would dress the page's caption up as a reading of the
+    picture -- the exact confusion the figure pass exists to end.
+    """
+    body = (
+        "| Blue | Burr Oaks next to lawn |\n\n"
+        "Figure 3: Layout of Civic Park showing tree variety placement.\n\n"
+        "> **Figure:** SHEET L1.007 REFERENCE MASTER TREE PRESERVATION PERMIT"
+    )
+
+    out = transcribe._normalize_figures(body)
+
+    assert "Figure 3: Layout of Civic Park showing tree variety placement." in out
+    assert "**Figure:** Layout of Civic Park" not in out
+    assert "> **Figure:** SHEET L1.007 REFERENCE MASTER TREE PRESERVATION PERMIT" in out
 
 
 def test_novelty_scores_an_echo_near_zero_and_new_content_high():
