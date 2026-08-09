@@ -22,7 +22,8 @@ LLM_TIMEOUT=300
 # docparse — vision model for transcribing uploaded client briefs.
 # One key works for any NIM model, so NVIDIA_VISION_API_KEY is OPTIONAL: blank
 # falls back to NVIDIA_API_KEY. A second key is only a quota lever (40 RPM per
-# model). Blank VISION_MODEL = the docparse/config.py default.
+# model). Blank VISION_MODEL = the docparse/config.py default,
+# nvidia/nemotron-nano-12b-v2-vl.
 VISION_MODEL=
 NVIDIA_VISION_API_KEY=
 
@@ -34,12 +35,23 @@ NVIDIA_VISION_API_KEY=
 #   DOCPARSE_MAX_PAGES            40
 #   DOCPARSE_CONCURRENCY          4
 #   DOCPARSE_TEXT_LAYER_MIN_CHARS 100   (rasterize a page only below this many chars)
+# The figure pass — a second, picture-only call on a page whose first call came
+# back without a described figure. A scanned brief has no text layer, so that is
+# true of its ordinary text pages too; the cap is what bounds the cost there.
+#   DOCPARSE_FIGURE_PASS_MAX_PAGES      12  (second calls allowed per document)
+#   DOCPARSE_FIGURE_PASS_NOVELTY        0.10
+#   DOCPARSE_FIGURE_PASS_MIN_NOVEL_WORDS 3   (keeps a reply the ratio would dilute)
+#   DOCPARSE_FIGURE_PASS_MIN_TEXT_CHARS 200
 UPLOAD_DIR=
 UPLOAD_TTL_SECONDS=
 UPLOAD_MAX_BYTES=
 DOCPARSE_MAX_PAGES=
 DOCPARSE_CONCURRENCY=
 DOCPARSE_TEXT_LAYER_MIN_CHARS=
+DOCPARSE_FIGURE_PASS_MAX_PAGES=
+DOCPARSE_FIGURE_PASS_NOVELTY=
+DOCPARSE_FIGURE_PASS_MIN_NOVEL_WORDS=
+DOCPARSE_FIGURE_PASS_MIN_TEXT_CHARS=
 
 # docparse hop 2 — turning the transcription into structured requirements.
 # Runs on LLM_MODEL (above), not VISION_MODEL. Defaults, blank = use them:

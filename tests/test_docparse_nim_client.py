@@ -102,8 +102,11 @@ def test_image_is_sent_as_a_jpeg_data_uri(client):
 
 @respx.mock
 def test_exactly_one_image_per_request(client):
-    """'At most 1 image(s) may be provided in one prompt.' — HTTP 400, refused
-    before inference."""
+    """Nemotron accepts up to 5. Batching 2-5 pages per call was probed and
+    rejected: no throughput gain, ~10% of prompt tokens, and recall falling
+    1.000 -> 0.63 at 4 pages because content slides across page markers while
+    the marker COUNT stays correct — a clean-looking artifact with two pages
+    filed under one number."""
     route = respx.post(URL).mock(return_value=_ok())
 
     client.describe(JPEG, "prompt")
@@ -154,34 +157,45 @@ def test_user_turn_defaults_to_the_transcription_turn(client):
 
 
 @respx.mock
-def test_sends_a_frequency_penalty(client):
-    """Without it this model falls into a repetition loop on sparse, image-heavy
-    pages and runs to max_tokens: measured twice on an RFP cover page at 2,048
-    completion tokens, finish_reason="length", the same eight lines 40x, 77s.
-    At 0.3 the same page returned 214 tokens, clean, in 12s."""
+def test_sends_no_frequency_penalty(client):
+    """meta/llama-3.2-11b needed frequency_penalty=0.3 or it degenerated into a
+    repetition loop on sparse image-heavy pages and ran to max_tokens. Nemotron
+    does not: measured 3 runs with the penalty and 3 without over the same
+    10-page scan, well-formed table separator rows came out 0/1/3 either way and
+    no call ever approached the ceiling. A sampling knob with no measured effect
+    is a knob whose next reader will assume it was measured."""
     route = respx.post(URL).mock(return_value=_ok())
 
     client.describe(JPEG, "prompt")
 
     body = __import__("json").loads(route.calls.last.request.read())
-    assert body["frequency_penalty"] == config.FREQUENCY_PENALTY
-    assert 0 < body["frequency_penalty"] < 0.5  # 0.5 measurably ate table cells
+    assert "frequency_penalty" not in body
 
 
 @respx.mock
 def test_uses_the_vision_timeout_not_the_chat_one(client):
     """Observed live: under rate limiting NVIDIA throttles by DELAYING rather
-    than returning 429, so tenacity never fires — one page took 173s against a
-    1.5s baseline. At LLM_TIMEOUT (300s) a 20-page brief could block for well
-    over an hour. A bounded per-page ceiling turns that hang into a recorded
-    failed page, which is the degradation the rest of the design already
-    assumes."""
+    than returning 429, so tenacity never fires. A bounded per-page ceiling
+    turns that hang into a recorded failed page, which is the degradation the
+    rest of the design already assumes. Endpoint behaviour, not model
+    behaviour — it survived the switch to nemotron."""
     route = respx.post(URL).mock(return_value=_ok())
 
     client.describe(JPEG, "prompt")
 
     assert route.calls.last.request.extensions["timeout"]["read"] == config.VISION_TIMEOUT
     assert config.VISION_TIMEOUT < config.llm_timeout()
+
+
+def test_the_vision_ceiling_is_sized_for_nemotron():
+    """3.5-19s per page at 1120px across six runs, so 45s is ~2.4x the slowest
+    page observed — wide enough not to clip a merely slow one, tight enough that
+    a wholly-stalled 40-page scan fails in 450s rather than 900s. The ceiling
+    exists at all because the endpoint throttles by DELAYING rather than
+    returning 429, so tenacity never fires; that is endpoint behaviour and did
+    not change with the model. A 4-image probe call stalled past 300s, so it
+    still fires."""
+    assert config.VISION_TIMEOUT == 45
 
 
 @respx.mock
@@ -328,7 +342,9 @@ def test_live_endpoint_accepts_the_payload_form():
 
     assert markdown.strip()
     assert usage.get("prompt_tokens", 0) > 0
-    # ~1,601 tokens/tile + 27 overhead. Text-tokenized base64 would bill
-    # thousands more for this tiny image — that gap is the regression signal.
-    assert usage["prompt_tokens"] < 3000
+    # Nemotron bills a roughly flat ~3,530-3,755 prompt tokens per image, so the
+    # ceiling is set above that rather than at meta's 1,601/tile. The signal is
+    # unchanged: under the HTML-<img> form the base64 is tokenized as TEXT and
+    # scales with its length, billing far more than any flat per-image rate.
+    assert usage["prompt_tokens"] < 6000
     assert "INV-2026-00815" in markdown

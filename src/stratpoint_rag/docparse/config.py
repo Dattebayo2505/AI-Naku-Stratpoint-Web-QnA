@@ -25,13 +25,13 @@ load_dotenv()
 
 __all__ = [
     "EXTRACTION_MAX_TOKENS",
-    "FREQUENCY_PENALTY",
     "MAX_TOKENS",
     "TEMPERATURE",
     "VISION_TIMEOUT",
     "concurrency",
     "extraction_group_pages",
     "extraction_token_budget",
+    "figure_pass_max_pages",
     "figure_pass_min_text_chars",
     "figure_pass_novelty",
     "llm_model",
@@ -55,44 +55,31 @@ __all__ = [
 #
 # MAX_TOKENS is deliberately 2048, not the 512 the endpoint probe used. 512 was
 # never hit only because the probe page was sparse; a dense RFP page hits it,
-# truncates mid-sentence, and looks like a successful parse. A low ceiling also
-# actively encourages this model's characteristic failure mode — summarizing
-# instead of transcribing.
+# truncates mid-sentence, and looks like a successful parse.
+#
+# On nemotron this ceiling is now pure insurance rather than an active guard:
+# across six runs of a 10-page scan the longest completion was 448 tokens and
+# every call finished with finish_reason="stop". Do not lower it on that basis —
+# it only ever bites during a failure, and a truncated dense page is
+# indistinguishable from a successful parse downstream.
 TEMPERATURE = 0.1
 MAX_TOKENS = 2048
 
-# Vision only. At temperature 0.1 with no penalty this model reliably falls into
-# a degeneration loop on sparse, image-dominated pages and runs to MAX_TOKENS.
-# Measured on an RFP cover page (one photo, four lines of text), twice: 2,048
-# completion tokens, finish_reason="length", the same eight lines emitted 40x,
-# 77s. It is not a harmless artifact — it is 2,048 billed tokens, most of a
-# VISION_TIMEOUT, and ~10 KB of duplicated text handed to hop 2 as requirements.
-#
-# 0.3, not higher: the penalty scales with a token's COUNT, so it dissolves a
-# 40x loop while barely touching the 2x repeats that dense tables legitimately
-# contain. Measured token-recall against the pages' own text layer, at 0/0.3/0.5:
-#   insurance table (repeated dollar limits)  100% / 99.0% / 95.7%  <- 0.5 costs cells
-#   dense prose page                          77.1% / 97.5% / 98.3%
-#   maps page, diagram page                    100% / 100%  / unchanged
-#   cover page                     2048 tok, looping / 214 tok, clean
-# 0.5 starts eating table cells — exactly the content this model is best at.
-#
-# This is a mitigation of a stochastic failure, not a guarantee; the
-# deterministic backstop is _collapse_repetition in transcribe.py.
-FREQUENCY_PENALTY = 0.3
-
 # Per-page ceiling on one vision call, deliberately far below LLM_TIMEOUT (300s).
 #
-# A page normally returns in ~1.5-5s. But under rate limiting this endpoint
-# throttles by DELAYING rather than returning 429 — one measured page took 173s
-# against a 1.5s baseline, and tenacity never fired because the response was a
-# perfectly good 200 that simply arrived late. At 300s a 20-page brief could
-# block for the better part of an hour, long past any client timeout.
+# The reason for having a ceiling is an ENDPOINT behaviour and did not change
+# with the model: under rate limiting NVIDIA throttles by DELAYING rather than
+# returning 429, so tenacity never fires — the response is a perfectly good 200
+# that simply arrives late. A 4-image probe call was measured stalling past
+# 300s. At LLM_TIMEOUT a 40-page scan could block for the better part of an
+# hour, long past any client timeout.
 #
-# 90s is ~4.5x the documented p95 (20s), so it does not clip a merely slow page,
-# but it converts an indefinite stall into one recorded entry in pages_failed —
-# the same soft degradation the rest of the page loop already assumes.
-VISION_TIMEOUT = 90
+# 45s is sized for nemotron: pages return in 3.5-19s at 1120px across six runs
+# of a 10-page scan, so this is ~2.4x the slowest page observed and does not
+# clip a merely slow one. It converts an indefinite stall into one recorded
+# entry in pages_failed — the soft degradation the rest of the page loop
+# already assumes.
+VISION_TIMEOUT = 45
 
 # Hop-2 reply ceiling. An extraction over a 20-page RFP is a long JSON object —
 # a dozen features, a dozen constraints — and truncation here does not look like
@@ -114,8 +101,16 @@ def _int_env(var: str, default: int) -> int:
 
 
 def vision_model() -> str:
+    """The hop-1 vision model.
+
+    Nemotron rather than meta/llama-3.2-11b-vision-instruct since 2026-08-09.
+    Measured on a 10-page RFP supplied both digitally and fully rasterized:
+    1.000 content-word recall on every scanned page against the digital file's
+    own text layer, at 3,755 prompt tokens per page against meta's 6,431, with
+    no degeneration loops and no refusals in six runs.
+    """
     val = os.getenv("VISION_MODEL")
-    return val if val else "meta/llama-3.2-11b-vision-instruct"
+    return val if val else "nvidia/nemotron-nano-12b-v2-vl"
 
 
 def nvidia_vision_api_key() -> str:
@@ -152,10 +147,10 @@ def max_pages() -> int:
     document, where it is exactly the case worth covering.
 
     Sizing at the ceiling: 40 pages / concurrency 4 x ~5s is ~50s typical, and
-    the worst case (every page stalling into VISION_TIMEOUT) is 10 x 90s = 900s,
+    the worst case (every page stalling into VISION_TIMEOUT) is 10 x 45s = 450s,
     past the 300s parse timeout. A wholly-stalled parse was already going to
-    fail at 20 pages (450s); raising the cap widens the band in which a *partly*
-    slow scan times out client-side. Lower DOCPARSE_MAX_PAGES if that shows up.
+    fail at 20 pages; raising the cap widens the band in which a *partly* slow
+    scan times out client-side. Lower DOCPARSE_MAX_PAGES if that shows up.
     """
     return _int_env("DOCPARSE_MAX_PAGES", 40)
 
@@ -209,6 +204,27 @@ def figure_pass_novelty() -> float:
 
     0.10 sits with margin on both sides of the gap between 1.6% and 17.7%.
     Raising it past ~0.15 starts paying for pages that did not need help.
+
+    Since 2026-08-09 this is the *second* of two triggers, not the only one --
+    ``transcribe._render_page`` fires the pass whenever no figure block came back
+    at all, whatever the novelty. Page 6 above is why: its 32.1% is real, but all
+    of it came from a colour legend the model read off the site plan into a
+    Markdown table, and reading a legend is not describing a picture. Novelty
+    answers "did the reply add words", which stops proxying for "did the model
+    look at the picture" as soon as a legend or table sits beside the figure.
+
+    The threshold is also applied to the figure pass's OWN reply, against the
+    same text layer: the model returns the page's printed captions often enough
+    that an unchecked block puts a re-typed caption in the artifact dressed as a
+    description of a picture nothing looked at.
+
+    That second application was silently discarding correct work until
+    2026-08-09, and the threshold was not at fault — ``_content_words`` was.
+    Numbers were not counted, so page 5's maps ("Civic Park - 2023", "Tower Park
+    - 2025"), whose place names the page's prose already uses, scored 0.048 and
+    were dropped 16 times out of 16. See ``transcribe._WORD_RE``. Do not read
+    the four percentages above as a defence of 0.10 against that failure; they
+    were measured with the same blind spot, and only the ranking survives it.
     """
     val = os.getenv("DOCPARSE_FIGURE_PASS_NOVELTY")
     try:
@@ -218,14 +234,72 @@ def figure_pass_novelty() -> float:
 
 
 def figure_pass_min_text_chars() -> int:
-    """Novelty is only meaningful against a text layer worth comparing to.
+    """Novelty is only meaningful against a baseline worth comparing to.
 
     A scanned page has no text layer, so *everything* the model returns is
     "novel" and the ratio says nothing about whether the figure was read. Below
-    this many characters the figure pass is skipped rather than guessed at —
-    the transcription pass is doing the whole job there anyway.
+    this many characters the NOVELTY trigger is skipped rather than guessed at.
+
+    Corrected 2026-08-09: this used to gate the whole figure pass, and its
+    justification ran "the transcription pass is doing the whole job there
+    anyway". It is not. Measured on the same 10-page RFP supplied digitally and
+    fully rasterized, the figure pass could fire on 4 of 10 digital pages and
+    **0 of 10** scanned ones, so a full-page cover photo and two site plans the
+    digital route described went undescribed on the scan. Only the novelty
+    trigger needs a baseline; "did a figure block come back" needs nothing. See
+    ``transcribe._render_page``.
+
+    On a page with no text layer the baseline is the transcription pass's own
+    reply instead — measured at 1.000 content-word recall against the digital
+    copy's text layer, so it is the closest thing to ground truth available and
+    it keeps the caption-echo check alive where it would otherwise be lost.
     """
     return _int_env("DOCPARSE_FIGURE_PASS_MIN_TEXT_CHARS", 200)
+
+
+def figure_pass_min_novel_words() -> int:
+    """Novel content words that keep a figure-pass reply whatever its ratio.
+
+    ``figure_pass_novelty`` is a proportion, so a reply that reads the picture
+    correctly and *then* restates the page's prose around it is punished for the
+    padding. Traced live on RFP page 5: of two replies that recovered "Civic Park
+    - 2023" and "Tower Park - 2025" off the map, one scored 0.154 and was kept
+    and the other 0.065 and was dropped, the only difference being how much of
+    the page body it repeated back.
+
+    "Did this reply bring anything back" is a count, not a proportion. Measured
+    on the corpus: a reply that read the maps carries 4 novel content words, a
+    table misread as a picture carries 1 ("employer's"), and a pure caption echo
+    carries 0. 3 sits in that gap with margin on both sides, the same way 0.10
+    sits between 1.6% and 17.7%.
+
+    Raising this re-opens the dilution hole; lowering it to 1 lets a single
+    stray token pass a re-typed caption through.
+    """
+    return _int_env("DOCPARSE_FIGURE_PASS_MIN_NOVEL_WORDS", 3)
+
+
+def figure_pass_max_pages() -> int:
+    """Ceiling on second calls per document. Cost guard, not a quality knob.
+
+    Without a text layer the novelty trigger is unavailable, so the gate rests
+    on "no figure block came back" — which is also true of every ordinary text
+    page of a scanned brief. Measured on the 10-page scan: 9 of 10 pages carried
+    no figure block, so an uncapped rule takes that parse from 10 vision calls
+    to 19, and a 40-page scan from 40 to 80.
+
+    12 covers a typical brief outright — the failure this exists to bound is the
+    40-page ceiling, not the 10-page case. Note honestly that 40 + 12 = 52 calls
+    still exceeds NIM's 40 requests/min: a *fully scanned* 40-page upload was
+    already spending the whole minute's quota before this cap existed (see
+    ``concurrency``), and the cap bounds the overrun rather than removing it.
+    Lower it, or ``DOCPARSE_MAX_PAGES``, if throttling shows up as timeouts.
+
+    Exhausting the budget is stamped into the page's provenance comment. A
+    silent cap would read as "this page had no figure" when it means "nobody
+    looked" — the same distinction ``pages_failed`` exists to preserve.
+    """
+    return _int_env("DOCPARSE_FIGURE_PASS_MAX_PAGES", 12)
 
 
 def text_layer_min_chars() -> int:

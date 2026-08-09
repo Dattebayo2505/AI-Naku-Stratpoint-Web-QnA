@@ -35,7 +35,7 @@ def clean_env(monkeypatch):
 @pytest.mark.parametrize(
     "fn_name, expected",
     [
-        ("vision_model", "meta/llama-3.2-11b-vision-instruct"),
+        ("vision_model", "nvidia/nemotron-nano-12b-v2-vl"),
         ("upload_dir", "data/uploads"),
         ("upload_ttl_seconds", 3600),
         ("upload_max_bytes", 25_000_000),

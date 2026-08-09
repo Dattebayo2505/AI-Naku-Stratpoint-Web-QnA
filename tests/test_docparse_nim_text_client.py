@@ -87,7 +87,7 @@ def test_json_object_mode_is_requested():
 @respx.mock
 def test_it_runs_on_the_text_model_not_the_vision_one(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "meta/llama-3.1-8b-instruct")
-    monkeypatch.setenv("VISION_MODEL", "meta/llama-3.2-11b-vision-instruct")
+    monkeypatch.setenv("VISION_MODEL", "nvidia/nemotron-nano-12b-v2-vl")
     route = respx.post(URL).mock(return_value=_ok())
 
     NimTextClient().complete("s", "u")

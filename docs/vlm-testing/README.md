@@ -16,12 +16,15 @@ model read this page" is a number rather than an impression.
 Metric: content-word recall, using `transcribe._content_words` — the same
 helper `_novelty` uses, so a score here means what it means in the pipeline.
 
+<<<<<<< HEAD
 **Note, 2026-08-09:** `_content_words` now counts numbers, which it did not when
 the 1.000 figures below were measured. Recall scored with it is therefore
 stricter than it was — a page whose years or amounts the model misreads can now
 score under 1.000 where it previously could not. Re-baseline before comparing a
 new run against the tables below.
 
+=======
+>>>>>>> feat/vlm-testing-switch
 1. Read ground truth: `render.open_document("[TECH] rfp16.pdf")`, then
    `doc.page_text(i)` for each page.
 2. Run `transcribe_document("[TECH] rfp16_IMAGE.pdf")` with a real
