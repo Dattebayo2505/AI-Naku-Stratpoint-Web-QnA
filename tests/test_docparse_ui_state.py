@@ -27,6 +27,13 @@ def session(monkeypatch):
     return fake
 
 
+@pytest.fixture(autouse=True)
+def _no_proposal_calls(monkeypatch):
+    """Reset also drops the session's proposals; stub it so no test here hits
+    the network. Its own behaviour is covered in test_proposal_ui.py."""
+    monkeypatch.setattr(state.api_client, "delete_proposals", lambda s: True)
+
+
 @pytest.fixture
 def deleted(monkeypatch):
     calls = []

@@ -31,11 +31,19 @@ The orchestrator integrates proposal tools built against typed Pydantic models i
 - **Input**: `EstimationInput(features: list[str], target_platform: list[str], complexity: str = "medium")`
 - **Output**: `EstimationResult(total_cost_usd: float, estimated_weeks: float, role_breakdown: list[RoleBreakdownItem], phase_timeline: list[PhaseTimelineItem], summary: str)`
 
-### Tool 3: Proposal PDF Generation Tool (`generate_proposal_pdf`)
-- **Owner**: `pdf_gen` teammate
-- **Marker**: `# TODO(teammate - pdf_gen): replace stub marker`
-- **Input**: `ProposalPDFInput(client_name: str, project_name: str, requirements: ExtractedRequirements | dict, estimation: EstimationResult | dict)`
+### Tool 3: Proposal PDF Generation Tool (`generate_proposal_pdf`) — **built**
+- **Owner**: `pdf_gen` (implemented in `src/stratpoint_rag/pdf_gen/`)
+- **Input**: `ProposalPDFInput(client_name: str | None, project_name: str | None, requirements: ExtractedRequirements | dict | None, estimation: EstimationResult | dict | None, output_path: str | None)`
 - **Output**: `PDFGenerationResult(pdf_path: str, file_size_bytes: int, download_url: str, status: str)`
+- `requirements`/`estimation` are optional: the tool falls back to the turn's
+  capture sink, because the model routinely re-calls it having forgotten what
+  the estimator returned two turns ago.
+- The session id is **bound into the tool** by `build_tool_specs(briefs, names,
+  session_id)`, never taken as a tool argument — anything the model can type is
+  free text. It scopes the file to `data/proposals/<session_id>/`.
+- A failed render **raises**; it does not return `status="failed"`. The loop
+  turns an exception into an Observation, whereas a failed result reads as a
+  success everywhere downstream. See `CLAUDE.md` → "Proposal PDF".
 
 ---
 

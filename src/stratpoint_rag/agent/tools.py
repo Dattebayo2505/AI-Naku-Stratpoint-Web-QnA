@@ -25,10 +25,12 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from stratpoint_rag import llmops
 from stratpoint_rag.agent.contracts import (
     BriefExtractionInput,
     EstimationInput,
@@ -532,18 +534,65 @@ def _client_slug(client_name: str | None) -> str:
     docparse hop supplies a name, and the visitor may decline to give one. The
     old code called ``.lower()`` on it unguarded, which turned "the visitor
     declined" into an AttributeError at the last step of the proposal chain.
+
+    Delegates to ``pdf_gen.filters.slugify`` so the rule that builds a filename
+    and the rule a template author gets via ``| slugify`` cannot drift apart.
     """
-    slug = re.sub(r"[^\w]+", "_", (client_name or "").lower()).strip("_")
-    return slug or _UNNAMED_CLIENT_SLUG
+    from stratpoint_rag.pdf_gen.filters import slugify
+
+    return slugify(client_name, fallback=_UNNAMED_CLIENT_SLUG)
+
+
+def _resolve_proposal_paths(
+    output_path: str | None, session_id: str | None, proposal_id: str, client_slug: str
+) -> tuple[Path, Path | None, str]:
+    """Decide where the PDF, its HTML twin, and the download URL live.
+
+    Two shapes, and the caller's explicit ``output_path`` always wins:
+
+    - explicit path (``.pdf`` or a directory) — scripts, tests, and anything
+      driving the tool directly. No session dir is invented around it.
+    - nothing — the session-scoped store, ``data/proposals/<sid>/<pid>.pdf``,
+      which is what the download endpoint serves and the TTL sweep reaches.
+
+    Returns ``(pdf_path, html_path_or_None, download_url)``. The HTML twin is
+    only written under the store, where the API can serve it for the UI preview;
+    beside an arbitrary caller-chosen path it would just be litter.
+    """
+    from stratpoint_rag.pdf_gen import store as pdf_store
+
+    if output_path:
+        out = Path(output_path)
+        pdf_path = out if out.suffix.lower() == ".pdf" else out / f"stratpoint_proposal_{client_slug}.pdf"
+        return pdf_path, None, pdf_path.as_posix()
+
+    session = session_id if session_id and pdf_store.is_safe_id(session_id) else pdf_store.ANONYMOUS_SESSION
+    return (
+        pdf_store.proposal_path(session, proposal_id, ".pdf"),
+        pdf_store.proposal_path(session, proposal_id, ".html"),
+        pdf_store.download_url(session, proposal_id),
+    )
 
 
 def generate_proposal_pdf(
     input_data: ProposalPDFInput | str | dict[str, Any],
     names: tuple[str | None, str | None] = (None, None),
+    session_id: str | None = None,
 ) -> PDFGenerationResult:
     """Assemble and render the final branded PDF project proposal complete with scope, cost, timeline, and deliverables.
 
-    # TODO(teammate - pdf_gen): replace stub marker with real PDF generation implementation
+    Runs the real ``pdf_gen`` pipeline: the two agent contracts are mapped to a
+    validated ``ProposalQuoteContext``, rendered through Jinja, and printed by
+    headless Chromium. ``pdf_gen`` is imported *inside* the function on purpose —
+    it pulls in Playwright, and ``agent.tools`` must stay importable on a machine
+    where ``playwright install chromium`` has never been run (every test that
+    monkeypatches a tool imports this module).
+
+    Failure is raised, not swallowed. The ReAct loop already turns a tool
+    exception into an Observation the model can react to, whereas a
+    ``status="failed"`` result with an empty path reads as a success everywhere
+    downstream — including in the "here is your proposal" sentence the loop
+    writes next.
 
     Args:
         input_data: Proposal content or ProposalPDFInput model/dict.
@@ -551,10 +600,24 @@ def generate_proposal_pdf(
             session, bound per request. Used only to fill gaps — an explicit
             value in ``input_data`` wins. Both may be None; the proposal then
             carries a generic heading, which is a valid outcome, not a failure.
+        session_id: Scopes the stored proposal and its download URL. None puts
+            it under the anonymous session, which the sweep still reaches.
 
     Returns:
         PDFGenerationResult Pydantic model containing the generated PDF file path, size, and download URL.
+
+    Raises:
+        RuntimeError: the estimate was empty, or the browser could not render.
     """
+    from stratpoint_rag.pdf_gen import (
+        EmptyEstimate,
+        PdfRenderError,
+        build_quote_context,
+        generate_pdf_from_html,
+        render_quote_html,
+    )
+    from stratpoint_rag.pdf_gen import store as pdf_store
+
     if isinstance(input_data, ProposalPDFInput):
         payload = input_data
     elif isinstance(input_data, dict):
@@ -575,27 +638,47 @@ def generate_proposal_pdf(
     client_name = payload.client_name or session_client
     project_name = payload.project_name or session_project
 
-    clean_client = _client_slug(client_name)
-    output_dir = payload.output_path or os.path.join(".", "data", "proposals")
-    os.makedirs(os.path.dirname(output_dir) if output_dir.endswith(".pdf") else output_dir, exist_ok=True)
+    # The model is free to re-call this tool having forgotten what the estimator
+    # returned two turns ago; the capture sink is the turn's memory of it, so an
+    # empty payload field falls back to what actually ran rather than to nothing.
+    captured = _proposal_sink.get()
+    requirements = payload.requirements or (captured.requirements if captured else None)
+    estimation = payload.estimation or (captured.estimation if captured else None)
 
-    pdf_path = (
-        output_dir
-        if output_dir.endswith(".pdf")
-        else os.path.join(output_dir, f"stratpoint_proposal_{clean_client}.pdf")
+    proposal_id = pdf_store.new_proposal_id()
+    pdf_path, html_path, download_url = _resolve_proposal_paths(
+        payload.output_path, session_id, proposal_id, _client_slug(client_name)
     )
 
-    heading = " - ".join(p for p in (client_name, project_name) if p) or "Project Proposal"
     try:
-        with open(pdf_path, "w", encoding="utf-8") as f:
-            f.write(f"%PDF-1.4 Mock Proposal for {heading}\n")
-    except Exception as ex:
-        log.warning("Could not write stub PDF file to %s: %s", pdf_path, ex)
+        context = build_quote_context(
+            proposal_id=proposal_id,
+            requirements=requirements,
+            estimation=estimation,
+            client_name=client_name,
+            project_name=project_name,
+        )
+    except EmptyEstimate as ex:
+        raise RuntimeError(
+            f"{ex}. A proposal cannot be rendered without priced work."
+        ) from ex
+
+    html = render_quote_html(context)
+    try:
+        generate_pdf_from_html(html, pdf_path)
+    except PdfRenderError as ex:
+        raise RuntimeError(f"the proposal could not be rendered: {ex}") from ex
+
+    if html_path is not None:
+        # The UI previews this: a PDF in a data: URI inside Streamlit's
+        # sandboxed iframe is blocked by Chrome, so the preview shows the HTML
+        # the PDF was printed from.
+        html_path.write_text(html, encoding="utf-8")
 
     result = PDFGenerationResult(
-        pdf_path=pdf_path,
-        file_size_bytes=1048576,
-        download_url=f"/data/proposals/stratpoint_proposal_{clean_client}.pdf",
+        pdf_path=str(pdf_path),
+        file_size_bytes=pdf_path.stat().st_size,
+        download_url=download_url,
         status="success",
     )
     _update_proposal_data(pdf=result)
@@ -667,9 +750,29 @@ def _wrap_estimate_cost_and_timeline(raw_input: str) -> str:
 
 def _wrap_generate_proposal_pdf(
     names: tuple[str | None, str | None] = (None, None),
+    session_id: str | None = None,
 ) -> Callable[[str], str]:
     def run(raw_input: str) -> str:
-        res = generate_proposal_pdf(raw_input, names)
+        t = time.perf_counter()
+        error: str | None = None
+        try:
+            res = generate_proposal_pdf(raw_input, names, session_id)
+        except Exception as ex:
+            error = type(ex).__name__
+            raise
+        finally:
+            # Telemetry for the render itself, recorded here on the request
+            # thread rather than inside pdf_gen — the same rule that keeps
+            # docparse's usage accounting where /metrics can see it. No token
+            # fields: printing a PDF spends no tokens, and reporting zeros would
+            # dilute the per-model averages beside it.
+            llmops.record(
+                "/proposals/generate",
+                (time.perf_counter() - t) * 1000,
+                error=error,
+                session_id=session_id,
+                model=None,
+            )
         return (
             f"Proposal PDF Generated Successfully:\n"
             f"- PDF Path: {res.pdf_path}\n"
@@ -728,12 +831,19 @@ _BRIEF_TOOL_DESCRIPTION = (
 def build_tool_specs(
     briefs: list[BriefRef] | None = None,
     names: tuple[str | None, str | None] = (None, None),
+    session_id: str | None = None,
 ) -> list[ToolSpec]:
     """Build the tool list for one request.
 
     ``briefs`` are the uploads resolved for this session; ``names`` is the
-    ``(client_name, project_name)`` the visitor supplied, if any. Both are
+    ``(client_name, project_name)`` the visitor supplied, if any; ``session_id``
+    scopes the generated proposal on disk and in its download URL. All three are
     request-scoped, which is why this is a function and not a module constant.
+
+    The session id is bound here rather than passed as a tool argument for the
+    same reason upload ids are resolved at the API boundary: the loop dispatches
+    ``Callable[[str], str]``, so anything the model can type is free text, and a
+    session id it could type is a session id it could type *someone else's*.
     """
     specs = [
         ToolSpec(
@@ -795,7 +905,7 @@ def build_tool_specs(
     specs.append(
         ToolSpec(
             name="generate_proposal_pdf",
-            fn=_wrap_generate_proposal_pdf(names),
+            fn=_wrap_generate_proposal_pdf(names, session_id),
             arg="proposal_details",
             description=(
                 "Assemble and render the final branded PDF proposal document. "

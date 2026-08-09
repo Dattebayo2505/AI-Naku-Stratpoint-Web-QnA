@@ -18,9 +18,10 @@ The chatbot half of the repository. `stratpoint_rag` is organized as one subpack
 | `guardrails/` | Input/output checks: keyword blocking, PII redaction, topic filtering, hallucination detection, advice blocking, conversation memory |
 | `guardrails/nemo/` | Optional NeMo Guardrails config: Colang 2.x flows plus custom actions that delegate back to the built-in checks |
 | `agent/` | Plain-text ReAct agent, its per-request tool set and typed contracts, the pluggable tracer, and `run_with_guardrails()` — the single orchestration entry the API calls |
+| `pdf_gen/` | The proposal quote: a validated Pydantic context, the Jinja two-page A4 template, the agent-contract mapping, headless-Chromium rendering, and session-scoped proposal storage |
 | `llmops/` | Request telemetry: a JSONL trace sink, a thread-local token accumulator, and stdlib aggregation (latency p50/p95, tokens, error rate) |
-| `api/` | FastAPI app exposing `POST /chat`, the upload trio (`POST /upload`, `POST /upload/{id}/parse`, `DELETE /upload/{id}`), `GET /health`, and `GET /metrics` |
-| `ui/` | Streamlit chat UI: transcript, brief uploader, debug panel, resource downloads, API client |
+| `api/` | FastAPI app exposing `POST /chat`, the upload trio (`POST /upload`, `POST /upload/{id}/parse`, `DELETE /upload/{id}`), the proposal downloads (`GET /proposals/{sid}/{pid}.pdf`, `.html`, `DELETE /proposals/{sid}`), `GET /health`, and `GET /metrics` |
+| `ui/` | Streamlit chat UI: transcript, brief uploader, debug panel, resource downloads, proposal download + preview, API client |
 | `evaluation/` | Results and findings artifacts for the prompt-engineering experiment (no code) |
 
 ## Entry points
@@ -155,10 +156,27 @@ Two hops with the Markdown transcription as the artifact between them: hop 1 (`t
 | `agent/tracer.py` | `AgentTracer` ABC plus `NoOpTracer` (the default) and `ConsoleTracer`, with module-level `get_default_tracer()` / `set_default_tracer()`. The hook that lets an observability SDK be injected without the loop depending on one | — |
 | `agent/react.py` | The plain-text ReAct loop: builds this request's tool specs from the attached briefs, renders the system prompt (including `render_attachment_manifest()`, which is what puts the `upload_id` in front of the model), calls NIM over `httpx` with `stop=["Observation:", "PAUSE"]`, parses `Thought`/`Action`/`Answer`, dispatches tools with one retry (surfacing the error back to the model as an observation rather than crashing), emits tracer events, and falls back to `search_stratpoint` when the loop can't finish | `rag/config.py`, `agent/tools.py`, `agent/models.py`, `agent/tracer.py`, `docparse/` (`BriefRef`), `llmops/` |
 | `agent/agent.py` | `run_agent()` — the public seam, delegating to `react.run_react`; re-exports the models | `agent/react.py`, `agent/models.py` |
-| `agent/tools.py` | The tools the agent may call: `search_stratpoint` (grounded Q&A) and `find_resource` (PDF links mined from retrieved chunks), both live; `extract_brief_requirements`, live, delegating to docparse hop 2 and registered **only when a brief is attached**; and `estimate_cost_and_timeline` / `generate_proposal_pdf`, still **typed stubs** carrying `# TODO(teammate - …)` markers. `build_tool_specs(briefs, names)` is a per-request build, not a module constant — the module-level `TOOL_SPECS`/`TOOL_REGISTRY` are just the no-attachment default. `_resolve_upload_id()` matches the model's argument against the session's resolved briefs, so an id it invents resolves to nothing. Also holds the string-in/string-out wrappers and the context-var capture sinks the guardrail layer reads back | `rag/answer.py`, `rag/retrieve.py`, `agent/contracts.py`, `agent/models.py`, `docparse/` (`BriefRef`, `extract_brief`) |
+| `agent/tools.py` | The tools the agent may call: `search_stratpoint` (grounded Q&A) and `find_resource` (PDF links mined from retrieved chunks), both live; `extract_brief_requirements`, live, delegating to docparse hop 2 and registered **only when a brief is attached**; `generate_proposal_pdf`, live, delegating to `pdf_gen` (imported **lazily inside the function** so `agent.tools` stays importable without a Chromium install) and raising rather than returning a failed result; and `estimate_cost_and_timeline`, still a **typed stub** carrying a `# TODO(teammate - …)` marker. `build_tool_specs(briefs, names, session_id)` is a per-request build, not a module constant — the module-level `TOOL_SPECS`/`TOOL_REGISTRY` are just the no-attachment default. `_resolve_upload_id()` matches the model's argument against the session's resolved briefs, so an id it invents resolves to nothing. Also holds the string-in/string-out wrappers and the context-var capture sinks the guardrail layer reads back | `rag/answer.py`, `rag/retrieve.py`, `agent/contracts.py`, `agent/models.py`, `docparse/` (`BriefRef`, `extract_brief`), `pdf_gen/` (lazy), `llmops/` |
 | `agent/guardrail_agent.py` | `run_with_guardrails()` — the orchestrator: input guardrails → consume a pending naming answer → disambiguation → the engagement naming ask when a proposal is requested and the name is still unknown → answer (ReAct branch when the ask is resource-shaped, a brief is attached, or the intent is `REQUEST_PROPOSAL`; direct RAG otherwise, with a Chroma `$contains` augmentation for contact/location queries) → output guardrails → memory and escalation. Also `clear_memory()` | `agent/agent.py`, `agent/tools.py`, `disambiguation/router.py`, `disambiguation/engagement.py`, `disambiguation/schemas.py`, `docparse/` (`BriefRef`, `suggest_names`), `guardrails/memory.py`, `guardrails/pipeline.py`, `guardrails/schemas.py`, `rag/answer.py`, `rag/store.py` |
 | `agent/__init__.py` | Re-exports the public seam: `run_agent`, `run_with_guardrails`, `clear_memory`, the result models, the tracer classes, and the tool contracts | `agent/agent.py`, `agent/guardrail_agent.py`, `agent/contracts.py`, `agent/tracer.py` |
 | `agent/README.md` | Package-level note: why a hand-rolled ReAct loop over LangChain/LangGraph, the tool contracts table, and how a teammate swaps a stub for a real implementation | `agent/contracts.py`, `agent/tools.py` |
+
+### `pdf_gen/`
+
+The proposal quote, in three seams — context, HTML, PDF — each exercisable
+alone. Only the last needs a browser.
+
+| File | What it does | Depends on |
+|---|---|---|
+| `pdf_gen/schema.py` | `LineItem` / `MilestoneItem` / `ProposalQuoteContext` — the only thing the template is ever rendered against. Money is `Decimal`, quantised half-up at every step; subtotal, tax and grand total are `@computed_field`, never inputs, so the arithmetic cannot be supplied by an LLM. `line_items` is `min_length=1`: a $0.00 quote that looks finished is worse than a failed render | — |
+| `pdf_gen/filters.py` | Jinja filters `currency_format` / `date_format` / `slugify`, each total (a printable string for `None` rather than a raise). `slugify` also builds the proposal filename in `agent/tools.py`, so the two rules cannot drift | — |
+| `pdf_gen/templating.py` | The Jinja `Environment` (autoescape + `StrictUndefined`) and `render_quote_html()`. A `dict` is validated into a `ProposalQuoteContext` first — accepting a raw mapping straight through would defeat the seam | `pdf_gen/schema.py`, `pdf_gen/filters.py` |
+| `pdf_gen/templates/quote-template-c.html` | The two-page A4 quote. Owns its geometry via `@page`; page 1 cost & scope, page 2 chevron roadmap & terms | — |
+| `pdf_gen/mapping.py` | `build_quote_context()` — `EstimationResult` + `ExtractedRequirements` → validated context. Roles become priced rows (qty × unit price, so the table's arithmetic is visible), phases become milestones with chained date ranges, and `pages_failed` from hop 1 lands in the quote's notes. Raises `EmptyEstimate` rather than quoting zero. Takes `today` so the whole document derives from one instant | `agent/contracts.py`, `pdf_gen/schema.py`, `pdf_gen/assets.py`, `pdf_gen/config.py` |
+| `pdf_gen/pdf_service.py` | The only rendering call site for Playwright: `generate_pdf_from_html` / `agenerate_pdf_from_html` (separate implementations — sync Playwright inside a running loop raises). Blocks every http(s) request at the route layer, `prefer_css_page_size` with zero margins so the template's `@page` is not double-applied, `tenacity` retry on browser *launch*, and a semaphore bounding resident Chromiums | `pdf_gen/config.py` |
+| `pdf_gen/assets.py` | `data_uri()` — inline a local image, returning `None` for anything unreadable so a missing logo degrades to the template's SVG mark instead of failing a client's proposal | — |
+| `pdf_gen/store.py` | `data/proposals/<session_id>/<proposal_id>.pdf` plus an `.html` twin for the UI preview; purge, TTL sweep (`now` from the caller — no clock here), delete-session, and `download_url()`. Re-exports `is_safe_id` from `docparse/store.py` rather than copying the allowlist | `docparse/store.py`, `pdf_gen/config.py` |
+| `pdf_gen/config.py` | Env-switched storage paths, render timeout, browser flags, and the branding/tax/terms constants printed on the quote. Read at call time, mirroring `docparse/config.py` | — |
 
 ### `llmops/`
 
@@ -173,7 +191,7 @@ Two hops with the Markdown transcription as the artifact between them: hop 1 (`t
 
 | File | What it does | Depends on |
 |---|---|---|
-| `api/app.py` | FastAPI app: `GET /health`; `POST /chat` taking `{message, history, session_id, use_nemo, enable_reasoning, attachments}` and returning `AgentResult`, resolving attachment **ids** (never paths) to `BriefRef`s at the boundary and mapping config errors to 503 and upstream LLM failures to 502 without leaking details; `POST /upload` (validate + store + page count, no model) split from `POST /upload/{id}/parse` (hop 1, sha256-cached) because the confirmation dialog needs a page count before the file is opened; `DELETE /upload/{id}`; `GET /metrics` returning the `llmops` aggregates plus the 50 most recent records, newest first. A lifespan hook calls `store.purge_all()` on boot, each upload triggers a TTL sweep with the API's clock, and telemetry is recorded on both the success and error paths for chat and parse alike | `agent/`, `docparse/`, `llmops/`, `rag/config.py` |
+| `api/app.py` | FastAPI app: `GET /health`; `POST /chat` taking `{message, history, session_id, use_nemo, enable_reasoning, attachments}` and returning `AgentResult`, resolving attachment **ids** (never paths) to `BriefRef`s at the boundary and mapping config errors to 503 and upstream LLM failures to 502 without leaking details; `POST /upload` (validate + store + page count, no model) split from `POST /upload/{id}/parse` (hop 1, sha256-cached) because the confirmation dialog needs a page count before the file is opened; `DELETE /upload/{id}`; the proposal downloads `GET /proposals/{session_id}/{proposal_id}.pdf` and `.html` (the preview twin) plus `DELETE /proposals/{session_id}`, all session-scoped and 404-ing identically for an unsafe id and a missing file; `GET /metrics` returning the `llmops` aggregates plus the 50 most recent records, newest first. A lifespan hook calls `store.purge_all()` **and** `proposal_store.purge_all()` on boot, each upload triggers a TTL sweep of both with the API's clock, and telemetry is recorded on both the success and error paths for chat and parse alike | `agent/`, `docparse/`, `pdf_gen/store.py`, `llmops/`, `rag/config.py` |
 | `api/__init__.py` | Re-exports `app` | `api/app.py` |
 
 ### `ui/`
@@ -181,13 +199,14 @@ Two hops with the Markdown transcription as the artifact between them: hop 1 (`t
 | File | What it does | Depends on |
 |---|---|---|
 | `ui/app.py` | The Streamlit entry point: page config, sidebar (API health, session ID, reset, reasoning toggle), the brief uploader with its "Transcribe this document?" confirmation dialog and attachment chips, transcript, and the chat-input round trip (sending the attached `upload_id`s alongside the message). Uses `st.file_uploader` rather than `st.chat_input(accept_file=True)` so parsing can start the moment the file lands | `ui/state.py`, `ui/api_client.py`, `ui/attachments.py`, `ui/components/*` |
-| `ui/api_client.py` | Thin HTTP client for the API (`health_check`, `send_message`, `upload_file`, `parse_upload`, `delete_upload`) with typed `APIError` messages for connection, timeout, and HTTP failures; `delete_upload` never raises, so a dead API cannot strand the user | — |
+| `ui/api_client.py` | Thin HTTP client for the API (`health_check`, `send_message`, `upload_file`, `parse_upload`, `delete_upload`, `fetch_proposal`, `delete_proposals`) with typed `APIError` messages for connection, timeout, and HTTP failures; `delete_upload`/`delete_proposals`/`fetch_proposal` never raise, so a dead API cannot strand the user. `fetch_proposal` takes only the *path* from the agent-supplied URL — the host is always the configured API, so a prompt-injected brief cannot steer the fetch | — |
 | `ui/attachments.py` | Deliberately Streamlit-free pure helpers over the attachment list: `find_by_hash` (re-upload detection), `add`, `remove`, `estimate_seconds` (the wait shown in the dialog), and `chip_label` | — |
-| `ui/state.py` | Streamlit session-state init (messages, UUID session ID, attachments) and conversation reset, which deletes uploads server-side *before* rotating the session id — the files are session-scoped, so the other order would silently strand confidential briefs on disk | `ui/api_client.py` |
+| `ui/state.py` | Streamlit session-state init (messages, UUID session ID, attachments, `proposal_pdf_path`/`proposal_download_url`), `remember_proposal()` (returns whether the proposal is new, so the caller — not the component — decides whether to toast), and conversation reset, which deletes uploads *and* proposals server-side *before* rotating the session id — the files are session-scoped, so the other order would silently strand confidential briefs and client quotes on disk | `ui/api_client.py` |
 | `ui/resource_fetch.py` | Deliberately Streamlit-free server-side fetching of externally hosted resource files: rejects non-public hosts (SSRF guard), caps the body size, and never raises so callers can fall back to the plain link | — |
-| `ui/components/chat_transcript.py` | Replays the stored transcript, re-rendering downloads and the debug panel for each assistant turn under a stable per-message key | `ui/components/debug_panel.py`, `ui/components/resource_downloads.py` |
+| `ui/components/chat_transcript.py` | Replays the stored transcript, re-rendering downloads, the proposal control, and the debug panel for each assistant turn under a stable per-message key | `ui/components/debug_panel.py`, `ui/components/resource_downloads.py`, `ui/components/proposal_download.py` |
 | `ui/components/debug_panel.py` | The "Under the hood" expander: sources, agent trace, native reasoning, grounding/guardrail status, and the raw JSON | — |
 | `ui/components/resource_downloads.py` | Download buttons for `find_resource` results — top result fetched eagerly, the rest on click, cached for an hour, falling back to an external link when a fetch is refused | `ui/resource_fetch.py` |
+| `ui/components/proposal_download.py` | The generated quote: a download button plus an expandable inline preview, both fetched over HTTP (never read off `pdf_path` — UI and API are only sometimes on one filesystem). The preview renders the **HTML twin**, because Chrome blocks a PDF `data:` URI inside Streamlit's sandboxed iframe | `ui/api_client.py` |
 | `ui/.streamlit/config.toml` | Theme (light base, Stratpoint blue accent, Poppins) | — |
 | `ui/README.md` | How to run the UI standalone and point it at a non-local API | — |
 
@@ -271,6 +290,16 @@ graph TD
         TOOLS --> GAGENT
     end
 
+    subgraph pdfpkg["pdf_gen/"]
+        PSCHEMA[schema.py] --> PTEMPL[templating.py]
+        PFILTERS[filters.py] --> PTEMPL
+        PSCHEMA --> PMAP[mapping.py]
+        PASSETS[assets.py] --> PMAP
+        PCONFIG[config.py] --> PMAP
+        PCONFIG --> PSVC[pdf_service.py]
+        PCONFIG --> PSTORE[store.py]
+    end
+
     subgraph opspkg["llmops/"]
         SINK[sink.py] --> OPS[__init__.py]
         USAGE[usage.py] --> OPS
@@ -281,6 +310,7 @@ graph TD
         RFETCH[resource_fetch.py] --> RDL[components/resource_downloads.py]
         DBG[components/debug_panel.py] --> TRANS[components/chat_transcript.py]
         RDL --> TRANS
+        PDL[components/proposal_download.py] --> TRANS
         TRANS --> UIAPP[app.py]
         APICLIENT[api_client.py] --> UIAPP
         APICLIENT --> UISTATE[state.py]
@@ -310,15 +340,27 @@ graph TD
     TRANSCRIBE -.->|writes| UPLOADS[("data/uploads/")]
     DSTORE -.->|owns| UPLOADS
     UPLOADS -.->|transcription.md| DEXTRACT
+    CONTRACTS --> PMAP
+    DSTORE --> PSTORE
+    PMAP -.->|lazy import| TOOLS
+    PTEMPL -.->|lazy import| TOOLS
+    PSVC -.->|lazy import| TOOLS
+    PSTORE -.->|lazy import| TOOLS
+    PSVC -.->|writes| PROPOSALS[("data/proposals/")]
+    PSTORE -.->|owns| PROPOSALS
     GAGENT --> APIAPP["api/app.py"]
     TRANSCRIBE --> APIAPP
     DSTORE --> APIAPP
+    PSTORE --> APIAPP
+    PROPOSALS -.->|FileResponse| APIAPP
+    APICLIENT --> PDL
     APIAPP -.->|HTTP| APICLIENT
     ABL -.->|writes| ABLRES[(evaluation/prompt_ablation_results.jsonl)]
     USAGE -.->|add_usage| ANSWER
     USAGE -.->|add_usage| REACT
     USAGE -.->|add_usage| DEXTRACT
     OPS -.->|record| TRANSCRIBE
+    OPS -.->|record| TOOLS
     OPS --> APIAPP
     SINK -.->|writes| TRACES[(llmops_traces.jsonl)]
 ```
@@ -330,6 +372,7 @@ graph TD
 | `data/pages/*.md`, `data/index.jsonl` | `stratpoint_crawl` (out of scope) | `rag/loader.py` |
 | `chroma_db/` (gitignored, regenerable) | `rag/ingest.py` via `rag/store.py` | `rag/retrieve.py`, and directly by `agent/guardrail_agent.py` for the contact/location `$contains` augmentation |
 | `data/uploads/<session_id>/<upload_id>/` (gitignored; `meta.json`, the uploaded bytes, `transcription.md`) | `docparse/store.py` at `POST /upload`; the transcription by `docparse/transcribe.py` at `POST /upload/{id}/parse` | `docparse/extract.py` (hop 2, via `BriefRef`). Cleaned three independent ways: `purge_all()` on API boot, a TTL `sweep()` on each upload, and explicit delete from the UI |
+| `data/proposals/<session_id>/<proposal_id>.pdf` + `.html` (gitignored) | `pdf_gen/pdf_service.py` via `agent/tools.py:generate_proposal_pdf` during `POST /chat` | `GET /proposals/{sid}/{pid}.pdf` (download) and `.html` (the UI preview — Chrome blocks a PDF `data:` URI inside Streamlit's iframe). Cleaned the same three ways uploads are: `purge_all()` on API boot, a TTL `sweep()` riding the upload trigger, and `DELETE /proposals/{sid}` from the UI's reset |
 | `rag/eval/gold.jsonl` | hand-written | `rag/eval/run.py` |
 | `evaluation/prompt_ablation_results.jsonl` | `prompts/run_ablation.py` | `evaluation/PROMPT_ENGINEERING_FINDINGS.md` |
 | `llmops_traces.jsonl` (gitignored; path via `LLMOPS_LOG_PATH`) | `llmops/sink.py`, written at the `api/app.py` request boundary | `GET /metrics` via `llmops/metrics.py` |
@@ -351,8 +394,12 @@ graph TD
 - **The hop-2 merge is plain Python, never a third LLM call.** Union, normalized dedupe, `max()` on complexity. An LLM merge would launder five groups' hallucinations into one authoritative-looking list.
 - **Ids, never paths, cross the API boundary.** A path in a chat message would be LLM-generated free text flowing into `open()`; `guardrails` guards the user's *message*, not tool arguments. `/chat` resolves ids to `BriefRef`s before the agent runs.
 - **`extract_brief_requirements` is registered only when a brief is attached**, and the `upload_id` reaches the model only through `render_attachment_manifest()`. Both halves are required: without the tool the model cannot read the brief, without the manifest it cannot name it, and without either it answers from the website corpus about the wrong thing.
+- **Quote totals are computed, never supplied.** Subtotal, tax and grand total are `@computed_field`s over `Decimal` line items, quantised half-up at each step, so the arithmetic on a document a client may sign cannot come from an LLM and the printed line totals are the exact addends of the printed subtotal. An estimate with no priced work raises `EmptyEstimate` rather than rendering a $0.00 quote that looks finished.
+- **All PDF *rendering* goes through `pdf_gen/pdf_service.py`**, the same containment PyMuPDF gets below. The renderer blocks every http(s) request and assets are inlined as `data:` URIs — an unreachable CDN font does not error, it stalls. The template owns its page geometry via `@page`, so `page.pdf()` is called with zero margins and `prefer_css_page_size`; passing margins in both places reflows the two-page layout onto three.
+- **A failed proposal render raises out of the tool.** The ReAct loop turns an exception into an Observation the model can react to; a `status="failed"` result reads as success everywhere downstream, including in the "here is your proposal" sentence the loop writes next.
+- **The session id is bound into the proposal tool, never taken as an argument.** `build_tool_specs(briefs, names, session_id)` closes over it, because the loop dispatches `Callable[[str], str]` and a session id the model can type is a session id it can type *someone else's*.
 - **All PyMuPDF calls live in `docparse/render.py`.** PyMuPDF is AGPL unless licensed; the single call site is what makes a swap to `pypdfium2` a contained change.
-- **No clock inside `docparse`.** `store.sweep(now=...)` takes its timestamp from the API layer — the same rule that keeps the crawler's `storage`/`state` deterministic under test.
+- **No clock inside `docparse` or `pdf_gen`.** `store.sweep(now=...)` takes its timestamp from the API layer and `build_quote_context(today=...)` takes the date from its caller, so a quote's issue date, validity window and roadmap all derive from one instant — the same rule that keeps the crawler's `storage`/`state` deterministic under test.
 - **The confirm dialog is opened once, from a popped `pending_upload`, and the /upload gate is keyed on `settled_upload_hash` — not on `pending_upload`/`attachments`.** `st.dialog` inherits `st.fragment`: a button inside the modal reruns only the dialog body (with its original arguments), the modal closes precisely because the dialog function is *not* called on the next full run, and `on_dismiss` defaults to `"ignore"` so the X does not rerun the app at all. Deriving the modal from state that survives the run therefore pins it open: clearing `pending_upload` in a button re-armed the content gate, which re-POSTed `/upload` and re-created `pending_upload`, reopening the dialog on every rerun. `tests/test_docparse_ui_uploader.py` replays the rerun sequence and is the only seam that catches this.
 - **Known limitation, deferred by decision: prompt injection via uploaded content.** A brief is attacker-controllable, hop 1 transcribes it verbatim by design, and hop 2's output sets the price of a real proposal. Measured live, a planted instruction *succeeded* on `complexity` and failed on the name. The schema is the defence that works; a document-derived name is never adopted without the visitor affirming it.
 

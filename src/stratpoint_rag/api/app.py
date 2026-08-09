@@ -25,6 +25,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from stratpoint_rag import llmops
@@ -37,20 +38,27 @@ from stratpoint_rag.docparse import (
     transcribe_document,
 )
 from stratpoint_rag.docparse import config as docparse_config
+from stratpoint_rag.pdf_gen import store as proposal_store
 from stratpoint_rag.rag import config as rag_config
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """Purge uploads on boot — the real 'delete on next run', keyed to the
-    process that owns the files.
+    """Purge uploads and proposals on boot — the real 'delete on next run',
+    keyed to the process that owns the files.
 
     Streamlit re-executes ui/app.py on every widget interaction, so keying
     cleanup to script execution would delete the file the user just uploaded.
     The files live here, in a long-lived uvicorn that may not restart for days,
     and Streamlit offers no reliable tab-close callback — so boot is the one
     moment we can be certain an old session is over.
+
+    Proposals go with them: a quote carries a client's name and their price, and
+    it is derived from a brief this same hook is deleting. Keeping the derived
+    document after purging its source would be the leak the purge exists to
+    prevent, one step removed.
     """
     store.purge_all()
+    proposal_store.purge_all()
     yield
 
 
@@ -136,7 +144,12 @@ def upload(session_id: str = Form(...), file: UploadFile = ...) -> UploadRespons
     data = file.file.read()
     # Bound disk on a container that never reboots. No scheduler, no background
     # thread — the clock is read here, at the API layer, and passed down.
-    store.sweep(now=time.time())
+    # Proposals ride along on the same trigger: they are smaller and longer-lived
+    # than uploads, so they need no trigger of their own, and boot purge is what
+    # actually bounds them.
+    now = time.time()
+    store.sweep(now=now)
+    proposal_store.sweep(now=now)
 
     cached = store.find_by_sha256(session_id, _sha256(data))
     if cached:
@@ -216,6 +229,55 @@ def parse_upload(upload_id: str, session_id: str) -> ParseResponse:
 @app.delete("/upload/{upload_id}")
 def delete_upload(upload_id: str, session_id: str) -> dict:
     return {"deleted": store.delete_upload(session_id, upload_id)}
+
+
+# ── proposals ───────────────────────────────────────────────────────────────
+
+
+def _serve_proposal(session_id: str, proposal_id: str, suffix: str) -> FileResponse:
+    """Serve one generated proposal file, session-scoped.
+
+    404 for an unsafe id as much as for a missing file: the two are the same
+    fact from the caller's side ("you cannot have this"), and distinguishing
+    them tells a prober which ids are shaped correctly.
+    """
+    path = proposal_store.find_proposal(session_id, proposal_id, suffix)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"no proposal {proposal_id}")
+
+    media = "application/pdf" if suffix == ".pdf" else "text/html"
+    return FileResponse(
+        path,
+        media_type=media,
+        # inline, not attachment: the UI embeds the HTML twin in a preview pane
+        # and offers the PDF through its own download button, which supplies the
+        # filename itself.
+        filename=f"stratpoint_proposal_{proposal_id}{suffix}",
+        content_disposition_type="inline",
+    )
+
+
+@app.get("/proposals/{session_id}/{proposal_id}.pdf")
+def download_proposal(session_id: str, proposal_id: str) -> FileResponse:
+    """The generated quote. The path in ``PDFGenerationResult.download_url``."""
+    return _serve_proposal(session_id, proposal_id, ".pdf")
+
+
+@app.get("/proposals/{session_id}/{proposal_id}.html")
+def preview_proposal(session_id: str, proposal_id: str) -> FileResponse:
+    """The HTML the PDF was printed from, for the UI's inline preview.
+
+    Chrome blocks a PDF served from a ``data:`` URI inside Streamlit's sandboxed
+    iframe, so previewing the PDF itself is not available; this is the same
+    document one render stage earlier.
+    """
+    return _serve_proposal(session_id, proposal_id, ".html")
+
+
+@app.delete("/proposals/{session_id}")
+def delete_proposals(session_id: str) -> dict:
+    """Drop a session's proposals — wired to the UI's 'Reset conversation'."""
+    return {"deleted": proposal_store.delete_session(session_id)}
 
 
 @app.get("/metrics")

@@ -473,6 +473,7 @@ def run_react(
     enable_reasoning: bool = False,
     briefs: list[BriefRef] | None = None,
     names: tuple[str | None, str | None] = (None, None),
+    session_id: str | None = None,
     proposal_mode: bool = True,
 ) -> AgentResult:
     """Run one turn of the plain-text ReAct loop.
@@ -489,6 +490,8 @@ def run_react(
         briefs: Uploads resolved for this session. Non-empty is what registers
             the brief tool and puts the attachment manifest in the prompt.
         names: ``(client_name, project_name)`` the visitor supplied, if any.
+        session_id: Scopes a generated proposal PDF on disk and in its download
+            URL. Bound into the tool, never exposed as a tool argument.
         proposal_mode: True when the visitor asked for a proposal/quote. False
             casts the same tools as document Q&A instead, and drops the standing
             instruction to end every Answer with cost, timeline and a PDF link.
@@ -502,7 +505,7 @@ def run_react(
 
     # Built per request: the tool list depends on what is attached, and the PDF
     # tool closes over the visitor's answer about naming.
-    specs = build_tool_specs(briefs, names)
+    specs = build_tool_specs(briefs, names, session_id)
     registry = build_tool_registry(specs)
 
     begin_capture()

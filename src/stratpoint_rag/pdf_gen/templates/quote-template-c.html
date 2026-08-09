@@ -328,6 +328,12 @@
     .summary-row.total-row .val {
       color: #0284c7;
     }
+    .summary-row.total-row .val-code {
+      font-size: 10px;
+      font-weight: 700;
+      color: #64748b;
+      letter-spacing: 0.5px;
+    }
 
     .page-footer-nav {
       display: flex;
@@ -525,7 +531,7 @@
       <div class="quote-meta-box">
         <div class="quote-type-badge">Project Proposal</div>
         <div class="quote-no">{{ quote_number }}</div>
-        <div class="quote-dates">Date: {{ quote_date }} &bull; Valid: {{ valid_until }}</div>
+        <div class="quote-dates">Date: {{ quote_date | date_format }} &bull; Valid: {{ valid_until | date_format }}</div>
       </div>
     </header>
 
@@ -579,9 +585,9 @@
               <div class="item-head">{{ item.item_name }}</div>
               {% if item.description %}<div class="item-sub">{{ item.description }}</div>{% endif %}
             </td>
-            <td class="text-center">{{ item.quantity }}</td>
-            <td class="text-right">{{ currency_symbol }}{{ item.formatted_unit_price if item.formatted_unit_price is defined else item.unit_price }}</td>
-            <td class="text-right item-head">{{ currency_symbol }}{{ item.total }}</td>
+            <td class="text-center">{{ item.formatted_quantity }}</td>
+            <td class="text-right">{{ item.unit_price | currency_format(currency_symbol) }}</td>
+            <td class="text-right item-head">{{ item.total_amount | currency_format(currency_symbol) }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -592,17 +598,19 @@
         <div class="summary-box">
           <div class="summary-row">
             <span>Subtotal:</span>
-            <span><strong>{{ currency_symbol }}{{ subtotal }}</strong></span>
+            <span><strong>{{ subtotal_amount | currency_format(currency_symbol) }}</strong></span>
           </div>
-          {% if tax_amount %}
+          {# tax_rate_label is None at a zero rate — that is what hides this row.
+             A formatted string would be truthy at "0.00" and print it always. #}
+          {% if tax_rate_label %}
           <div class="summary-row">
-            <span>Sales Tax {% if tax_rate %}({{ tax_rate }}){% endif %}:</span>
-            <span>{{ currency_symbol }}{{ tax_amount }}</span>
+            <span>Sales Tax ({{ tax_rate_label }}):</span>
+            <span>{{ tax_amount | currency_format(currency_symbol) }}</span>
           </div>
           {% endif %}
           <div class="summary-row total-row">
             <span>Grand Total:</span>
-            <span class="val">{{ currency_symbol }}{{ grand_total }}</span>
+            <span class="val">{{ grand_total_amount | currency_format(currency_symbol) }} <span class="val-code">{{ currency_code }}</span></span>
           </div>
         </div>
       </div>

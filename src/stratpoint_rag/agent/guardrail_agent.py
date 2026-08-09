@@ -245,6 +245,12 @@ def run_with_guardrails(
     route_result = route(processed_input, session_memory=memory)
 
     # ── The naming ask, once per session, at the moment it is needed ──
+    #
+    # ...but only when it is still a question. The router already pulled the
+    # labelled slots out of the request, and asking for what the visitor typed
+    # in the same sentence reads as not having listened.
+    if route_result.intent == IntentCategory.REQUEST_PROPOSAL:
+        engagement.adopt_stated(session_id, route_result.slots)
     if route_result.intent == IntentCategory.REQUEST_PROPOSAL and engagement.needs_ask(
         session_id
     ):
@@ -310,6 +316,7 @@ def run_with_guardrails(
                 enable_reasoning=enable_reasoning,
                 briefs=briefs,
                 names=engagement.get(session_id).names,
+                session_id=session_id,
                 # The loop reaches the brief either way; this decides whether it
                 # is scoping the work or answering a question about it. Without
                 # it every attachment question ran under the proposal prompt and

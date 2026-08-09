@@ -128,11 +128,18 @@ class ProposalPDFInput(BaseModel):
     project_name: str | None = Field(
         None, description="Project title, if the visitor supplied one."
     )
-    requirements: ExtractedRequirements | dict[str, Any] = Field(
-        ..., description="Extracted requirements or features dictionary."
+    # Optional since the real PDF pipeline landed. The ReAct loop hands this
+    # tool free text, and the model routinely re-calls it having forgotten what
+    # the estimator returned two turns ago; `generate_proposal_pdf` falls back
+    # to the turn's capture sink, which holds what actually ran. Requiring them
+    # raised a ValidationError at exactly the moment the fallback exists for —
+    # and the loop cannot tell a schema error from a real one, so it retried
+    # the same call verbatim until the repeat guard stopped it.
+    requirements: ExtractedRequirements | dict[str, Any] | None = Field(
+        None, description="Extracted requirements or features dictionary."
     )
-    estimation: EstimationResult | dict[str, Any] = Field(
-        ..., description="Scope estimation result dictionary."
+    estimation: EstimationResult | dict[str, Any] | None = Field(
+        None, description="Scope estimation result dictionary."
     )
     output_path: str | None = Field(
         None, description="Optional target file path for saving the PDF."

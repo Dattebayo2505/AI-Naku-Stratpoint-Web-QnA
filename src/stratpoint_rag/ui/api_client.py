@@ -100,6 +100,42 @@ def parse_upload(session_id: str, upload_id: str) -> Dict[str, Any]:
         raise _handle(e, what="transcribing the document") from None
 
 
+def fetch_proposal(download_url: str) -> bytes | None:
+    """Fetch a generated proposal (or its HTML twin) by the URL the agent returned.
+
+    Returns None rather than raising: a swept or purged proposal is an expected
+    outcome, and the caller turns it into "ask for it again" rather than into an
+    error banner over the whole chat.
+
+    Only the path is taken from ``download_url``; the host is always this
+    client's configured API. The URL originates in a tool result the model has
+    seen, so treating it as a fetchable address would let a prompt-injected
+    brief steer the browser at a host of its choosing.
+    """
+    path = "/" + download_url.split("://", 1)[-1].split("/", 1)[-1].lstrip("/")
+    try:
+        response = requests.get(f"{API_BASE_URL}{path}", timeout=UPLOAD_TIMEOUT)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.content
+    except requests.RequestException:
+        return None
+
+
+def delete_proposals(session_id: str) -> bool:
+    """Best-effort delete of a session's proposals. Never raises — this runs on
+    reset, and a dead API must not trap the user in a conversation."""
+    try:
+        response = requests.delete(
+            f"{API_BASE_URL}/proposals/{session_id}", timeout=UPLOAD_TIMEOUT
+        )
+        response.raise_for_status()
+        return bool(response.json().get("deleted"))
+    except requests.RequestException:
+        return False
+
+
 def delete_upload(session_id: str, upload_id: str) -> bool:
     """Best-effort delete. Never raises: this runs on reset and on the sidebar
     '(x)', and a dead API must not take the whole UI down with it."""

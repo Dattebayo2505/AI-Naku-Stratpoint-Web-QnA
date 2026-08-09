@@ -10,6 +10,9 @@ The three failures this replaces, all of them silent:
    an error Observation to reason around.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
 from stratpoint_rag.agent import react, tools
@@ -240,14 +243,55 @@ def test_the_wrapper_calls_hop_two_and_records_the_requirements(monkeypatch):
 
 
 # ── pdf_gen with no name: the normal path, not an edge case ─────────────────
+#
+# The PDF is now a real Chromium render, so these assert against the HTML that
+# is about to be printed rather than against the file's bytes: the naming rules
+# are what is under test, and paying ~1s of browser launch per case to read a
+# name back out of a PDF buys nothing. `test_pdf_service.py` owns the print
+# stage; `test_proposal_pdf_tool.py` owns the two joined end to end.
 
 
-def test_the_pdf_tool_builds_a_filename_with_no_client_name(tmp_path):
+@pytest.fixture
+def rendered_html(monkeypatch):
+    """Capture the HTML the tool renders, and write a stand-in PDF instead."""
+    from stratpoint_rag import pdf_gen
+
+    captured: dict[str, str] = {}
+
+    def fake_render(html, output_path, options=None):
+        captured["html"] = html
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.4 stand-in\n")
+        return path
+
+    monkeypatch.setattr(pdf_gen, "generate_pdf_from_html", fake_render)
+    return captured
+
+
+def _estimate() -> dict:
+    """The minimum priced work a quote can be built from."""
+    return {
+        "total_cost_usd": 10_000.0,
+        "estimated_weeks": 8.0,
+        "role_breakdown": [
+            {
+                "role": "Senior Engineer",
+                "estimated_hours": 100.0,
+                "hourly_rate": 100.0,
+                "total_cost": 10_000.0,
+            }
+        ],
+        "summary": "8 weeks, $10,000.",
+    }
+
+
+def test_the_pdf_tool_builds_a_filename_with_no_client_name(tmp_path, rendered_html):
     """Regression: the old code called .lower() on a required field that is now
     None whenever the visitor declines — an AttributeError at the last step of
     the proposal chain."""
     payload = ProposalPDFInput(
-        requirements={}, estimation={}, output_path=str(tmp_path)
+        requirements={}, estimation=_estimate(), output_path=str(tmp_path)
     )
 
     result = tools.generate_proposal_pdf(payload)
@@ -263,43 +307,51 @@ def test_the_pdf_tool_accepts_none_for_both_names():
     assert payload.client_name is None and payload.project_name is None
 
 
-def test_the_pdf_tool_invents_no_client_from_a_bare_string(tmp_path):
+def test_the_pdf_tool_invents_no_client_from_a_bare_string(tmp_path, rendered_html):
     """'Acme Innovations' on a real quote is the same hallucination the schema
     change removed."""
-    payload = f'{{"output_path": "{tmp_path.as_posix()}"}}'
+    payload = json.dumps({"output_path": tmp_path.as_posix(), "estimation": _estimate()})
 
     result = tools.generate_proposal_pdf(payload)
 
     assert "acme" not in result.pdf_path.lower()
+    assert "acme" not in rendered_html["html"].lower()
 
 
-def test_the_visitor_supplied_name_fills_the_gap(tmp_path):
-    out = tmp_path / "p.pdf"
-    payload = ProposalPDFInput(requirements={}, estimation={}, output_path=str(out))
+def test_the_visitor_supplied_name_fills_the_gap(tmp_path, rendered_html):
+    payload = ProposalPDFInput(
+        requirements={}, estimation=_estimate(), output_path=str(tmp_path / "p.pdf")
+    )
 
     tools.generate_proposal_pdf(payload, ("Northwind Retail", "Loyalty App"))
 
-    assert "Northwind Retail - Loyalty App" in out.read_text(encoding="utf-8")
+    assert "Northwind Retail" in rendered_html["html"]
+    assert "Loyalty App" in rendered_html["html"]
 
 
-def test_an_explicit_name_beats_the_session_one(tmp_path):
-    out = tmp_path / "p.pdf"
+def test_an_explicit_name_beats_the_session_one(tmp_path, rendered_html):
     payload = ProposalPDFInput(
-        client_name="Explicit Co", requirements={}, estimation={}, output_path=str(out)
+        client_name="Explicit Co",
+        requirements={},
+        estimation=_estimate(),
+        output_path=str(tmp_path / "p.pdf"),
     )
 
     tools.generate_proposal_pdf(payload, ("Session Co", None))
 
-    assert "Explicit Co" in out.read_text(encoding="utf-8")
+    assert "Explicit Co" in rendered_html["html"]
+    assert "Session Co" not in rendered_html["html"]
 
 
-def test_the_generic_heading_when_nothing_is_known(tmp_path):
-    out = tmp_path / "p.pdf"
-    payload = ProposalPDFInput(requirements={}, estimation={}, output_path=str(out))
+def test_the_generic_heading_when_nothing_is_known(tmp_path, rendered_html):
+    payload = ProposalPDFInput(
+        requirements={}, estimation=_estimate(), output_path=str(tmp_path / "p.pdf")
+    )
 
     tools.generate_proposal_pdf(payload)
 
-    assert "Project Proposal" in out.read_text(encoding="utf-8")
+    assert "Project Proposal" in rendered_html["html"]
+    assert "Prospective Client" in rendered_html["html"]
 
 
 # ── the loop, end to end, with no network ──────────────────────────────────
@@ -363,14 +415,17 @@ def test_the_extraction_is_captured_as_proposal_data(monkeypatch):
     assert result.proposal_data.requirements is requirements
 
 
-def test_the_pdf_tool_in_the_loop_closes_over_the_session_names(tmp_path):
+def test_the_pdf_tool_in_the_loop_closes_over_the_session_names(tmp_path, rendered_html):
     spec = next(
         s
         for s in tools.build_tool_specs(None, ("Northwind Retail", None))
         if s.name == "generate_proposal_pdf"
     )
-    out = tmp_path / "p.pdf"
 
-    spec.fn('{"output_path": "%s"}' % out.as_posix())
+    spec.fn(
+        json.dumps(
+            {"output_path": (tmp_path / "p.pdf").as_posix(), "estimation": _estimate()}
+        )
+    )
 
-    assert "Northwind Retail" in out.read_text(encoding="utf-8")
+    assert "Northwind Retail" in rendered_html["html"]

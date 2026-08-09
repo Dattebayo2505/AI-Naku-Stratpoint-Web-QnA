@@ -62,6 +62,7 @@ __all__ = [
     "Engagement",
     "Resumption",
     "abandon",
+    "adopt_stated",
     "clear",
     "get",
     "needs_ask",
@@ -118,6 +119,42 @@ def get(session_id: str | None) -> Engagement:
 def clear(session_id: str | None = None) -> None:
     """Drop one session's naming answer. Wired to 'Reset conversation'."""
     _sessions.pop(session_id or "default", None)
+
+
+def adopt_stated(session_id: str | None, slots: dict[str, str] | None) -> bool:
+    """Record names the visitor already stated in the request itself.
+
+    Rule 1 above says *ask late*; it does not say *ask regardless*. "Generate a
+    proposal, project name is Savannah-OohLala, client name is Monica" arrives
+    with both slots already filled by ``extract_slots`` — and the ask fired on
+    the intent alone, discarded them, and put the question the visitor had just
+    answered back to them. Correct behaviour, wrong precondition.
+
+    This is still row 2 of the trust table, not row 1: the value came from the
+    visitor's own message, which is the same channel their answer to the
+    question would have arrived on. Only the *labelled* forms reach here —
+    ``extract_slots`` is called with no ``target_slot``, so an unlabelled
+    request stays unlabelled rather than becoming the client name wholesale, and
+    the ask still fires for it.
+
+    Returns True when something was recorded, which also settles the naming: a
+    visitor who typed a name is not asked for one.
+    """
+    client = (slots or {}).get("brief_client_name")
+    project = (slots or {}).get("brief_project_name")
+    if not (client or project):
+        return False
+
+    engagement = get(session_id)
+    if client:
+        engagement.client_name = client
+    if project:
+        engagement.project_name = project
+    # An explicit name supersedes an earlier "leave them blank": the visitor is
+    # allowed to change their mind, and `declined` left set would keep the
+    # declination alongside a name that is now on the quote.
+    engagement.declined = False
+    return True
 
 
 def needs_ask(session_id: str | None) -> bool:

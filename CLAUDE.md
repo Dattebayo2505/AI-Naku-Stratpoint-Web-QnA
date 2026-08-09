@@ -22,8 +22,9 @@ src/
     ├── disambiguation/  # planned — ambiguous-input detection; clarify intent before tool calls
     ├── guardrails/      # planned — input/output guardrails
     ├── agent/           # planned — ReAct agent orchestrating retrieval + tools
-    ├── api/             # BUILT — FastAPI: /chat, /upload, /upload/{id}/parse, /metrics
-    ├── ui/              # BUILT — Streamlit chat UI + client-brief uploader
+    ├── pdf_gen/         # BUILT — ProposalQuoteContext → Jinja → headless-Chromium PDF
+    ├── api/             # BUILT — FastAPI: /chat, /upload, /upload/{id}/parse, /proposals/*, /metrics
+    ├── ui/              # BUILT — Streamlit chat UI + client-brief uploader + proposal download
     └── evaluation/      # planned — retrieval / answer-quality evals
 ```
 
@@ -367,6 +368,102 @@ on the name — the schema is the defence that works; the "untrusted document"
 line in the extraction prompt is hygiene, not a mitigation. The other structural
 mitigation is that a document-derived name is never adopted without the visitor
 affirming it.
+
+## Proposal PDF (`stratpoint_rag.pdf_gen`)
+
+Three seams, each exercisable alone — the context without a template, the HTML
+without a browser, the browser without the agent:
+
+```
+agent contracts ─build_quote_context─> ProposalQuoteContext   mapping.py
+                ─render_quote_html───> HTML string            templating.py + templates/
+                ─generate_pdf_from_html─> data/proposals/<sid>/<pid>.pdf   pdf_service.py
+```
+
+`pdf_service.py` is the only Playwright call site for rendering, the same
+containment PyMuPDF gets in `docparse/render.py`. `agent/tools.py` imports the
+package **lazily, inside the function**, so `agent.tools` stays importable where
+`playwright install chromium` has never been run.
+
+### Key design decisions (read before editing)
+
+- **Money is `Decimal`, and totals are `@computed_field`, never inputs.**
+  Subtotal, tax and grand total are derived from quantities and unit prices and
+  quantised half-up at every step, so the line totals printed in the table are
+  the exact addends of the subtotal printed below them. Accepting a grand total
+  as a field means the arithmetic can be supplied by an LLM.
+
+- **An empty estimate raises; it does not render a $0.00 quote.**
+  `ProposalQuoteContext` requires `min_length=1` line items and `mapping` refuses
+  to synthesise one from nothing. A grand total of zero because the estimator
+  returned no roles is worse than a failed tool call — the loop writes "here is
+  your proposal" either way, so the failure has to be loud.
+
+- **A render failure raises out of the tool.** The ReAct loop already turns a
+  tool exception into an Observation the model can react to; a
+  `status="failed"` result with an empty path reads as success everywhere
+  downstream. The wrapper's happy-path string literally says "Generated
+  Successfully".
+
+- **`ProposalPDFInput.requirements`/`.estimation` are optional**, and the tool
+  falls back to the turn's capture sink. The model routinely re-calls this tool
+  having forgotten what the estimator returned two turns ago; requiring them
+  raised a ValidationError at exactly the moment the fallback exists for, and
+  the loop cannot tell a schema error from a real one, so it retried the same
+  call verbatim until the repeat guard stopped it.
+
+- **Autoescape on, `StrictUndefined` on.** Half of what lands in the template is
+  document-derived from an attacker-controllable brief, and the output goes to a
+  browser engine. `StrictUndefined` is the companion: a template that renders an
+  unknown name as an empty string turns a typo'd key into a professional-looking
+  quote with a blank column.
+
+- **The renderer blocks the network; assets are inlined as `data:` URIs.** Not
+  tidiness — a `<link>` to a font CDN on a container with no egress does not
+  error, it *stalls* until the timeout, and then prints with the wrong fonts
+  anyway. `PROPOSAL_LOGO_PATH` is therefore a local path, never a URL.
+
+- **`prefer_css_page_size` with zero margins.** The template owns its geometry
+  via `@page { size: A4 portrait; margin: 12mm 14mm }`. Passing margins to
+  `page.pdf()` as well applies them *on top of* the CSS ones and reflows the
+  two-page layout onto three. `tests/test_pdf_service.py` asserts
+  `page_count == 2` for that reason.
+
+- **One browser per render, bounded by a semaphore.** The sync Playwright API
+  refuses to be driven from a thread other than the one that created it and
+  FastAPI runs sync endpoints in a threadpool, so a shared long-lived browser is
+  not available. `PDF_MAX_CONCURRENCY` is a memory guard for the 6GB LXC, not a
+  throughput knob. `agenerate_pdf_from_html` is a separate implementation, not a
+  wrapper — sync Playwright inside a running loop raises outright.
+
+- **Nothing on the page is invented.** No client name, no company, no feature:
+  everything is supplied by the caller, read out of the two contracts, or a
+  documented constant in `pdf_gen/config.py`. `client_name` defaults to
+  "Prospective Client" — a placeholder, deliberately not a plausible company.
+
+- **Lost pages travel with the price.** `pages_failed` from hop 1 lands in the
+  quote's notes. A proposal built on a brief where vision choked on 6 of 20
+  pages must not read like one built on a clean brief.
+
+- **No clock below the boundary.** `build_quote_context(today=...)` takes the
+  date so the quote date, validity window and roadmap dates all derive from one
+  instant; `store.sweep(now=...)` takes the timestamp from the API layer. Same
+  rule as `docparse/store.py` and the crawler.
+
+### Storage and the download endpoint
+
+`data/proposals/<session_id>/<proposal_id>.pdf` plus an `.html` twin (gitignored).
+The twin exists because Chrome refuses to load a PDF from a `data:` URI inside
+Streamlit's sandboxed iframe, so the UI previews the HTML the PDF was printed
+from. Session scoping is a boundary, not tidiness — a quote carries a client's
+name and their price. The session id is **bound into the tool** by
+`build_tool_specs(briefs, names, session_id)`, never passed as a tool argument:
+anything the model can type is free text.
+
+Cleanup mirrors uploads: purge on API boot, a TTL sweep riding the upload
+trigger, and explicit `DELETE /proposals/{session_id}` wired to "Reset
+conversation". The UI fetches over HTTP and never reads `pdf_path` off disk —
+`STRATPOINT_API_URL` explicitly supports running Streamlit against the LXC.
 
 ## Deployment target
 

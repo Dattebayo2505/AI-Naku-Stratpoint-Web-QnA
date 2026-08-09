@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 from stratpoint_rag.ui.components import debug_panel
+from stratpoint_rag.ui.components import proposal_download
 from stratpoint_rag.ui.components import resource_downloads
 
 def render():
@@ -27,4 +28,5 @@ def render():
             # index so widget keys / prepared-flags match app.py's live render.
             if role == "assistant" and "raw_response" in msg:
                 resource_downloads.render(msg["raw_response"], key_prefix=f"msg{idx}")
+                proposal_download.render(msg["raw_response"], key_prefix=f"msg{idx}")
                 debug_panel.render(msg["raw_response"])

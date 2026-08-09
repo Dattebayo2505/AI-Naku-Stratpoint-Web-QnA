@@ -104,6 +104,71 @@ def test_a_proposal_request_asks_how_to_name_it_first(monkeypatch, transcribed):
     assert engagement.get(SESSION).loop is not None
 
 
+def test_names_stated_in_the_request_skip_the_ask(monkeypatch, transcribed):
+    """Asking for what the visitor just typed reads as not having listened.
+
+    The router already extracts both slots from a labelled request; the ask
+    fired on the intent alone and threw them away.
+    """
+    seen = _capture_run_agent(monkeypatch)
+
+    result = ga.run_with_guardrails(
+        "Generate me a default proposal for this document, project name is "
+        "Savannah-OohLala, client name is Monica.",
+        session_id=SESSION, use_nemo=False, briefs=transcribed,
+    )
+
+    assert result.guardrail_reason != "Asked how to name the proposal"
+    assert seen["names"] == ("Monica", "Savannah-OohLala")
+    assert engagement.get(SESSION).loop is None
+
+
+def test_one_stated_name_is_enough_to_settle_the_naming(monkeypatch, transcribed):
+    seen = _capture_run_agent(monkeypatch)
+
+    ga.run_with_guardrails(
+        "quote this please, client is Nordic Systems",
+        session_id=SESSION, use_nemo=False, briefs=transcribed,
+    )
+
+    assert seen["names"] == ("Nordic Systems", None)
+
+
+def test_a_stated_name_overrides_an_earlier_declination(monkeypatch, transcribed):
+    """'skip' settles the question; it does not make the visitor unable to
+    change their mind later by simply saying the name."""
+    seen = _capture_run_agent(monkeypatch)
+
+    ga.run_with_guardrails(
+        "give me a quote", session_id=SESSION, use_nemo=False, briefs=transcribed
+    )
+    ga.run_with_guardrails(
+        "skip", session_id=SESSION, use_nemo=False, briefs=transcribed
+    )
+    ga.run_with_guardrails(
+        "redo the quote, client name is Monica",
+        session_id=SESSION, use_nemo=False, briefs=transcribed,
+    )
+
+    assert seen["names"] == ("Monica", None)
+
+
+def test_an_unlabelled_proposal_request_is_never_read_as_a_name(
+    monkeypatch, transcribed
+):
+    """The whole sentence must not become the client name — that is the failure
+    the ask exists to avoid, and adopting names from the request re-opens it."""
+    monkeypatch.setattr(ga, "run_agent", lambda *a, **k: AgentResult(answer="quoted"))
+
+    result = ga.run_with_guardrails(
+        "can you put together a proposal?", session_id=SESSION, use_nemo=False,
+        briefs=transcribed,
+    )
+
+    assert result.guardrail_reason == "Asked how to name the proposal"
+    assert engagement.get(SESSION).names == (None, None)
+
+
 def test_the_ask_does_not_count_as_the_bot_failing_to_understand(
     monkeypatch, transcribed
 ):

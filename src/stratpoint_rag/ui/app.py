@@ -4,6 +4,7 @@ import streamlit as st
 from stratpoint_rag.ui import state, api_client, attachments as att
 from stratpoint_rag.ui.components import chat_transcript
 from stratpoint_rag.ui.components import debug_panel
+from stratpoint_rag.ui.components import proposal_download
 from stratpoint_rag.ui.components import resource_downloads
 
 # Page config must be the first Streamlit command
@@ -205,10 +206,16 @@ def main():
                     # Download controls (top result eager, rest lazy). The
                     # assistant message is appended just below, so its index
                     # will be the current messages length.
-                    resource_downloads.render(
-                        response_data,
-                        key_prefix=f"msg{len(st.session_state.messages)}",
-                    )
+                    key_prefix = f"msg{len(st.session_state.messages)}"
+                    resource_downloads.render(response_data, key_prefix=key_prefix)
+
+                    # Fired here, on the turn that produced it, not from inside
+                    # the component: Streamlit re-runs the whole script on every
+                    # widget interaction, so a toast raised during render would
+                    # pop again on each keystroke.
+                    if state.remember_proposal(response_data):
+                        st.toast("Your proposal PDF is ready.", icon="🧾")
+                    proposal_download.render(response_data, key_prefix=key_prefix)
 
                     # Render the debug panel immediately
                     debug_panel.render(response_data)

@@ -26,6 +26,7 @@ src/
     ├── disambiguation/  #  ambiguous-input detection, clarify intent before tool calls
     ├── guardrails/      #  input/output guardrails (built-in + optional NeMo)
     ├── agent/           #  ReAct agent orchestrating retrieval + tools
+    ├── pdf_gen/         #  proposal quote: Pydantic context → Jinja template → Chromium PDF
     ├── llmops/          #  request telemetry: JSONL traces, latency/token/error metrics
     ├── api/             #  FastAPI endpoint
     ├── ui/              #  Streamlit chat UI
@@ -97,6 +98,10 @@ it); blank means "use the default in code".
 | `CHROMA_DIR`, `CHROMA_COLLECTION` | Where the vector store lives (default `./chroma_db`). |
 | `STRATPOINT_API_URL` | UI → API base URL (default `http://localhost:8000`; Compose sets `http://api:8000`). |
 | `LLMOPS_ENABLED`, `LLMOPS_LOG_PATH` | Telemetry toggle and JSONL trace path (default on, `llmops_traces.jsonl`). |
+| `PROPOSAL_DIR`, `PROPOSAL_TTL_SECONDS` | Where generated quotes live and how long they survive (default `data/proposals`, 24h). |
+| `PDF_TIMEOUT_MS`, `PDF_MAX_CONCURRENCY`, `PDF_BROWSER_ARGS`, `PDF_CHROMIUM_PATH` | Headless-Chromium render ceiling, concurrent browsers, extra launch flags, explicit browser path. |
+| `PROPOSAL_COMPANY_NAME`, `PROPOSAL_COMPANY_EMAIL`, `PROPOSAL_COMPANY_WEBSITE`, `PROPOSAL_LOGO_PATH` | Branding printed on the quote. The logo is a **local path**, inlined as a data URI — the renderer blocks the network. |
+| `PROPOSAL_VALID_DAYS`, `PROPOSAL_TAX_RATE_PERCENT`, `PROPOSAL_PAYMENT_TERMS` | Quote validity window, sales-tax rate (0 hides the row), and the payment schedule text. |
 | `LCX_*`, `NON_ROOT_*`, `PUBLIC_IP_ADDRESS`, `PORT` | Proxmox LXC deployment credentials and allotted ports — not read by the app code. |
 
 Defaults live in `src/stratpoint_rag/rag/config.py`, which calls `load_dotenv()`
@@ -154,19 +159,20 @@ for c in retrieve("Does Stratpoint do mobile app development?", k=5):
 
 The `stratpoint_rag.agent` package is a **hand-rolled plain-text ReAct loop** over the NVIDIA NIM
 endpoint — deliberately not LangChain/LangGraph, for deterministic parsing and no framework drift
-(rationale in `src/stratpoint_rag/agent/README.md`). It exposes five tools:
+(rationale in `src/stratpoint_rag/agent/README.md`). Its tools:
 
 | Tool | Status |
 |---|---|
 | `search_stratpoint` — grounded Q&A over the corpus | live |
 | `find_resource` — downloadable PDFs mined from retrieved chunks | live |
-| `parse_client_brief` — extract requirements from a client brief | **stub** (typed contract only) |
+| `read_brief` — read/search what an uploaded document says | live (registered only with an attachment) |
+| `extract_brief_requirements` — structured requirements from a brief | live (registered only with an attachment) |
 | `estimate_cost_and_timeline` — cost/timeline/role breakdown | **stub** (typed contract only) |
-| `generate_proposal_pdf` — render the branded proposal PDF | **stub** (typed contract only) |
+| `generate_proposal_pdf` — render the branded proposal PDF | live (`pdf_gen`: Jinja + headless Chromium) |
 
-The three proposal tools return their real Pydantic types from `agent/contracts.py` but have
-placeholder bodies marked `# TODO(teammate - …)`; swapping in an implementation means replacing
-the body only — the loop and the API are unchanged. `stratpoint_rag.api` serves the agent over HTTP,
+The remaining stub returns its real Pydantic type from `agent/contracts.py` but has a placeholder
+body marked `# TODO(teammate - …)`; swapping in an implementation means replacing the body only —
+the loop and the API are unchanged. `stratpoint_rag.api` serves the agent over HTTP,
 wrapped by `run_with_guardrails()` (input guardrails → disambiguation → answer → output guardrails).
 
 Build the retrieval index first (one-time; regenerated from `data/`):
@@ -251,6 +257,61 @@ Re-uploading identical bytes in the same session returns the original
 > verbatim by design, so a brief containing injected instructions is transcribed
 > faithfully — treat uploaded content as untrusted.
 
+## Usage — proposal PDF
+
+Ask the assistant for a proposal or a quote for an uploaded brief. The agent
+extracts requirements, estimates cost and timeline, then renders a two-page A4
+proposal — page 1 cost & scope, page 2 roadmap & terms — which appears in the
+chat as **Download PDF proposal** with an inline preview.
+
+The renderer is headless Chromium via Playwright, so it needs the same one-time
+browser download the crawler does:
+
+```bash
+uv run playwright install chromium     # or: playwright install chromium
+```
+
+Over HTTP, the PDF path comes back on the chat response under
+`proposal_data.pdf.download_url`:
+
+```bash
+curl -s -X POST http://localhost:8000/chat \
+     -H 'content-type: application/json' \
+     -d '{"message":"put together a proposal for this brief","session_id":"demo","attachments":["<upload_id>"]}' \
+  | jq .proposal_data.pdf
+# -> {"pdf_path":"...","file_size_bytes":114574,"download_url":"/proposals/demo/<proposal_id>.pdf","status":"success"}
+
+curl -s -o proposal.pdf http://localhost:8000/proposals/demo/<proposal_id>.pdf
+curl -s          http://localhost:8000/proposals/demo/<proposal_id>.html   # the preview twin
+curl -s -X DELETE http://localhost:8000/proposals/demo                     # drop the session's quotes
+```
+
+Rendering to a PDF directly, without the agent:
+
+```python
+from datetime import date
+from stratpoint_rag.pdf_gen import build_quote_context, render_quote_html, generate_pdf_from_html
+
+context = build_quote_context(
+    proposal_id="demo0001",
+    estimation=estimation_result,          # agent.contracts.EstimationResult
+    requirements=extracted_requirements,   # docparse.schema.ExtractedRequirements (optional)
+    client_name="Northwind Retail",        # None is fine — the quote stays generic
+    project_name="Loyalty Programme Platform",
+    today=date.today(),
+)
+generate_pdf_from_html(render_quote_html(context), "proposal.pdf")
+```
+
+Branding, tax rate, validity window and payment terms come from the environment
+(see **Configuration** and `.envexample`); the template itself lives at
+`src/stratpoint_rag/pdf_gen/templates/quote-template-c.html`.
+
+> Generated quotes are stored under `data/proposals/<session_id>/` (gitignored),
+> wiped when the API restarts, and swept after `PROPOSAL_TTL_SECONDS`. A quote
+> carries a client's name and their price — the download endpoint is scoped to
+> the session that generated it.
+
 ## Usage — LLMOps metrics
 
 Every `/chat` request appends one JSONL trace line (latency, model, token usage, tool calls,
@@ -309,6 +370,15 @@ A bare-metal (no Docker) deployment path for the 6GB LXC is written up in
 ```bash
 uv run pytest                 # unit tests (no network)
 uv run pytest -m integration  # live smoke test against stratpoint.com
+```
+
+`tests/test_pdf_service.py` launches a real headless Chromium — offline, but it
+needs the browser. Without `playwright install chromium` the module **skips**
+rather than failing, so run it explicitly after touching the template or the
+renderer:
+
+```bash
+uv run pytest tests/test_pdf_service.py -v   # must not report SKIPPED
 ```
 
 ## Design
