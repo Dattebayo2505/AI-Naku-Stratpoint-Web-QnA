@@ -280,6 +280,23 @@ attached RFP was answered with two stratpoint.com citations:
   excerpt out of the trace *forwards*: the last brief observation on a stalled
   turn is the repeat nudge, which carries no document text.
 
+**`read_brief` truncates, so it must also search.** The excerpt cap
+(`BRIEF_EXCERPT_CHARS = 6000`) is correct — the loop resends every Observation
+each turn — but for a while it was the *only* thing the tool could return, and
+the tool took only an `upload_id`. Those two facts composed into a dead end:
+the model could not express "show me more", its retry was byte-identical, and
+the repeat guard above correctly refused it, so everything past character 6000
+was unreachable **by construction**. Measured live: asked about clause 2.10 of a
+21,384-character RFP, the agent answered "point 2.10 is not mentioned in the
+available content" — 2.10 sat at character 7,863. `read_brief` now also accepts
+`{"upload_id": ..., "query": ...}` and returns windows around the hits. Two
+details are load-bearing: a no-match must say so rather than fall back to the
+opening (the model reads whatever it is handed as the thing it asked for), and
+an excerpt is labelled by the page of the *match*, not of the window start —
+the window opens early and straddles `## Page N` headings, which put a wrong
+page number on a real quote. Note the varying query is also what lets the loop
+make progress past the repeat guard.
+
 **Known limitation, deferred by decision: prompt injection via uploaded
 content.** A brief is attacker-controllable, hop 1 transcribes it verbatim by
 design, and hop 2 reads that text and sets the price of a real proposal.

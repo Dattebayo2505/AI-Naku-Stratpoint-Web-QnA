@@ -307,6 +307,79 @@ def test_read_brief_says_so_when_it_truncates(tmp_path):
     assert "truncated" in out.lower()
 
 
+@pytest.fixture
+def long_brief(tmp_path):
+    """A document whose interesting clause sits past the excerpt cap.
+
+    Modelled on the live failure: a 9-page RFP, 21k characters, where the
+    visitor asked about clause 2.10 at character ~7,900.
+    """
+    path = tmp_path / "rfp.md"
+    path.write_text(
+        "## Page 1\n2.0 Broad description of Project: a digital media campaign.\n"
+        + "filler about the campaign. " * 400
+        + "\n## Page 4\n2.10 The City reserves the right to negotiate with the "
+        "selected proposer the exact terms and conditions of the contract.\n"
+        + "more filler. " * 200,
+        encoding="utf-8",
+    )
+    return [
+        BriefRef("u1", "rfp.pdf", "sha", markdown_path=str(path), pages_total=9, pages_parsed=9)
+    ]
+
+
+def test_read_brief_finds_a_clause_past_the_excerpt_cap(long_brief):
+    """The regression. Without a query, `read_brief` always returns the head of
+    the file, so everything past BRIEF_EXCERPT_CHARS was unreachable *by
+    construction*: the tool took only an upload_id, so the model had no way to
+    ask for more, and the loop's repeat guard correctly blocked the identical
+    second call. Measured live: a 21k-char RFP answered "point 2.10 is not
+    mentioned in the available content" when 2.10 sat at character 7,863."""
+    head = agent_tools.read_brief("u1", long_brief)
+    assert "2.10 The City reserves" not in head  # the bug's precondition
+
+    out = agent_tools.read_brief({"upload_id": "u1", "query": "2.10"}, long_brief)
+
+    assert "2.10 The City reserves the right to negotiate" in out
+
+
+def test_read_brief_query_says_it_showed_only_matches(long_brief):
+    """An excerpt presented as the whole document is how "I only read part of
+    it" becomes an unqualified summary — the same rule the head path follows."""
+    out = agent_tools.read_brief({"upload_id": "u1", "query": "2.10"}, long_brief)
+
+    assert "matching" in out.lower()
+
+
+def test_read_brief_labels_an_excerpt_by_the_page_of_the_match(long_brief):
+    """The window opens ~350 characters before the hit, so it straddles the
+    `## Page 4` heading. Labelling by the window start would report the page-4
+    clause as "Page 3" — a wrong page number attached to a real quote."""
+    out = agent_tools.read_brief({"upload_id": "u1", "query": "2.10"}, long_brief)
+
+    assert "Page 4" in out
+    assert "Page 3" not in out
+
+
+def test_read_brief_says_when_a_query_matches_nothing(long_brief):
+    """A no-match must not silently fall back to the head of the document: the
+    model would read it as "here is what you asked for" and answer from
+    whatever page 1 happens to say."""
+    out = agent_tools.read_brief(
+        {"upload_id": "u1", "query": "zzz-not-in-this-document"}, long_brief
+    )
+
+    assert "no " in out.lower() and "zzz-not-in-this-document" in out
+
+
+def test_read_brief_without_a_query_still_returns_the_head(transcribed):
+    """The query is additive; the bare-id call the model already makes must keep
+    working unchanged."""
+    out = agent_tools.read_brief("a3f9c2", transcribed)
+
+    assert "customer loyalty mobile app" in out
+
+
 def test_read_brief_reports_pages_hop_one_could_not_read(tmp_path):
     """A brief where vision choked on 3 pages must not read like a clean one."""
     path = tmp_path / "t.md"

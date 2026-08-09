@@ -259,6 +259,77 @@ def extract_brief_requirements(
 # context window several turns before the model answers.
 BRIEF_EXCERPT_CHARS = 6000
 
+# How much text to return around each `query` hit, and how many hits to show.
+# The product stays under BRIEF_EXCERPT_CHARS so a search costs no more context
+# than the plain read it replaces.
+BRIEF_MATCH_WINDOW_CHARS = 1400
+BRIEF_MAX_MATCHES = 4
+
+_PAGE_HEADING = re.compile(r"^## Page (\d+)", re.MULTILINE)
+
+
+def _brief_query(raw: Any) -> str:
+    """Pull an explicit search term out of the model's Action Input, or ''.
+
+    Deliberately NOT routed through `_parse_input_dict_or_str`: that helper maps
+    a bare string onto *every* key it knows, including `query`, so the ordinary
+    `Action Input: a3f9c2` would arrive here as a search for the literal id and
+    match nothing. A query counts only when the model named the key.
+    """
+    if isinstance(raw, dict):
+        d = raw
+    elif isinstance(raw, str) and raw.strip().startswith("{"):
+        try:
+            d = json.loads(raw.strip())
+        except json.JSONDecodeError:
+            return ""
+        if not isinstance(d, dict):
+            return ""
+    else:
+        return ""
+    value = d.get("query") or d.get("search") or d.get("q") or ""
+    return str(value).strip().strip("'\"").strip()
+
+
+def _page_of(text: str, pos: int) -> str:
+    """Label a window by the nearest `## Page N` heading above it.
+
+    Provenance survives the slice: an excerpt the model cannot place in the
+    document is one it will cite as simply "the brief".
+    """
+    last = None
+    for m in _PAGE_HEADING.finditer(text, 0, pos + 1):
+        last = m.group(1)
+    return f"Page {last}" if last else "start of document"
+
+
+def _search_excerpts(text: str, query: str) -> list[str]:
+    """Windows around each case-insensitive hit, overlaps merged."""
+    needle = query.casefold()
+    hay = text.casefold()
+
+    # (window_start, window_end, first_match_pos). The page label is taken from
+    # the *match*, not the window start: a window opens a few hundred characters
+    # early and so routinely straddles a `## Page N` heading, which would label
+    # a page-4 clause "Page 3" and put a wrong page number in the citation.
+    spans: list[list[int]] = []
+    at = hay.find(needle)
+    while at != -1 and len(spans) < BRIEF_MAX_MATCHES:
+        # Bias the window forward: the answer to "what does 2.10 say" is the
+        # text after the marker, not the clause before it.
+        start = max(0, at - BRIEF_MATCH_WINDOW_CHARS // 4)
+        end = min(len(text), at + BRIEF_MATCH_WINDOW_CHARS)
+        if spans and start <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], end)
+        else:
+            spans.append([start, end, at])
+        at = hay.find(needle, end)
+
+    return [
+        f"[{_page_of(text, hit)}, characters {s}-{e} of {len(text)}]\n{text[s:e].strip()}"
+        for s, e, hit in spans
+    ]
+
 
 def read_brief(
     input_data: str | dict[str, Any],
@@ -277,8 +348,19 @@ def read_brief(
     presented as the whole document is how "I only read the first few pages"
     becomes an unqualified summary.
 
+    **`query` is what makes the rest of the document reachable at all.** Without
+    it this returned the first `BRIEF_EXCERPT_CHARS` and nothing else, and since
+    the tool took only an id, the model had no way to express "show me more" —
+    its retry was byte-identical and the loop's repeat guard correctly refused
+    it. Everything past the cap was unreachable *by construction*. Measured: a
+    21k-character RFP answered "point 2.10 is not mentioned in the available
+    content" when 2.10 sat at character 7,863. A varying query also gives the
+    loop the differing feedback it needs to make progress.
+
     Args:
-        input_data: The upload id from the attachment manifest.
+        input_data: The upload id from the attachment manifest, optionally as
+            ``{"upload_id": ..., "query": ...}`` to search rather than read the
+            opening.
         briefs: Uploads resolved for this session, bound per request.
 
     Returns:
@@ -304,11 +386,31 @@ def read_brief(
         failed = ", ".join(str(n) for n in brief.pages_failed)
         header.append(f"- pages that could NOT be read: {failed}")
 
+    query = _brief_query(input_data)
+    if query:
+        excerpts = _search_excerpts(text, query)
+        if not excerpts:
+            # Never fall back to the opening on a miss: the model reads whatever
+            # it is handed as "the thing you asked for" and answers about page 1.
+            return (
+                f"{' '.join(header)}: no passage matching '{query}' was found "
+                f"anywhere in this {len(text)}-character document. Tell the "
+                "visitor it does not appear, or try different wording."
+            )
+        body = "\n\n---\n\n".join(excerpts)
+        return (
+            f"{' '.join(header)} — {len(excerpts)} passage(s) matching "
+            f"'{query}', not the whole document:\n\n{body}"
+        )
+
     body = text[:BRIEF_EXCERPT_CHARS]
     if len(text) > BRIEF_EXCERPT_CHARS:
         body += (
             f"\n\n[truncated here: this is the first {BRIEF_EXCERPT_CHARS} "
-            "characters of a longer document. Say so if you summarize it.]"
+            f"characters of {len(text)}. To read any other part, call "
+            f"{READ_BRIEF_TOOL_NAME} again with "
+            '{"upload_id": "' + brief.upload_id + '", "query": "<words to find>"}. '
+            "Say so if you summarize from this excerpt alone.]"
         )
     return f"{' '.join(header)}:\n\n{body}"
 
@@ -606,7 +708,12 @@ _READ_BRIEF_DESCRIPTION = (
     "Read what an uploaded document actually says, in its own words. Use this "
     "to answer questions ABOUT a document: what it is, what it says, who sent "
     "it, or to summarize or quote it. Input: the upload id from the attachment "
-    "list, e.g. 'a3f9c2'."
+    "list, e.g. 'a3f9c2', which returns the opening of the document. When the "
+    "visitor asks about a specific clause, section number, term, or topic, "
+    "search for it instead by passing a query: "
+    '{"upload_id": "a3f9c2", "query": "2.10"} — documents are far longer than '
+    "one excerpt, so a section you cannot see in the opening is almost always "
+    "present further in. Search before saying something is not in the document."
 )
 
 _BRIEF_TOOL_DESCRIPTION = (
