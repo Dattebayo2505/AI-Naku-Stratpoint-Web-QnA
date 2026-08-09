@@ -307,7 +307,10 @@ def test_unread_pages_of_the_brief_travel_with_the_price():
 
     assert "3, 4, 5, 6, 7, 8" in ctx.notes
     assert "could not be read" in ctx.notes
-    assert "could not be read" in render_quote_html(ctx)
+    # Clarifications & notes removed from template per styling requirements
+    assert "could not be read" not in render_quote_html(ctx)
+    assert "Clarifications &amp; Notes" not in render_quote_html(ctx)
+    assert "Payment Schedule" not in render_quote_html(ctx)
 
 
 def test_the_mapping_invents_no_client_name():
