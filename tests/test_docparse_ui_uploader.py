@@ -163,7 +163,9 @@ def _fake_streamlit(harness: Harness) -> types.ModuleType:
         def markdown(self, *a, **kw):
             return None
 
-    def dialog(title):
+    def dialog(title, *d_args, **d_kwargs):
+        harness.dialog_decorator_kwargs = d_kwargs
+
         def decorate(fn):
             def wrapper(*args, **kwargs):
                 harness.dialogs.append(title)
@@ -174,11 +176,17 @@ def _fake_streamlit(harness: Harness) -> types.ModuleType:
 
         return decorate
 
+    def fragment(func=None, **kw):
+        if func is not None:
+            return func
+        return lambda fn: fn
+
     def rerun(*a, **kw):
         raise _Rerun()
 
     st.session_state = _SessionState()
     st.dialog = dialog
+    st.fragment = fragment
     st.rerun = rerun
     st.file_uploader = lambda *a, **kw: harness.uploaded
     st.button = lambda label, **kw: label in harness.clicks
@@ -202,15 +210,22 @@ def ui(monkeypatch):
     """Import ui.app against a fake streamlit, then put sys.modules back."""
     harness = Harness()
     fake = _fake_streamlit(harness)
+    fake_components = types.ModuleType("streamlit.components")
+    fake_v1 = types.ModuleType("streamlit.components.v1")
+    fake_v1.html = lambda *a, **kw: None
+    fake_components.v1 = fake_v1
+    fake.components = fake_components
 
     evicted = {
         name: mod
         for name, mod in sys.modules.items()
-        if name == "streamlit" or name.startswith("stratpoint_rag.ui")
+        if name == "streamlit" or name.startswith("streamlit.") or name.startswith("stratpoint_rag.ui")
     }
     for name in evicted:
         del sys.modules[name]
     sys.modules["streamlit"] = fake
+    sys.modules["streamlit.components"] = fake_components
+    sys.modules["streamlit.components.v1"] = fake_v1
     try:
         app = importlib.import_module("stratpoint_rag.ui.app")
         monkeypatch.setattr(app.api_client, "upload_file", harness.upload_file)
@@ -224,7 +239,7 @@ def ui(monkeypatch):
     finally:
         for name in [
             n for n in list(sys.modules)
-            if n == "streamlit" or n.startswith("stratpoint_rag.ui")
+            if n == "streamlit" or n.startswith("streamlit.") or n.startswith("stratpoint_rag.ui")
         ]:
             del sys.modules[name]
         sys.modules.update(evicted)
@@ -238,6 +253,10 @@ def test_dropping_a_file_opens_the_confirm_dialog(ui):
 
     assert ui.run() == [DIALOG_TITLE]
     assert ui.uploads == ["brief.pdf"]
+
+
+def test_dialog_is_non_dismissible_on_outside_click(ui):
+    assert getattr(ui, "dialog_decorator_kwargs", {}).get("dismissible") is False
 
 
 def test_the_dialog_is_not_reopened_by_an_unrelated_rerun(ui):

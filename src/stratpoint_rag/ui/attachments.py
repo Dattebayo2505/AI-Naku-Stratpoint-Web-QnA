@@ -58,6 +58,10 @@ def chip_label(attachment: dict) -> str:
     parts = [attachment.get("filename", "upload"),
              f"{pages} page" + ("" if pages == 1 else "s")]
 
+    if attachment.get("transcribing"):
+        parts.append("transcribing…")
+        return " | ".join(parts)
+
     if not attachment.get("parsed", True):
         parts.append("not transcribed yet")
         return " | ".join(parts)

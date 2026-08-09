@@ -1,5 +1,7 @@
 import hashlib
 import os
+import threading
+import time
 import streamlit as st
 from stratpoint_rag.ui import state, api_client, attachments as att
 from stratpoint_rag.ui.components import chat_transcript
@@ -12,8 +14,7 @@ st.set_page_config(page_title="A.I. Naku: Stratpoint Chatbot", layout="centered"
 
 ACCEPTED_TYPES = ["pdf", "png", "jpg", "jpeg", "webp", "tiff"]
 
-
-@st.dialog("Transcribe this document?")
+@st.dialog("Transcribe this document?", dismissible=False)
 def _confirm_dialog(pending: dict):
     """Confirmation step between /upload and the expensive /upload/{id}/parse."""
     seconds = att.estimate_seconds(pending["pages"])
@@ -26,7 +27,11 @@ def _confirm_dialog(pending: dict):
     # `pending_upload` is already gone by now (the caller popped it), so neither
     # branch clears it — clearing it here is what used to re-arm the uploader.
     if left.button("Transcribe", type="primary", use_container_width=True):
-        st.session_state.confirmed_upload = pending
+        st.session_state.attachments = att.add(
+            st.session_state.attachments,
+            {**pending, "parsed": False, "transcribing": True},
+        )
+        state.start_background_parse(st.session_state.session_id, pending["upload_id"])
         st.rerun()
     if right.button("Cancel", use_container_width=True):
         api_client.delete_upload(st.session_state.session_id, pending["upload_id"])
@@ -87,24 +92,22 @@ def _render_brief_uploader():
     if pending:
         _confirm_dialog(pending)
 
-    confirmed = st.session_state.pop("confirmed_upload", None)
-    if confirmed:
-        _parse_confirmed(confirmed)
+    state.check_background_parses()
+    _render_attachment_section()
 
+
+@st.fragment(run_every=1)
+def _render_polling_attachment_chips():
+    if state.check_background_parses(join_timeout=0.0):
+        st.rerun(scope="app")
     _render_attachment_chips()
 
 
-def _parse_confirmed(meta: dict):
-    with st.spinner(f"Transcribing {meta['filename']}..."):
-        try:
-            result = api_client.parse_upload(st.session_state.session_id, meta["upload_id"])
-        except api_client.APIError as e:
-            st.error(str(e))
-            return
-
-    st.session_state.attachments = att.add(
-        st.session_state.attachments, {**meta, **result, "parsed": True}
-    )
+def _render_attachment_section():
+    if any(a.get("transcribing") for a in st.session_state.get("attachments") or []):
+        _render_polling_attachment_chips()
+    else:
+        _render_attachment_chips()
 
 
 def _render_attachment_chips():
@@ -113,12 +116,20 @@ def _render_attachment_chips():
         row.caption(att.chip_label(attachment))
         if remove_col.button("x", key=f"rm_{attachment['upload_id']}", help="Remove"):
             api_client.delete_upload(st.session_state.session_id, attachment["upload_id"])
+            state.cancel_background_parse(attachment["upload_id"])
             st.session_state.attachments = att.remove(
                 st.session_state.attachments, attachment["upload_id"]
             )
             st.rerun()
 
-        if attachment.get("pages_failed"):
+        if attachment.get("transcribing"):
+            st.caption("⏳ Transcribing in background…")
+        elif attachment.get("parse_error"):
+            st.error(
+                f"Transcription error: {attachment['parse_error']}",
+                icon=":material/error:",
+            )
+        elif attachment.get("pages_failed"):
             st.warning(
                 f"Pages {', '.join(str(p) for p in attachment['pages_failed'])} "
                 "could not be read.",
@@ -196,7 +207,9 @@ def main():
                         history=history,
                         enable_reasoning=enable_reasoning,
                         attachments=[
-                            a["upload_id"] for a in st.session_state.attachments
+                            a["upload_id"]
+                            for a in st.session_state.attachments
+                            if a.get("parsed") and not a.get("transcribing")
                         ],
                     )
                     
