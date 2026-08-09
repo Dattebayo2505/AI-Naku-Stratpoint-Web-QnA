@@ -52,7 +52,7 @@ __all__ = ["EmptyEstimate", "build_quote_context", "quote_number_for"]
 # Chevron labels share one row inside a fixed 52px bar. At six phases — the most
 # the template's colour rules cover — each bar is ~125px wide, which is ~12
 # characters per line at 12px bold, and two lines is all the bar height allows.
-_CHEVRON_LABEL_CHARS = 24
+_CHEVRON_LABEL_CHARS = 40
 
 _PHASE_PREFIX = re.compile(r"^\s*(phase\s*\d+\s*[:.\-–]\s*)", re.IGNORECASE)
 

@@ -286,8 +286,8 @@ def test_phase_dates_chain_from_the_quote_date():
 def test_the_chevron_label_drops_the_phase_prefix_the_template_re_adds():
     ctx = build_quote_context(proposal_id="abc123", estimation=_estimation(), today=TODAY)
 
-    # Truncated at a word boundary: a mid-word cut reads as a rendering bug.
-    assert ctx.milestones[0].phase_name == "Discovery & System…"
+    # Full phase title preserved without artificial truncation:
+    assert ctx.milestones[0].phase_name == "Discovery & System Architecture"
     assert ctx.milestones[1].phase_name == "Core Development"
 
 
