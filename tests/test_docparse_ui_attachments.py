@@ -117,6 +117,12 @@ def test_chip_marks_a_not_yet_parsed_upload():
     assert "not transcribed" in label.lower()
 
 
+def test_chip_marks_a_transcribing_upload():
+    label = att.chip_label(_rec(pages=12, parsed=False, transcribing=True))
+
+    assert "transcribing" in label.lower()
+
+
 def test_chip_flags_truncation():
     """A 30-page brief capped at 20 must not look like a complete parse."""
     label = att.chip_label(_rec(pages=30, pages_parsed=20, truncated=True))

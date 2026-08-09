@@ -1,8 +1,74 @@
+import threading
 import uuid
 
 import streamlit as st
 
 from stratpoint_rag.ui import api_client
+
+_BACKGROUND_PARSES: dict[str, dict] = {}
+_BACKGROUND_THREADS: dict[str, threading.Thread] = {}
+_BACKGROUND_LOCK = threading.Lock()
+
+
+def start_background_parse(session_id: str, upload_id: str) -> threading.Thread:
+    """Start transcription in a background thread so the confirm dialog dismisses immediately."""
+    def _worker():
+        try:
+            result = api_client.parse_upload(session_id, upload_id)
+            with _BACKGROUND_LOCK:
+                _BACKGROUND_PARSES[upload_id] = {"status": "done", "result": result}
+        except api_client.APIError as e:
+            with _BACKGROUND_LOCK:
+                _BACKGROUND_PARSES[upload_id] = {"status": "error", "error": str(e)}
+        except Exception as e:
+            with _BACKGROUND_LOCK:
+                _BACKGROUND_PARSES[upload_id] = {"status": "error", "error": str(e)}
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    with _BACKGROUND_LOCK:
+        _BACKGROUND_THREADS[upload_id] = thread
+    thread.start()
+    return thread
+
+
+def cancel_background_parse(upload_id: str) -> None:
+    """Remove background parse state for a deleted upload."""
+    with _BACKGROUND_LOCK:
+        _BACKGROUND_PARSES.pop(upload_id, None)
+        _BACKGROUND_THREADS.pop(upload_id, None)
+
+
+def check_background_parses(join_timeout: float = 0.05) -> bool:
+    """Check for completed background transcriptions and update session state."""
+    updated = False
+    with _BACKGROUND_LOCK:
+        for upload_id, thread in list(_BACKGROUND_THREADS.items()):
+            if thread.is_alive() and join_timeout > 0:
+                thread.join(timeout=join_timeout)
+            if not thread.is_alive():
+                _BACKGROUND_THREADS.pop(upload_id, None)
+
+        new_attachments = []
+        for attachment in st.session_state.get("attachments") or []:
+            att_copy = dict(attachment)
+            if att_copy.get("transcribing"):
+                upload_id = att_copy["upload_id"]
+                if upload_id in _BACKGROUND_PARSES:
+                    info = _BACKGROUND_PARSES.pop(upload_id)
+                    if info["status"] == "done":
+                        att_copy.update(info["result"])
+                        att_copy["parsed"] = True
+                        att_copy["transcribing"] = False
+                        updated = True
+                    elif info["status"] == "error":
+                        att_copy["parse_error"] = info["error"]
+                        att_copy["parsed"] = False
+                        att_copy["transcribing"] = False
+                        updated = True
+            new_attachments.append(att_copy)
+        if updated:
+            st.session_state.attachments = new_attachments
+    return updated
 
 
 def init_session_state():
