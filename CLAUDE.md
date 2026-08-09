@@ -126,9 +126,9 @@ artifact between them:
 
 ```
 hop 1  upload → transcribe_document(path, *, vision=None) → TranscriptionResult
-       eager, at upload, up to 20 vision calls, 25-100s, own 300s timeout
+       eager, at upload, up to 40 vision calls, 25-200s, own 300s timeout
 hop 2  chat   → extract_brief(brief_ref, *, text=None)    → ExtractedRequirements
-       lazy, inside the turn, 1 call (or 4-5 map-reduced), 3-20s, on the request thread
+       lazy, inside the turn, 1 call (or up to 8 map-reduced), 3-20s, on the request thread
 ```
 
 `render.py` is the only PyMuPDF call site (PyMuPDF is AGPL unless licensed;
@@ -259,6 +259,26 @@ the system prompt — without it the id never reaches the model and the tool is
 uncallable by construction, while the model, unaware a document exists, answers
 from the website corpus about the wrong thing. `/chat` resolves ids to
 `BriefRef`s at the API boundary; the agent never sees an unchecked id or a path.
+
+**The loop must make progress, and its fallback must not change corpus.** Two
+rules in `react.run_react`, both from one live transcript in which a 9-page
+attached RFP was answered with two stratpoint.com citations:
+
+- **A repeated `(tool, input)` is never re-executed.** The model picked the
+  right tool, then emitted a byte-identical Thought/Action turn six times; each
+  turn re-ran `read_brief` and re-appended the same 6 KB observation, so the
+  state it conditioned on never changed and neither did its output. The repeat
+  gets `_REPEAT_OBSERVATION` — "you already called this, answer now" — instead.
+  The feedback has to *differ* for the loop to move.
+- **With a brief attached the fallback answers from the brief, never from
+  `search_stratpoint`.** The old fallback was unconditional, so a loop that
+  stalled inside the visitor's own document answered from the website corpus
+  about a different subject and attached real citations to it — confidently
+  wrong, and dressed as verified. `_brief_fallback` makes one plain (non-ReAct)
+  completion over the excerpt already in the trace; the loop has just proved it
+  cannot hold the format, so re-imposing it is the wrong repair. Read the
+  excerpt out of the trace *forwards*: the last brief observation on a stalled
+  turn is the repeat nudge, which carries no document text.
 
 **Known limitation, deferred by decision: prompt injection via uploaded
 content.** A brief is attacker-controllable, hop 1 transcribes it verbatim by

@@ -116,6 +116,19 @@ STOP = ["Observation:", "PAUSE"]
 
 _REPROMPT = "Output only a valid Action or Answer line, in the required format."
 
+# Re-running a tool with the same input cannot change the answer; it only grows
+# the context. Measured: asked what an attached 9-page brief was about, the
+# model emitted a byte-identical Thought/Action turn six times running, and the
+# loop obligingly re-executed `read_brief` and re-appended the same 6 KB
+# observation each time. The state it conditioned on never changed, so neither
+# did its output — it burned every turn and fell through to the fallback. The
+# feedback has to *differ* from the last one for the loop to move.
+_REPEAT_OBSERVATION = (
+    "You already called {tool} with that exact input, and its result is above. "
+    "Do not call it again. Answer the visitor now, using what it returned, "
+    "beginning your reply with 'Answer:'."
+)
+
 _TIMEOUT = 120
 
 _LINK_LINE = re.compile(r"^- (.+?) \((https?://[^)]+)\)\s*$", re.MULTILINE)
@@ -311,6 +324,83 @@ def _finish(
     return res
 
 
+_BRIEF_FALLBACK_SYSTEM = (
+    "Answer the visitor's question using only the document excerpt below. If it "
+    "does not contain the answer, say so plainly. Never mention tools, "
+    "excerpts, or how you got this text.\n\n{excerpt}"
+)
+
+_BRIEF_FALLBACK_FAILED = (
+    "I have your document, but I wasn't able to summarize it just now. Could "
+    "you tell me which part of it you'd like me to look at?"
+)
+
+
+def _first_brief_observation(trace: list[Step]) -> str | None:
+    """The document text the loop already pulled this run, if any.
+
+    Scanned forwards, not backwards: the *last* brief observation on a stalled
+    turn is the repeat nudge, which is traced under the same tool name and
+    carries no document text at all. Only a genuine execution can precede a
+    repeat, so the first one is always the real thing.
+    """
+    for step in trace:
+        if step.type == "observation" and step.tool in (
+            READ_BRIEF_TOOL_NAME,
+            BRIEF_TOOL_NAME,
+        ):
+            return step.content
+    return None
+
+
+def _brief_fallback(
+    message: str,
+    briefs: list[BriefRef],
+    trace: list[Step],
+    chat: Any,
+    registry: dict[str, Any],
+) -> str:
+    """Answer from the attached document when the loop couldn't finish.
+
+    **The website corpus is not the fallback when a document is attached.** The
+    old code called ``search_stratpoint`` unconditionally, so a loop that stalled
+    six turns deep in the visitor's own 9-page RFP answered from stratpoint.com
+    instead — about digital advertising in general, with two portfolio pages
+    cited underneath. Confidently wrong and dressed as verified: the citations
+    are real, they are just sources for a question nobody asked.
+
+    One plain completion, no ReAct framing: the loop has already demonstrated it
+    cannot hold the format, and all that is left to do is summarize text we hold.
+    """
+    excerpt = _first_brief_observation(trace)
+    if excerpt is None:
+        read = registry.get(READ_BRIEF_TOOL_NAME)
+        if read is None:
+            return _BRIEF_FALLBACK_FAILED
+        try:
+            excerpt = str(read(briefs[0].upload_id))
+        except Exception as ex:
+            log.warning("brief fallback could not read the document: %s", ex)
+            return _BRIEF_FALLBACK_FAILED
+
+    try:
+        text = chat(
+            [
+                {
+                    "role": "system",
+                    "content": _BRIEF_FALLBACK_SYSTEM.format(excerpt=excerpt),
+                },
+                {"role": "user", "content": message},
+            ],
+            [],
+        )
+    except Exception as ex:
+        log.warning("brief fallback summarization failed: %s", ex)
+        return _BRIEF_FALLBACK_FAILED
+
+    return text.strip() or _BRIEF_FALLBACK_FAILED
+
+
 def _fallback(
     message: str,
     reason: str,
@@ -321,9 +411,23 @@ def _fallback(
     enable_reasoning: bool,
     tracer: AgentTracer,
     registry: dict[str, Any],
+    briefs: list[BriefRef] | None = None,
+    chat: Any = None,
 ) -> AgentResult:
-    """Answer via search_stratpoint directly when the loop can't finish."""
+    """Answer without the loop when it can't finish.
+
+    Which corpus is *not* a detail: with a document attached the answer comes
+    from that document, and only otherwise from the website.
+    """
     trace.append(Step(type="fallback", content=reason))
+
+    if briefs:
+        text = _brief_fallback(message, briefs, trace, chat, registry)
+        trace.append(Step(type="answer", content=text))
+        return _finish(
+            text, citations, resources, trace, thoughts, enable_reasoning, tracer
+        )
+
     text = registry["search_stratpoint"](message)
     citations.extend(_parse_link_lines(text))
     trace.append(Step(type="observation", tool="search_stratpoint", content=text))
@@ -419,6 +523,8 @@ def run_react(
         resources: list[Link] = []
         thoughts: list[str] = []
         reprompted = False
+        # (tool, input) already run this turn — see _REPEAT_OBSERVATION.
+        executed: set[tuple[str, str]] = set()
 
         for _ in range(MAX_TURNS):
             text = chat(messages, STOP)
@@ -451,7 +557,10 @@ def run_react(
                         f"Available: {', '.join(registry)}."
                     )
                     tracer.on_error(step.tool or "unknown", observation)
+                elif (step.tool, step.tool_input or "") in executed:
+                    observation = _REPEAT_OBSERVATION.format(tool=step.tool)
                 else:
+                    executed.add((step.tool, step.tool_input or ""))
                     observation = _execute_tool_with_retry(
                         step.tool, fn, step.tool_input or "", tracer
                     )
@@ -476,6 +585,8 @@ def run_react(
                     enable_reasoning,
                     tracer,
                     registry,
+                    briefs,
+                    chat,
                 )
             reprompted = True
             messages.append({"role": "user", "content": _REPROMPT})
@@ -490,6 +601,8 @@ def run_react(
             enable_reasoning,
             tracer,
             registry,
+            briefs,
+            chat,
         )
     finally:
         end_capture()
