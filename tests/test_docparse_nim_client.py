@@ -172,17 +172,27 @@ def test_sends_no_frequency_penalty(client):
 @respx.mock
 def test_uses_the_vision_timeout_not_the_chat_one(client):
     """Observed live: under rate limiting NVIDIA throttles by DELAYING rather
-    than returning 429, so tenacity never fires — one page took 173s against a
-    1.5s baseline. At LLM_TIMEOUT (300s) a 20-page brief could block for well
-    over an hour. A bounded per-page ceiling turns that hang into a recorded
-    failed page, which is the degradation the rest of the design already
-    assumes."""
+    than returning 429, so tenacity never fires. A bounded per-page ceiling
+    turns that hang into a recorded failed page, which is the degradation the
+    rest of the design already assumes. Endpoint behaviour, not model
+    behaviour — it survived the switch to nemotron."""
     route = respx.post(URL).mock(return_value=_ok())
 
     client.describe(JPEG, "prompt")
 
     assert route.calls.last.request.extensions["timeout"]["read"] == config.VISION_TIMEOUT
     assert config.VISION_TIMEOUT < config.llm_timeout()
+
+
+def test_the_vision_ceiling_is_sized_for_nemotron():
+    """3.5-19s per page at 1120px across six runs, so 45s is ~2.4x the slowest
+    page observed — wide enough not to clip a merely slow one, tight enough that
+    a wholly-stalled 40-page scan fails in 450s rather than 900s. The ceiling
+    exists at all because the endpoint throttles by DELAYING rather than
+    returning 429, so tenacity never fires; that is endpoint behaviour and did
+    not change with the model. A 4-image probe call stalled past 300s, so it
+    still fires."""
+    assert config.VISION_TIMEOUT == 45
 
 
 @respx.mock

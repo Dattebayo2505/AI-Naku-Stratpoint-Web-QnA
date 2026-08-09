@@ -66,16 +66,19 @@ MAX_TOKENS = 2048
 
 # Per-page ceiling on one vision call, deliberately far below LLM_TIMEOUT (300s).
 #
-# A page normally returns in ~1.5-5s. But under rate limiting this endpoint
-# throttles by DELAYING rather than returning 429 — one measured page took 173s
-# against a 1.5s baseline, and tenacity never fired because the response was a
-# perfectly good 200 that simply arrived late. At 300s a 20-page brief could
-# block for the better part of an hour, long past any client timeout.
+# The reason for having a ceiling is an ENDPOINT behaviour and did not change
+# with the model: under rate limiting NVIDIA throttles by DELAYING rather than
+# returning 429, so tenacity never fires — the response is a perfectly good 200
+# that simply arrives late. A 4-image probe call was measured stalling past
+# 300s. At LLM_TIMEOUT a 40-page scan could block for the better part of an
+# hour, long past any client timeout.
 #
-# 90s is ~4.5x the documented p95 (20s), so it does not clip a merely slow page,
-# but it converts an indefinite stall into one recorded entry in pages_failed —
-# the same soft degradation the rest of the page loop already assumes.
-VISION_TIMEOUT = 90
+# 45s is sized for nemotron: pages return in 3.5-19s at 1120px across six runs
+# of a 10-page scan, so this is ~2.4x the slowest page observed and does not
+# clip a merely slow one. It converts an indefinite stall into one recorded
+# entry in pages_failed — the soft degradation the rest of the page loop
+# already assumes.
+VISION_TIMEOUT = 45
 
 # Hop-2 reply ceiling. An extraction over a 20-page RFP is a long JSON object —
 # a dozen features, a dozen constraints — and truncation here does not look like
@@ -143,10 +146,10 @@ def max_pages() -> int:
     document, where it is exactly the case worth covering.
 
     Sizing at the ceiling: 40 pages / concurrency 4 x ~5s is ~50s typical, and
-    the worst case (every page stalling into VISION_TIMEOUT) is 10 x 90s = 900s,
+    the worst case (every page stalling into VISION_TIMEOUT) is 10 x 45s = 450s,
     past the 300s parse timeout. A wholly-stalled parse was already going to
-    fail at 20 pages (450s); raising the cap widens the band in which a *partly*
-    slow scan times out client-side. Lower DOCPARSE_MAX_PAGES if that shows up.
+    fail at 20 pages; raising the cap widens the band in which a *partly* slow
+    scan times out client-side. Lower DOCPARSE_MAX_PAGES if that shows up.
     """
     return _int_env("DOCPARSE_MAX_PAGES", 40)
 

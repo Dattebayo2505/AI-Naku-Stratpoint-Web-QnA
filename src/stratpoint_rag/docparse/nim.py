@@ -160,7 +160,7 @@ class NimTextClient(_NimClient):
     Runs on ``LLM_MODEL``, the same model as the rest of the chat path, and on
     ``LLM_TIMEOUT`` rather than ``VISION_TIMEOUT``: hop 2 issues at most five
     ordinary text calls on the request thread, not twenty image calls on a pool,
-    so the throttle-by-delaying failure mode that forced the 90s vision ceiling
+    so the throttle-by-delaying failure mode that forced the 45s vision ceiling
     does not apply here.
 
     ``response_format=json_object`` is sent because the reply is machine-parsed
