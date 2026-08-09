@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Project Quotation &amp; Roadmap - {{ quote_number }}</title>
+  <title>Project Quotation &amp; Roadmap - NV-2026-7731 (DRAFT)</title>
   <style>
     /* ==========================================================================
        PRINT SETUP & CORE RESET
@@ -39,6 +39,7 @@
       box-shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
       margin-bottom: 28px;
       position: relative;
+      overflow: hidden;
     }
 
     /* Page-break control */
@@ -74,6 +75,56 @@
       }
     }
 
+    /* Watermark for DRAFT */
+    .draft-watermark {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-32deg);
+      font-size: 120px;
+      font-weight: 900;
+      color: rgba(15, 23, 42, 0.035);
+      text-transform: uppercase;
+      letter-spacing: 16px;
+      pointer-events: none;
+      z-index: 1;
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    /* Top Draft Notice Bar */
+    .draft-notice-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(90deg, #fffbeb 0%, #fef3c7 100%);
+      border: 1px solid #fde68a;
+      border-left: 4px solid #f59e0b;
+      padding: 8px 14px;
+      border-radius: 6px;
+      margin-bottom: 18px;
+      font-size: 11px;
+      color: #92400e;
+      position: relative;
+      z-index: 2;
+    }
+    .draft-notice-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 500;
+    }
+    .draft-pill-tag {
+      background-color: #f59e0b;
+      color: #ffffff;
+      font-size: 9.5px;
+      font-weight: 800;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      border-radius: 3px;
+    }
+
     /* ==========================================================================
        HIGH-ENERGY DARK BANNER HEADER
        ========================================================================== */
@@ -87,6 +138,8 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      position: relative;
+      z-index: 2;
     }
     .header-banner.page-2-header {
       padding: 14px 20px;
@@ -145,20 +198,21 @@
     .quote-type-badge {
       display: inline-block;
       padding: 3px 10px;
-      background-color: rgba(2, 132, 199, 0.2);
-      color: #38bdf8;
-      border: 1px solid #0284c7;
+      background-color: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+      border: 1px solid #f59e0b;
       font-size: 10px;
-      font-weight: 700;
+      font-weight: 800;
       letter-spacing: 0.8px;
       text-transform: uppercase;
       border-radius: 4px;
       margin-bottom: 4px;
     }
     .quote-no {
-      font-size: 20px;
+      font-size: 19px;
       font-weight: 800;
       color: #ffffff;
+      letter-spacing: -0.3px;
     }
     .quote-no-sm {
       font-size: 14px;
@@ -178,6 +232,8 @@
       display: flex;
       gap: 16px;
       margin-bottom: 20px;
+      position: relative;
+      z-index: 2;
     }
     .meta-card {
       flex: 1;
@@ -213,6 +269,8 @@
       border-radius: 6px;
       padding: 12px 14px;
       margin-bottom: 22px;
+      position: relative;
+      z-index: 2;
     }
     .project-label {
       font-size: 10px;
@@ -261,6 +319,8 @@
       width: 100%;
       border-collapse: collapse;
       margin-bottom: 18px;
+      position: relative;
+      z-index: 2;
     }
     .quote-table th {
       background-color: #0f172a;
@@ -302,6 +362,8 @@
       display: flex;
       justify-content: flex-end;
       margin-bottom: 20px;
+      position: relative;
+      z-index: 2;
     }
     .summary-box {
       width: 290px;
@@ -338,6 +400,8 @@
       border-top: 1px dashed #cbd5e1;
       font-size: 11px;
       color: #64748b;
+      position: relative;
+      z-index: 2;
     }
 
     /* ==========================================================================
@@ -346,6 +410,8 @@
     .chevron-timeline-section {
       margin-top: 5px;
       margin-bottom: 24px;
+      position: relative;
+      z-index: 2;
     }
     
     /* Single Row Ribbon Layout */
@@ -476,6 +542,8 @@
       margin-top: 20px;
       padding-top: 14px;
       border-top: 1px solid #e2e8f0;
+      position: relative;
+      z-index: 2;
     }
     .footer-col { flex: 1; }
     .f-title {
@@ -495,6 +563,8 @@
       margin-top: 20px;
       font-size: 10px;
       color: #94a3b8;
+      position: relative;
+      z-index: 2;
     }
   </style>
 </head>
@@ -507,25 +577,33 @@
        ========================================================================== -->
   <div class="page-sheet page-1">
 
+    <!-- Background Watermark -->
+    <div class="draft-watermark">DRAFT</div>
+
+    <!-- Draft Notice Bar -->
+    <div class="draft-notice-bar">
+      <div class="draft-notice-left">
+        <span class="draft-pill-tag">DRAFT</span>
+        <span>Preliminary Scoping Proposal &bull; For Internal &amp; Client Review Only</span>
+      </div>
+      <div>Subject to Final SOW Sign-off</div>
+    </div>
+
     <!-- Header Banner -->
     <header class="header-banner">
       <div class="brand-group">
-        {% if logo_url %}
-          <img src="{{ logo_url }}" alt="{{ company_name }}" class="company-logo-img" style="max-height: 42px;">
-        {% else %}
-          <div class="svg-icon-logo">
-            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-          </div>
-        {% endif %}
+        <div class="svg-icon-logo">
+          <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
         <div>
-          <div class="company-title">{{ company_name }}</div>
-          {% if company_subtitle %}<div class="company-sub">{{ company_subtitle }}</div>{% endif %}
+          <div class="company-title">Nova Cloud Systems</div>
+          <div class="company-sub">Cloud Architecture &amp; AI Telemetry Engineering</div>
         </div>
       </div>
       <div class="quote-meta-box">
-        <div class="quote-type-badge">Project Proposal</div>
-        <div class="quote-no">{{ quote_number }}</div>
-        <div class="quote-dates">Date: {{ quote_date }} &bull; Valid: {{ valid_until }}</div>
+        <div class="quote-type-badge">DRAFT PROPOSAL</div>
+        <div class="quote-no">NV-2026-7731-DRAFT</div>
+        <div class="quote-dates">Date: August 6, 2026 &bull; Valid: September 10, 2026</div>
       </div>
     </header>
 
@@ -533,32 +611,30 @@
     <section class="meta-cards-grid">
       <div class="meta-card">
         <div class="meta-label">Client Details</div>
-        <div class="meta-name">{{ client_name }}</div>
+        <div class="meta-name">David Ross</div>
         <div class="meta-body">
-          {% if client_company %}<strong>{{ client_company }}</strong><br>{% endif %}
-          {% if client_address %}{{ client_address }}<br>{% endif %}
-          {% if client_email %}Email: {{ client_email }}{% endif %}{% if client_phone %} &bull; Tel: {{ client_phone }}{% endif %}
+          <strong>Hyperion Logistics Global</strong><br>
+          1200 Supply Chain Way, Atlanta, GA 30301<br>
+          Email: d.ross@hyperionlogistics.com &bull; Tel: +1 (404) 555-0199
         </div>
       </div>
       <div class="meta-card">
         <div class="meta-label">Provider Contact</div>
-        <div class="meta-name">{{ company_name }}</div>
+        <div class="meta-name">Nova Cloud Systems</div>
         <div class="meta-body">
-          {% if company_address %}{{ company_address }}<br>{% endif %}
-          {% if company_email %}Email: {{ company_email }}{% endif %}{% if company_phone %} &bull; Tel: {{ company_phone }}{% endif %}<br>
-          {% if company_website %}Web: {{ company_website }}{% endif %}
+          700 Tech Plaza, Suite 900, Austin, TX 78701<br>
+          Email: proposals@novacloud.io &bull; Tel: +1 (512) 555-0133<br>
+          Web: www.novacloud.io
         </div>
       </div>
     </section>
 
     <!-- Project Scope Card -->
-    {% if project_title %}
     <section class="project-card">
       <div class="project-label">Scope of Work</div>
-      <div class="project-name">{{ project_title }}</div>
-      {% if project_description %}<div class="project-desc">{{ project_description }}</div>{% endif %}
+      <div class="project-name">AI-Powered Fleet Dispatch &amp; IoT Tracking Platform</div>
+      <div class="project-desc">Next-generation autonomous route optimization engine, real-time IoT GPS telemetry pipeline, and driver mobile application suite.</div>
     </section>
-    {% endif %}
 
     <!-- Quotation Table -->
     <section>
@@ -573,17 +649,51 @@
           </tr>
         </thead>
         <tbody>
-          {% for item in line_items %}
           <tr>
             <td>
-              <div class="item-head">{{ item.item_name }}</div>
-              {% if item.description %}<div class="item-sub">{{ item.description }}</div>{% endif %}
+              <div class="item-head">IoT Telemetry Architecture &amp; Cloud Ingestion</div>
+              <div class="item-sub">High-throughput MQTT broker, AWS Kinesis streaming pipeline, and time-series DB</div>
             </td>
-            <td class="text-center">{{ item.quantity }}</td>
-            <td class="text-right">{{ currency_symbol }}{{ item.formatted_unit_price if item.formatted_unit_price is defined else item.unit_price }}</td>
-            <td class="text-right item-head">{{ currency_symbol }}{{ item.total }}</td>
+            <td class="text-center">1</td>
+            <td class="text-right">$22,500.00</td>
+            <td class="text-right item-head">$22,500.00</td>
           </tr>
-          {% endfor %}
+          <tr>
+            <td>
+              <div class="item-head">AI Route Optimization &amp; Dispatch Engine</div>
+              <div class="item-sub">Machine learning route solver, live traffic integration, and automated dispatch matrix</div>
+            </td>
+            <td class="text-center">1</td>
+            <td class="text-right">$34,000.00</td>
+            <td class="text-right item-head">$34,000.00</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="item-head">Dispatcher Command Console (Web App)</div>
+              <div class="item-sub">React-based real-time fleet map, driver status dashboard, and delay alerts</div>
+            </td>
+            <td class="text-center">1</td>
+            <td class="text-right">$26,000.00</td>
+            <td class="text-right item-head">$26,000.00</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="item-head">Driver Telematics App (Android &amp; iOS)</div>
+              <div class="item-sub">Cross-platform mobile app for proof of delivery, turn-by-turn routing, &amp; fuel tracking</div>
+            </td>
+            <td class="text-center">1</td>
+            <td class="text-right">$21,500.00</td>
+            <td class="text-right item-head">$21,500.00</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="item-head">Security Audit &amp; Field Deployment</div>
+              <div class="item-sub">End-to-end security penetration testing, hardware gateway sync, &amp; staff training</div>
+            </td>
+            <td class="text-center">1</td>
+            <td class="text-right">$11,000.00</td>
+            <td class="text-right item-head">$11,000.00</td>
+          </tr>
         </tbody>
       </table>
 
@@ -592,17 +702,15 @@
         <div class="summary-box">
           <div class="summary-row">
             <span>Subtotal:</span>
-            <span><strong>{{ currency_symbol }}{{ subtotal }}</strong></span>
+            <span><strong>$115,000.00</strong></span>
           </div>
-          {% if tax_amount %}
           <div class="summary-row">
-            <span>Sales Tax {% if tax_rate %}({{ tax_rate }}){% endif %}:</span>
-            <span>{{ currency_symbol }}{{ tax_amount }}</span>
+            <span>Sales Tax (8.25%):</span>
+            <span>$9,487.50</span>
           </div>
-          {% endif %}
           <div class="summary-row total-row">
             <span>Grand Total:</span>
-            <span class="val">{{ currency_symbol }}{{ grand_total }}</span>
+            <span class="val">$124,487.50</span>
           </div>
         </div>
       </div>
@@ -610,7 +718,7 @@
 
     <!-- Page 1 Navigation Footer -->
     <div class="page-footer-nav">
-      <span>{{ company_name }} &bull; Proposal ID {{ quote_number }}</span>
+      <span>Nova Cloud Systems &bull; Proposal ID NV-2026-7731-DRAFT</span>
       <span>Page 1 of 2 &bull; Continued on Page 2 &rarr;</span>
     </div>
 
@@ -624,24 +732,23 @@
        ========================================================================== -->
   <div class="page-sheet page-2">
 
+    <!-- Background Watermark -->
+    <div class="draft-watermark">DRAFT</div>
+
     <!-- Secondary Running Header -->
     <header class="header-banner page-2-header">
       <div class="brand-group">
-        {% if logo_url %}
-          <img src="{{ logo_url }}" alt="{{ company_name }}" class="company-logo-img" style="max-height: 34px;">
-        {% else %}
-          <div class="svg-icon-logo svg-icon-logo-sm">
-            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-          </div>
-        {% endif %}
+        <div class="svg-icon-logo svg-icon-logo-sm">
+          <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
         <div>
-          <div class="company-title-sm">{{ company_name }}</div>
+          <div class="company-title-sm">Nova Cloud Systems</div>
           <div class="company-sub">Project Delivery Roadmap &amp; Execution Governance</div>
         </div>
       </div>
       <div class="quote-meta-box">
-        <div class="quote-type-badge">Page 2 of 2</div>
-        <div class="quote-no-sm">{{ quote_number }}</div>
+        <div class="quote-type-badge">DRAFT &bull; Page 2 of 2</div>
+        <div class="quote-no-sm">NV-2026-7731-DRAFT</div>
       </div>
     </header>
 
@@ -650,53 +757,135 @@
       <div class="section-title">Execution Phases &amp; Chevron Roadmap</div>
 
       <div class="chevron-ribbon-container">
-        {% for milestone in milestones %}
         <div class="chevron-item">
           <div class="icon-badge">
             <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
           </div>
           <div class="chevron-bar">
-            P{{ milestone.phase_number }}: {{ milestone.phase_name }}
+            P01: Discovery
           </div>
         </div>
-        {% endfor %}
+        <div class="chevron-item">
+          <div class="icon-badge">
+            <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+          </div>
+          <div class="chevron-bar">
+            P02: UI/UX Design
+          </div>
+        </div>
+        <div class="chevron-item">
+          <div class="icon-badge">
+            <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+          </div>
+          <div class="chevron-bar">
+            P03: Telemetry Core
+          </div>
+        </div>
+        <div class="chevron-item">
+          <div class="icon-badge">
+            <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+          </div>
+          <div class="chevron-bar">
+            P04: AI &amp; Mobile
+          </div>
+        </div>
+        <div class="chevron-item">
+          <div class="icon-badge">
+            <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+          </div>
+          <div class="chevron-bar">
+            P05: Field QA
+          </div>
+        </div>
+        <div class="chevron-item">
+          <div class="icon-badge">
+            <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+          </div>
+          <div class="chevron-bar">
+            P06: Deployment
+          </div>
+        </div>
       </div>
 
       <!-- Detailed Milestone Descriptions -->
       <div class="milestone-grid-2col">
-        {% for milestone in milestones %}
         <div class="m-card">
           <div class="m-top">
-            <span>Phase {{ milestone.phase_number }}: {{ milestone.title }}</span>
-            <span>{{ milestone.duration }}</span>
+            <span>Phase 01: Architecture &amp; IoT Specs</span>
+            <span>2 Weeks</span>
           </div>
           <div class="m-desc">
-            {{ milestone.description }}<br>
-            <strong>Deliverable:</strong> {{ milestone.deliverable }} {% if milestone.date_range %}({{ milestone.date_range }}){% endif %}
+            Fleet protocol analysis, cloud architecture spec, and data schema design.<br>
+            <strong>Deliverable:</strong> Approved Technical SRS (Sept 1 - Sept 14)
           </div>
         </div>
-        {% endfor %}
+        <div class="m-card">
+          <div class="m-top">
+            <span>Phase 02: Dispatch &amp; Driver UX</span>
+            <span>3 Weeks</span>
+          </div>
+          <div class="m-desc">
+            Command console wireframes, map UI design system, driver workflow prototype.<br>
+            <strong>Deliverable:</strong> Figma Design System (Sept 15 - Oct 5)
+          </div>
+        </div>
+        <div class="m-card">
+          <div class="m-top">
+            <span>Phase 03: MQTT Stream &amp; Data DB</span>
+            <span>4 Weeks</span>
+          </div>
+          <div class="m-desc">
+            High-throughput IoT data ingestion pipeline, time-series telemetry storage.<br>
+            <strong>Deliverable:</strong> Telemetry API Pipeline (Oct 6 - Nov 2)
+          </div>
+        </div>
+        <div class="m-card">
+          <div class="m-top">
+            <span>Phase 04: Route Engine &amp; Apps</span>
+            <span>4 Weeks</span>
+          </div>
+          <div class="m-desc">
+            AI dispatch optimization solver, driver iOS &amp; Android application builds.<br>
+            <strong>Deliverable:</strong> AI Solver &amp; Driver Apps (Nov 3 - Nov 30)
+          </div>
+        </div>
+        <div class="m-card">
+          <div class="m-top">
+            <span>Phase 05: Stress Test &amp; Pen Audit</span>
+            <span>2 Weeks</span>
+          </div>
+          <div class="m-desc">
+            Hardware field trial, fleet telemetry load testing, and penetration audit.<br>
+            <strong>Deliverable:</strong> Field Trial Pass Report (Dec 1 - Dec 14)
+          </div>
+        </div>
+        <div class="m-card">
+          <div class="m-top">
+            <span>Phase 06: Production Fleet Release</span>
+            <span>1 Week</span>
+          </div>
+          <div class="m-desc">
+            AWS cloud infrastructure go-live, gateway provisioning, team training.<br>
+            <strong>Deliverable:</strong> Live Fleet Engine (Dec 15 - Dec 22)
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- Footer Terms -->
     <footer class="footer-grid">
-      {% if notes %}
       <div class="footer-col">
         <div class="f-title">Clarifications &amp; Notes</div>
-        <div class="f-text">{{ notes }}</div>
+        <div class="f-text">All software components include 12 months of cloud deployment support and automated SLA monitoring.</div>
       </div>
-      {% endif %}
-      {% if payment_terms %}
       <div class="footer-col">
         <div class="f-title">Payment Schedule</div>
-        <div class="f-text">{{ payment_terms }}</div>
+        <div class="f-text">35% upon project launch, 35% after Milestone 3 (Telemetry Core), 30% upon final production deployment.</div>
       </div>
-      {% endif %}
     </footer>
 
     <div class="footer-bottom">
-      Issued by {{ company_name }} &bull; Proposal ID {{ quote_number }} &bull; Page 2 of 2
+      Issued by Nova Cloud Systems &bull; Proposal ID NV-2026-7731-DRAFT &bull; Page 2 of 2 &bull; Confidential &amp; Proprietary
     </div>
 
   </div>
