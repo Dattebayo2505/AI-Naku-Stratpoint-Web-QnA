@@ -72,6 +72,9 @@ class ExtractedRequirements(BaseModel):
         "medium", description="Overall complexity assessment."
     )
 
+    currency_symbol: str = Field("$", description="Detected currency symbol ('$' or '₱').")
+    currency_code: str = Field("USD", description="Detected currency code ('USD' or 'PHP').")
+
     # ── provenance: copied from hop 1, never model-supplied ──────────────
     source_markdown_path: str | None = Field(
         None, description="Path to the hop-1 transcription this was read from."

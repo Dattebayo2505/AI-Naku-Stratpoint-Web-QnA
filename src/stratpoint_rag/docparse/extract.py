@@ -72,7 +72,36 @@ from stratpoint_rag.docparse.schema import (
 
 log = logging.getLogger(__name__)
 
-__all__ = ["clear_cache", "extract_brief", "extract_requirements"]
+__all__ = ["clear_cache", "detect_currency", "extract_brief", "extract_requirements"]
+
+_PHP_PATTERN = re.compile(
+    r"(₱|\b(PHP|Php|PhP|pesos?|philippine pesos?|philippine peso)\b)",
+    re.IGNORECASE,
+)
+_USD_PATTERN = re.compile(
+    r"(\$|\b(USD|dollars?|us dollars?|us dollar)\b)",
+    re.IGNORECASE,
+)
+
+
+def detect_currency(text: str | None) -> tuple[str, str]:
+    """Detect whether source document text specifies PH Pesos (₱/PHP) or US Dollars ($/USD).
+
+    Returns:
+        tuple[str, str]: (currency_symbol, currency_code), e.g. ("₱", "PHP") or ("$", "USD").
+    """
+    if not text:
+        return ("$", "USD")
+
+    php_matches = len(_PHP_PATTERN.findall(text))
+    usd_matches = len(_USD_PATTERN.findall(text))
+
+    if php_matches > 0:
+        return ("₱", "PHP")
+    elif usd_matches > 0:
+        return ("$", "USD")
+
+    return ("$", "USD")
 
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
@@ -355,8 +384,11 @@ def extract_requirements(
                 notes.append("no section of the brief could be extracted")
 
     merged = _merge(payloads, notes)
+    symbol, code = detect_currency(markdown)
     return ExtractedRequirements(
         **merged,
+        currency_symbol=symbol,
+        currency_code=code,
         source_markdown_path=source_markdown_path,
         pages_total=int(provenance.get("pages_total") or 0),
         pages_parsed=int(provenance.get("pages_parsed") or 0),

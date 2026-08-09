@@ -30,9 +30,12 @@ from __future__ import annotations
 import re
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from stratpoint_rag.agent.contracts import EstimationResult, ExtractedRequirements
+from stratpoint_rag.currency_calculator import convert_currency
+from stratpoint_rag.docparse.extract import detect_currency
 from stratpoint_rag.pdf_gen import config
 from stratpoint_rag.pdf_gen.assets import data_uri
 from stratpoint_rag.pdf_gen.schema import (
@@ -94,7 +97,10 @@ def _as_requirements(
     return None
 
 
-def _line_items(estimation: EstimationResult | None) -> list[LineItem]:
+def _line_items(
+    estimation: EstimationResult | None,
+    target_currency: str = "USD",
+) -> list[LineItem]:
     """One row per role. Hours x rate, so the table's arithmetic is visible.
 
     ``RoleBreakdownItem`` also carries ``total_cost``; it is deliberately not
@@ -106,32 +112,43 @@ def _line_items(estimation: EstimationResult | None) -> list[LineItem]:
     if estimation is None:
         return []
 
-    # No sub-line describing the hours and rate: the Qty and Unit Price columns
-    # already print exactly that, and a prose restatement is a second place for
-    # the same number to be rounded differently. It was — "80 hours at 100.00"
-    # sat directly beside a Qty column reading "79.5 hrs" on the first live run.
-    items = [
-        LineItem(
-            item_name=role.role,
-            quantity=money(role.estimated_hours),
-            unit="hrs",
-            unit_price=money(role.hourly_rate),
+    items: list[LineItem] = []
+    for role in estimation.role_breakdown:
+        if role.estimated_hours <= 0 or role.hourly_rate <= 0:
+            continue
+
+        rate = Decimal(str(role.hourly_rate))
+        if target_currency == "PHP" and role.hourly_rate < 500:
+            rate = convert_currency(role.hourly_rate, "USD", "PHP")
+        elif target_currency == "USD" and role.hourly_rate >= 500:
+            rate = convert_currency(role.hourly_rate, "PHP", "USD")
+
+        items.append(
+            LineItem(
+                item_name=role.role,
+                quantity=money(role.estimated_hours),
+                unit="hrs",
+                unit_price=money(rate),
+            )
         )
-        for role in estimation.role_breakdown
-        if role.estimated_hours > 0 and role.hourly_rate > 0
-    ]
     if items:
         return items
 
     # No role breakdown, but a real total: quote it as one fixed-scope line
     # rather than dropping the number the estimator did produce.
     if estimation.total_cost_usd > 0:
+        total_val = Decimal(str(estimation.total_cost_usd))
+        if target_currency == "PHP" and estimation.total_cost_usd < 5000:
+            total_val = convert_currency(estimation.total_cost_usd, "USD", "PHP")
+        elif target_currency == "USD" and estimation.total_cost_usd >= 100000 and "PHP" in estimation.summary.upper():
+            total_val = convert_currency(estimation.total_cost_usd, "PHP", "USD")
+
         return [
             LineItem(
                 item_name="Project delivery — fixed scope",
                 description=estimation.summary[:400] or None,
                 quantity=Decimal("1"),
-                unit_price=money(estimation.total_cost_usd),
+                unit_price=money(total_val),
             )
         ]
     return []
@@ -231,6 +248,51 @@ def _notes(requirements: ExtractedRequirements | None) -> str | None:
     return " ".join(parts)[:1200] or None
 
 
+def _detect_quote_currency(
+    req: ExtractedRequirements | None,
+    est: EstimationResult | None,
+    raw_req: dict[str, Any] | None = None,
+    raw_est: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    if req is not None and getattr(req, "currency_symbol", None) and req.currency_symbol != "$":
+        return (req.currency_symbol, req.currency_code)
+
+    if req is not None and req.source_markdown_path:
+        try:
+            path = Path(req.source_markdown_path)
+            if path.exists() and path.is_file():
+                source_text = path.read_text(encoding="utf-8")
+                sym, code = detect_currency(source_text)
+                if sym != "$" or code != "USD":
+                    return (sym, code)
+        except Exception:
+            pass
+
+    # Check requirements text first
+    req_samples: list[str] = []
+    if req:
+        req_samples.extend(req.constraints)
+        req_samples.extend(req.extraction_notes)
+        req_samples.extend(req.features)
+        req_samples.extend(req.tech_stack)
+    if raw_req and isinstance(raw_req, dict):
+        req_samples.append(str(raw_req))
+
+    req_text = " ".join(req_samples)
+    req_sym, req_code = detect_currency(req_text)
+    if req_sym != "$" or req_code != "USD":
+        return (req_sym, req_code)
+
+    # Fallback to estimation text
+    est_samples: list[str] = []
+    if est:
+        est_samples.append(est.summary)
+    if raw_est and isinstance(raw_est, dict):
+        est_samples.append(str(raw_est))
+
+    return detect_currency(" ".join(req_samples + est_samples))
+
+
 def build_quote_context(
     *,
     proposal_id: str,
@@ -256,7 +318,11 @@ def build_quote_context(
     est = _as_estimation(estimation)
     req = _as_requirements(requirements)
 
-    items = _line_items(est)
+    raw_req_dict = requirements if isinstance(requirements, dict) else None
+    raw_est_dict = estimation if isinstance(estimation, dict) else None
+    currency_symbol, currency_code = _detect_quote_currency(req, est, raw_req_dict, raw_est_dict)
+
+    items = _line_items(est, target_currency=currency_code)
     if not items:
         raise EmptyEstimate(
             "no priced work to quote: run estimate_cost_and_timeline first"
@@ -266,6 +332,8 @@ def build_quote_context(
         quote_number=quote_number_for(proposal_id, today),
         quote_date=today,
         valid_until=today + timedelta(days=config.quote_valid_days()),
+        currency_symbol=currency_symbol,
+        currency_code=currency_code,
         company_name=config.company_name(),
         company_subtitle="Digital Engineering & Cloud Transformation",
         company_email=config.company_email(),

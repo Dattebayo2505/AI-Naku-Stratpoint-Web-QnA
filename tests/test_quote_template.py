@@ -354,3 +354,32 @@ def test_the_quote_number_is_derived_not_counted():
 def test_a_milestone_label_too_long_for_the_chevron_is_rejected():
     with pytest.raises(ValidationError):
         MilestoneItem(phase_number=1, phase_name="x" * 41, title="t")
+
+
+def test_currency_detection_usd_and_php():
+    from stratpoint_rag.docparse.extract import detect_currency
+
+    assert detect_currency("Budget is 500,000 USD") == ("$", "USD")
+    assert detect_currency("Target price: $10,000") == ("$", "USD")
+    assert detect_currency("Target budget: ₱250,000 PHP") == ("₱", "PHP")
+    assert detect_currency("Project budget is in pesos (PhP 100,000)") == ("₱", "PHP")
+    assert detect_currency("") == ("$", "USD")
+
+
+def test_quote_context_currency_pesos():
+    requirements = ExtractedRequirements(
+        features=["Mobile App"],
+        constraints=["Budget: 500,000 PHP"],
+    )
+    ctx = build_quote_context(
+        proposal_id="abc123",
+        estimation=_estimation(),
+        requirements=requirements,
+        today=TODAY,
+    )
+
+    assert ctx.currency_symbol == "₱"
+    assert ctx.currency_code == "PHP"
+    html = render_quote_html(ctx)
+    assert "₱" in html
+    assert "PHP" in html
