@@ -149,22 +149,7 @@ def main():
     with st.sidebar:
         st.title("Session")
 
-        # API Connection Status
-        is_connected = api_client.health_check()
-        if is_connected:
-            st.success(f"API: Connected\n\n({api_client.API_BASE_URL})")
-        else:
-            st.error(f"API: Unreachable\n\n({api_client.API_BASE_URL})")
-
-        st.markdown("---")
-        _render_brief_uploader()
-        st.markdown("---")
-
         st.text_input("Session ID (Read-only)", value=st.session_state.session_id, disabled=True)
-
-        if st.button("Reset conversation"):
-            state.reset_conversation()
-            st.rerun()
 
         enable_reasoning = st.toggle(
             "Enable reasoning",
@@ -173,7 +158,12 @@ def main():
         )
 
         st.markdown("---")
-        st.markdown("*Theme: edit `.streamlit/config.toml`*")
+        _render_brief_uploader()
+        st.markdown("---")
+
+        if st.button("Reset conversation"):
+            state.reset_conversation()
+            st.rerun()
 
     # --- Main Chat Area ---
     st.title("A.I. Naku: Stratpoint Chatbot")
