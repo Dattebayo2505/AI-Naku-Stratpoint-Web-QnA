@@ -10,10 +10,13 @@ The tile budget drives the rasterization caps — see MAX_WIDTH below.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import TracebackType
 
 import pymupdf
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "MAX_HEIGHT_PORTRAIT",
@@ -65,6 +68,10 @@ _COMBINED_IMAGE_AREA_RATIO = 0.20
 # repeated header logo cannot accumulate its way into a vision call.
 _DECORATION_AREA_RATIO = 0.02
 
+# A table needs a header and at least one body row to be worth the markup. One
+# row is a caption in a box, and rendering it as a table invents a structure.
+_TABLE_MIN_ROWS = 2
+
 _PDF_MAGIC = b"%PDF-"
 _IMAGE_MAGICS = (
     b"\x89PNG\r\n\x1a\n",  # png
@@ -105,6 +112,70 @@ def sniff_kind(head: bytes) -> str | None:
     return None
 
 
+def _cell_text(value: str | None) -> str:
+    """One table cell as a single line. Newlines inside a cell break the row."""
+    return " ".join((value or "").split())
+
+
+def _normalize_grid(grid: list[list[str]]) -> list[list[str]]:
+    """Pad ragged rows, then fold spanned columns back into one.
+
+    ``find_tables`` reports a cell spanning N columns by repeating its value
+    into all N, so rfp16's schedule table arrived as
+    ``|RFPposted|RFPposted|RFPposted|June 1, 2021|June 1, 2021|June 1, 2021|``.
+
+    Two adjacent columns are folded when every row agrees: the cells are equal,
+    or one of them is blank. That second clause is what makes the header line
+    up. A spanned *header* cell is reported ONCE, at the column it starts in
+    (``["", "ACTION ITEM", "", "", "DATE", ""]``), while the body cells beneath
+    it are repeated — so testing whole-column equality keeps both of the body's
+    duplicate columns alive and leaves the header one column to the right of its
+    own values. Blank-absorbs-value closes that gap.
+
+    Folding *columns* rather than collapsing runs per row is the other half:
+    per-row collapse yields rows of differing width, which is the same
+    misalignment by a different route.
+    """
+    if not grid:
+        return []
+    width = max(len(row) for row in grid)
+    grid = [row + [""] * (width - len(row)) for row in grid]
+
+    folded: list[list[str]] = []
+    for col in range(width):
+        column = [row[col] for row in grid]
+        prev = folded[-1] if folded else None
+        # Compatible = no row where both cells are non-empty and disagree.
+        # Without that guard a blank header would swallow a real value column.
+        if prev is not None and all(
+            not a or not b or a == b for a, b in zip(prev, column)
+        ):
+            folded[-1] = [a or b for a, b in zip(prev, column)]
+            continue
+        folded.append(column)
+
+    folded = [col for col in folded if any(col)]
+    return [list(row) for row in zip(*folded)] if folded else []
+
+
+def _table_markdown(table) -> str:
+    """One ``find_tables`` table as a Markdown table, or '' if not worth it."""
+    grid = _normalize_grid([[_cell_text(c) for c in row] for row in table.extract()])
+    grid = [row for row in grid if any(row)]
+    if len(grid) < _TABLE_MIN_ROWS:
+        return ""
+
+    header, *body = grid
+    if not any(header):
+        header = [f"Col{i + 1}" for i in range(len(header))]
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "|" + "|".join(["---"] * len(header)) + "|",
+    ]
+    lines += ["| " + " | ".join(row) + " |" for row in body]
+    return "\n".join(lines)
+
+
 class Document:
     """An opened brief. One page-indexed surface over PyMuPDF.
 
@@ -121,8 +192,68 @@ class Document:
         return self._doc.page_count
 
     def page_text(self, index: int) -> str:
-        """The embedded text layer for one page ('' for images and scans)."""
+        """The embedded text layer for one page ('' for images and scans).
+
+        Deliberately RAW. This feeds the vision-routing threshold
+        (``text_layer_min_chars``) and the figure pass's novelty baseline, both
+        tuned against exactly these characters — splicing table markup in here
+        would move a measured threshold as a side effect of a formatting change.
+        The artifact takes :meth:`page_markdown` instead.
+        """
         return self._doc[index].get_text()
+
+    def page_markdown(self, index: int) -> str:
+        """The text layer with ruled tables rebuilt as Markdown tables.
+
+        ``get_text`` has no table awareness and emits in block order rather than
+        visual order, so a ruled table arrived as one cell value per line and
+        often in the wrong place on the page — measured on a real RFP, the
+        fee-proposal grid landed *below* the signature block that follows it,
+        and read as missing entirely.
+
+        Text is clipped to the horizontal bands between the tables rather than
+        filtered per block: a block whose bbox is *wider* than the table it
+        contains survives an overlap test, and the page then carries every cell
+        twice, once in the grid and once as loose prose beneath it.
+
+        Only ruled tables. An unruled tab-stop layout stays linearized —
+        ``find_tables``' text strategy does return a grid for one, but splits
+        words mid-token ("Cov|erage"), and recovering it properly needs
+        x-position clustering that mis-groups indented prose into tables that
+        were never there.
+
+        Soft-fails to the raw text layer: a table finder that raises on an odd
+        page must degrade to today's output, never fail the page.
+        """
+        page = self._doc[index]
+        try:
+            tables = page.find_tables().tables
+        except Exception as e:  # pragma: no cover - defensive
+            log.warning("page %d table detection failed: %s", index + 1, e)
+            return page.get_text()
+
+        rendered = [(pymupdf.Rect(t.bbox), _table_markdown(t)) for t in tables]
+        rendered = [(box, md) for box, md in rendered if md]
+        if not rendered:
+            return page.get_text()
+        rendered.sort(key=lambda r: r[0].y0)
+
+        rect = page.rect
+        parts: list[str] = []
+        cursor = rect.y0
+        for box, md in rendered:
+            band = pymupdf.Rect(rect.x0, cursor, rect.x1, box.y0)
+            if band.height > 1:
+                above = page.get_text(clip=band).strip()
+                if above:
+                    parts.append(above)
+            parts.append(md)
+            cursor = max(cursor, box.y1)
+
+        tail = page.get_text(clip=pymupdf.Rect(rect.x0, cursor, rect.x1, rect.y1))
+        if tail.strip():
+            parts.append(tail.strip())
+        return "\n\n".join(parts)
 
     def page_has_large_image(self, index: int) -> bool:
         """True when the page carries enough picture to be worth a vision call.

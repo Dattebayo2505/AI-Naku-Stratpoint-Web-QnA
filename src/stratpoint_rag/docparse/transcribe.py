@@ -518,7 +518,11 @@ def transcribe_document(
             if _needs_vision(doc, i, min_chars):
                 pending.append((page_no, doc.rasterize(i), doc.page_text(i)))
             else:
-                done.append(PageResult(page_no, doc.page_text(i).strip(), "text"))
+                # page_markdown, not page_text: the routing test above and the
+                # novelty baseline handed to the worker both want the RAW layer
+                # they were tuned against, but the artifact wants the page's
+                # ruled tables rebuilt as Markdown tables. See render.py.
+                done.append(PageResult(page_no, doc.page_markdown(i).strip(), "text"))
 
     # Phase 2 — fan out the model calls only. One image per request: batching
     # was probed at 2-5 pages and rejected — see nim.py. The client is built

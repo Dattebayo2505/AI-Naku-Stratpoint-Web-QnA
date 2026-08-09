@@ -380,3 +380,167 @@ def test_a_row_of_icons_does_not_accumulate_into_a_vision_call(icon_row_pdf):
         assert sum(ratios) > render._COMBINED_IMAGE_AREA_RATIO, sum(ratios)
 
         assert doc.page_has_large_image(0) is False
+
+
+# ── tables on the text-layer route ──────────────────────────────────────────
+#
+# Regression: `page.get_text()` has no table awareness, so a ruled table on a
+# digital page arrived as one cell value per line, and — because get_text emits
+# in block order, not visual order — routinely in the wrong place on the page.
+# Measured on two real RFPs: the fee-proposal table ("Description /
+# Quantity/Units / Unit Pricing / Total Pricing") landed *below* the signature
+# block that follows it on the page, unstructured, and read as missing.
+#
+# The route matters: these pages never reach the vision model, so nothing in
+# prompts.TRANSCRIPTION_PROMPT ("Reproduce tables as Markdown tables") applies
+# to them. The repair has to be in the text layer or nowhere.
+#
+# Scope, deliberately: RULED tables only. An unruled tab-stop layout — rfp16's
+# insurance schedule, labels at x~126 and values at x~324 with no vector rules —
+# is left linearized. find_tables' "text" strategy does recover a grid from it,
+# but shreds words mid-token ("Cov|erage", "Compensatio|n"), which is worse than
+# the flat dump. Reconstructing those needs x-position clustering, and that
+# heuristic mis-groups ordinary indented prose into a table that was never
+# there — a silent failure, against a visible one.
+
+
+@pytest.fixture
+def table_pdf(tmp_path):
+    """One A4 page: heading, a ruled 3x3 table, then a trailing paragraph.
+
+    Ruled with real vector lines because that is what find_tables' default
+    "lines" strategy keys on — a fixture drawn without them would test the
+    text strategy instead, which is not what production uses.
+    """
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4_W, height=A4_H)
+    page.insert_text((72, 80), "FEE PROPOSAL", fontsize=14)
+
+    rows = [
+        ["Description", "Quantity", "Unit Pricing"],
+        ["Annual pricing", "12 months", "$40,000"],
+        ["Six-month campaign", "6 months", "$25,000"],
+    ]
+    x0, y0, cw, rh = 72, 120, 150, 30
+    for r, row in enumerate(rows):
+        for c, cell in enumerate(row):
+            rect = pymupdf.Rect(
+                x0 + c * cw, y0 + r * rh, x0 + (c + 1) * cw, y0 + (r + 1) * rh
+            )
+            page.draw_rect(rect, color=(0, 0, 0), width=0.8)
+            page.insert_text((rect.x0 + 4, rect.y0 + 18), cell, fontsize=9)
+
+    page.insert_text((72, 300), "Signed by the authorised representative.", fontsize=11)
+
+    path = tmp_path / "table.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_ruled_table_becomes_a_markdown_table(table_pdf):
+    """The reported bug: cell values arrived as loose lines, never a grid."""
+    with render.open_document(table_pdf) as doc:
+        md = doc.page_markdown(0)
+
+    assert "|---" in md, md
+    header = next(ln for ln in md.splitlines() if "Description" in ln)
+    assert header.count("|") >= 4, header
+    assert "Quantity" in header and "Unit Pricing" in header
+
+
+def test_table_rows_survive_as_rows(table_pdf):
+    with render.open_document(table_pdf) as doc:
+        md = doc.page_markdown(0)
+
+    row = next(ln for ln in md.splitlines() if "Annual pricing" in ln)
+    assert "12 months" in row and "$40,000" in row, row
+
+
+def test_table_text_is_not_duplicated(table_pdf):
+    """A block-overlap filter let the raw cell text through beside the grid.
+
+    Every cell then appeared twice — once in the table, once as loose prose
+    underneath it — which is worse than the bug being fixed.
+    """
+    with render.open_document(table_pdf) as doc:
+        md = doc.page_markdown(0)
+
+    assert md.count("Annual pricing") == 1, md
+    assert md.count("$25,000") == 1, md
+
+
+def test_text_around_the_table_survives(table_pdf):
+    """Losslessness is the bar: the splice must not drop the page's prose."""
+    with render.open_document(table_pdf) as doc:
+        md = doc.page_markdown(0)
+
+    assert "FEE PROPOSAL" in md
+    assert "Signed by the authorised representative." in md
+
+
+def test_table_lands_between_the_text_that_surrounds_it(table_pdf):
+    """get_text emitted the fee table *after* the signature block that follows
+    it on the page. Position is the half of this bug that reads as "missing"."""
+    with render.open_document(table_pdf) as doc:
+        md = doc.page_markdown(0)
+
+    assert md.index("FEE PROPOSAL") < md.index("|---") < md.index("Signed by")
+
+
+def test_page_without_a_table_is_left_alone(text_pdf):
+    """No table, no rewrite — the splice must not perturb ordinary pages."""
+    with render.open_document(text_pdf) as doc:
+        assert doc.page_markdown(0).strip() == doc.page_text(0).strip()
+
+
+def test_page_text_still_returns_the_raw_layer(table_pdf):
+    """page_text feeds the vision-routing threshold and the novelty baseline,
+    both tuned against the raw layer. Table markup must not leak into it."""
+    with render.open_document(table_pdf) as doc:
+        assert "|---" not in doc.page_text(0)
+
+
+def test_scanned_page_yields_nothing_to_splice(image_pdf):
+    """No text layer means no table either — and no crash reaching for one."""
+    with render.open_document(image_pdf) as doc:
+        assert doc.page_markdown(0).strip() == ""
+
+
+@pytest.mark.parametrize(
+    "grid, expected",
+    [
+        # A column span: find_tables repeats the value into every column the
+        # cell covers, so rfp16's schedule arrived as
+        # |RFPposted|RFPposted|RFPposted|June 1, 2021|June 1, 2021|June 1, 2021|
+        ([["a", "a", "b"], ["c", "c", "d"]], [["a", "b"], ["c", "d"]]),
+        # An empty column carries no information and costs a column of width.
+        ([["a", "", "b"], ["c", "", "d"]], [["a", "b"], ["c", "d"]]),
+        # ...but a column that is empty only in SOME rows is real data.
+        ([["a", "x", "b"], ["c", "", "d"]], [["a", "x", "b"], ["c", "", "d"]]),
+        # Ragged rows are padded, not truncated — a short row must not eat a cell.
+        ([["a", "b"], ["c"]], [["a", "b"], ["c", ""]]),
+        # The rfp16 schedule table, reduced. A spanned HEADER cell is reported
+        # once, at the column it starts in, while the spanned BODY cells are
+        # repeated into every column they cover. Whole-column equality cannot
+        # see that: the body of col 0 and col 1 match, but their headers differ,
+        # so both columns survive and the header ends up one column right of the
+        # values underneath it.
+        (
+            [["", "ACTION ITEM", "", "", "DATE", ""],
+             ["RFP posted", "RFP posted", "RFP posted", "June 1", "June 1", "June 1"]],
+            [["ACTION ITEM", "DATE"], ["RFP posted", "June 1"]],
+        ),
+        # ...but two columns that genuinely disagree in a body row must not be
+        # merged just because one header is blank. This is the guard on the rule
+        # above: merging here would silently destroy a cell.
+        (
+            [["", "DATE"], ["RFP posted", "June 1"]],
+            [["", "DATE"], ["RFP posted", "June 1"]],
+        ),
+    ],
+)
+def test_grid_normalization_collapses_spans_and_empty_columns(grid, expected):
+    assert render._normalize_grid(grid) == expected
