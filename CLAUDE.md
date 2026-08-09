@@ -185,6 +185,26 @@ the NVIDIA docs.
   carries a large image. A 30-page digital RFP therefore costs **zero** vision
   calls; the text layer is ground truth and vision is a guess at it.
 
+- **...but `get_text()` cannot see a table, so the text route rebuilds them.**
+  It emits one cell value per line, in block order rather than visual order.
+  Measured on two real RFPs: a fee table (`Description / Quantity/Units / Unit
+  Pricing / Total Pricing`) landed *below* the signature block that follows it
+  on the page and read as missing. Nothing in `TRANSCRIPTION_PROMPT` applies —
+  these pages never reach the model. `render.page_markdown` splices
+  `find_tables()` output back in; `page_text` stays **raw** because the vision
+  routing threshold and the figure pass's novelty baseline are tuned against
+  exactly those characters. Two details are load-bearing: text is clipped to the
+  bands *between* tables, since a text block wider than the table it contains
+  survives an overlap test and puts every cell on the page twice; and columns
+  are folded when adjacent cells are equal *or one is blank*, because a spanned
+  header cell is reported once while the body cells under it are repeated, so
+  whole-column equality leaves the header one column right of its own values.
+  Scope is **ruled tables only** — `find_tables`' text strategy does return a
+  grid for a tab-stop layout, but splits words mid-token (`Cov|erage`), and
+  x-position clustering mis-groups indented prose into tables that were never
+  there. Verified lossless: 1.000 content-word recall on all 19 pages of both
+  briefs.
+
 - **...but the text layer must not gate the *figure pass*.** The pass fires on
   two triggers — no described figure block came back, or the reply added nothing
   to what was already known. Only the second needs a text layer to measure
