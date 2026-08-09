@@ -373,24 +373,28 @@
 
     /* Arrow-Shaped Chevron Bar */
     .chevron-bar {
-      height: 52px;
+      min-height: 54px;
+      height: auto;
       background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
       color: #ffffff;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 0 16px 0 26px;
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.5px;
+      padding: 4px 14px 4px 24px;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.2px;
       clip-path: polygon(0% 0%, calc(100% - 18px) 0%, 100% 50%, calc(100% - 18px) 100%, 0% 100%, 18px 50%);
       box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
       text-align: center;
+      word-break: break-word;
+      white-space: normal;
     }
     .chevron-item:first-child .chevron-bar {
       clip-path: polygon(0% 0%, calc(100% - 18px) 0%, 100% 50%, calc(100% - 18px) 100%, 0% 100%);
       border-radius: 6px 0 0 6px;
-      padding-left: 14px;
+      padding-left: 12px;
     }
     .chevron-item:last-child .chevron-bar {
       clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 18px 50%);
@@ -655,7 +659,7 @@
 
     <!-- Horizontal Timeline Section (Icon + Chevron Ribbon) -->
     <section class="chevron-timeline-section">
-      <div class="section-title">Execution Phases &amp; Chevron Roadmap</div>
+      <div class="section-title">Execution Phases &amp; Roadmap</div>
 
       <div class="chevron-ribbon-container">
         {% for milestone in milestones %}

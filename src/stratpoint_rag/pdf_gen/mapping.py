@@ -52,7 +52,7 @@ __all__ = ["EmptyEstimate", "build_quote_context", "quote_number_for"]
 # Chevron labels share one row inside a fixed 52px bar. At six phases — the most
 # the template's colour rules cover — each bar is ~125px wide, which is ~12
 # characters per line at 12px bold, and two lines is all the bar height allows.
-_CHEVRON_LABEL_CHARS = 24
+_CHEVRON_LABEL_CHARS = 40
 
 _PHASE_PREFIX = re.compile(r"^\s*(phase\s*\d+\s*[:.\-–]\s*)", re.IGNORECASE)
 
@@ -201,6 +201,84 @@ def _milestones(estimation: EstimationResult | None, start: date) -> list[Milest
     return out
 
 
+def infer_project_title(
+    requirements: ExtractedRequirements | None,
+    project_name: str | None = None,
+) -> str:
+    """Infer proposal project title mapped directly to Stratpoint's official Handbook Service Categories:
+    1. Software Services (Web, Mobile, Full-Stack, E-Commerce)
+    2. Quality Assurance (Testing & Automation)
+    3. Cloud (DevOps, Infrastructure, Storage)
+    4. Data (Data Engineering, Analytics)
+    5. Artificial Intelligence (AI/ML, Gemini & AI Pro)
+    """
+    if project_name and project_name.strip() and project_name.strip() not in (GENERIC_PROJECT_TITLE, "Project Proposal", "Proposal"):
+        return project_name.strip()
+
+    if requirements is None:
+        return "Software Services — Full-Stack Web Application"
+
+    platforms = [p.lower() for p in (requirements.target_platform or [])]
+    features = [f.lower() for f in (requirements.features or [])]
+    stack = [s.lower() for s in (requirements.tech_stack or [])]
+    all_text = " ".join(platforms + features + stack).lower()
+
+    if requirements.source_markdown_path:
+        try:
+            p = Path(requirements.source_markdown_path)
+            if p.exists():
+                all_text += " " + p.read_text(encoding="utf-8").lower()
+        except Exception:
+            pass
+
+    has_ai = any(k in all_text for k in ("ai", "ml", "machine learning", "llm", "rag", "gemini", "ai pro", "model"))
+    has_cloud = any(k in all_text for k in ("cloud", "devops", "infrastructure", "sre", "aws", "gcp", "azure", "kubernetes", "docker"))
+    has_data = any(k in all_text for k in ("data", "data engineering", "analytics", "pipeline", "etl", "data science"))
+    has_qa = any(k in all_text for k in ("qa", "testing", "automation test", "quality assurance")) and not any(k in all_text for k in ("web", "app", "mobile"))
+
+    has_web = any(k in all_text for k in ("web", "website", "web app", "webapp", "portal", "browser", "dashboard", "frontend", "fullstack", "backend"))
+    has_mobile = any(k in all_text for k in ("mobile", "ios", "android", "app store", "flutter", "react native"))
+    has_ecommerce = any(k in all_text for k in ("ecommerce", "e-commerce", "checkout", "store", "product catalog", "cart", "payment gateway"))
+    has_website_only = any(k in all_text for k in ("cms", "landing page", "corporate website", "marketing site", "wordpress")) and not any(k in all_text for k in ("dashboard", "backend api", "microservice", "saas", "fullstack"))
+
+    # Handbook Category 5: Artificial Intelligence
+    if has_ai:
+        return "Artificial Intelligence — AI/ML Engineering & Model Solutions"
+
+    # Handbook Category 4: Data
+    if has_data and not (has_web or has_mobile):
+        return "Data Services — Data Engineering & Analytics Platform"
+
+    # Handbook Category 3: Cloud
+    if has_cloud and not (has_web or has_mobile):
+        return "Cloud Services — Cloud Architecture & DevOps Infrastructure"
+
+    # Handbook Category 2: Quality Assurance
+    if has_qa:
+        return "Quality Assurance — Software Testing & Automation"
+
+    # Handbook Category 1: Software Services
+    if has_ecommerce:
+        if has_mobile and has_web:
+            return "Software Services — E-Commerce Web & Mobile Platform"
+        else:
+            return "Software Services — E-Commerce Web Application"
+
+    if has_website_only:
+        return "Software Services — Custom Website & CMS"
+
+    if has_mobile and has_web:
+        return "Software Services — Web & Mobile Application Platform"
+
+    if has_mobile:
+        return "Software Services — Mobile Application (iOS/Android)"
+
+    if has_web:
+        return "Software Services — Full-Stack Web Application"
+
+    return "Software Services — Custom Software Development"
+
+
 def _project_description(requirements: ExtractedRequirements | None) -> str | None:
     """A factual restatement of the brief, never a sales paragraph."""
     if requirements is None:
@@ -342,7 +420,7 @@ def build_quote_context(
         # A blank name is the normal path, not an edge case: neither docparse
         # hop supplies one and the visitor may decline to give one.
         client_name=client_name or GENERIC_CLIENT_LABEL,
-        project_title=project_name or GENERIC_PROJECT_TITLE,
+        project_title=infer_project_title(req, project_name),
         project_description=_project_description(req),
         line_items=items,
         tax_rate_percent=Decimal(
