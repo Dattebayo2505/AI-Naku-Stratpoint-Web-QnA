@@ -31,6 +31,7 @@ __all__ = [
     "concurrency",
     "extraction_group_pages",
     "extraction_token_budget",
+    "figure_pass_max_pages",
     "figure_pass_min_text_chars",
     "figure_pass_novelty",
     "llm_model",
@@ -216,6 +217,14 @@ def figure_pass_novelty() -> float:
     same text layer: the model returns the page's printed captions often enough
     that an unchecked block puts a re-typed caption in the artifact dressed as a
     description of a picture nothing looked at.
+
+    That second application was silently discarding correct work until
+    2026-08-09, and the threshold was not at fault — ``_content_words`` was.
+    Numbers were not counted, so page 5's maps ("Civic Park - 2023", "Tower Park
+    - 2025"), whose place names the page's prose already uses, scored 0.048 and
+    were dropped 16 times out of 16. See ``transcribe._WORD_RE``. Do not read
+    the four percentages above as a defence of 0.10 against that failure; they
+    were measured with the same blind spot, and only the ranking survives it.
     """
     val = os.getenv("DOCPARSE_FIGURE_PASS_NOVELTY")
     try:
@@ -225,14 +234,72 @@ def figure_pass_novelty() -> float:
 
 
 def figure_pass_min_text_chars() -> int:
-    """Novelty is only meaningful against a text layer worth comparing to.
+    """Novelty is only meaningful against a baseline worth comparing to.
 
     A scanned page has no text layer, so *everything* the model returns is
     "novel" and the ratio says nothing about whether the figure was read. Below
-    this many characters the figure pass is skipped rather than guessed at —
-    the transcription pass is doing the whole job there anyway.
+    this many characters the NOVELTY trigger is skipped rather than guessed at.
+
+    Corrected 2026-08-09: this used to gate the whole figure pass, and its
+    justification ran "the transcription pass is doing the whole job there
+    anyway". It is not. Measured on the same 10-page RFP supplied digitally and
+    fully rasterized, the figure pass could fire on 4 of 10 digital pages and
+    **0 of 10** scanned ones, so a full-page cover photo and two site plans the
+    digital route described went undescribed on the scan. Only the novelty
+    trigger needs a baseline; "did a figure block come back" needs nothing. See
+    ``transcribe._render_page``.
+
+    On a page with no text layer the baseline is the transcription pass's own
+    reply instead — measured at 1.000 content-word recall against the digital
+    copy's text layer, so it is the closest thing to ground truth available and
+    it keeps the caption-echo check alive where it would otherwise be lost.
     """
     return _int_env("DOCPARSE_FIGURE_PASS_MIN_TEXT_CHARS", 200)
+
+
+def figure_pass_min_novel_words() -> int:
+    """Novel content words that keep a figure-pass reply whatever its ratio.
+
+    ``figure_pass_novelty`` is a proportion, so a reply that reads the picture
+    correctly and *then* restates the page's prose around it is punished for the
+    padding. Traced live on RFP page 5: of two replies that recovered "Civic Park
+    - 2023" and "Tower Park - 2025" off the map, one scored 0.154 and was kept
+    and the other 0.065 and was dropped, the only difference being how much of
+    the page body it repeated back.
+
+    "Did this reply bring anything back" is a count, not a proportion. Measured
+    on the corpus: a reply that read the maps carries 4 novel content words, a
+    table misread as a picture carries 1 ("employer's"), and a pure caption echo
+    carries 0. 3 sits in that gap with margin on both sides, the same way 0.10
+    sits between 1.6% and 17.7%.
+
+    Raising this re-opens the dilution hole; lowering it to 1 lets a single
+    stray token pass a re-typed caption through.
+    """
+    return _int_env("DOCPARSE_FIGURE_PASS_MIN_NOVEL_WORDS", 3)
+
+
+def figure_pass_max_pages() -> int:
+    """Ceiling on second calls per document. Cost guard, not a quality knob.
+
+    Without a text layer the novelty trigger is unavailable, so the gate rests
+    on "no figure block came back" — which is also true of every ordinary text
+    page of a scanned brief. Measured on the 10-page scan: 9 of 10 pages carried
+    no figure block, so an uncapped rule takes that parse from 10 vision calls
+    to 19, and a 40-page scan from 40 to 80.
+
+    12 covers a typical brief outright — the failure this exists to bound is the
+    40-page ceiling, not the 10-page case. Note honestly that 40 + 12 = 52 calls
+    still exceeds NIM's 40 requests/min: a *fully scanned* 40-page upload was
+    already spending the whole minute's quota before this cap existed (see
+    ``concurrency``), and the cap bounds the overrun rather than removing it.
+    Lower it, or ``DOCPARSE_MAX_PAGES``, if throttling shows up as timeouts.
+
+    Exhausting the budget is stamped into the page's provenance comment. A
+    silent cap would read as "this page had no figure" when it means "nobody
+    looked" — the same distinction ``pages_failed`` exists to preserve.
+    """
+    return _int_env("DOCPARSE_FIGURE_PASS_MAX_PAGES", 12)
 
 
 def text_layer_min_chars() -> int:

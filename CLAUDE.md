@@ -185,6 +185,43 @@ the NVIDIA docs.
   carries a large image. A 30-page digital RFP therefore costs **zero** vision
   calls; the text layer is ground truth and vision is a guess at it.
 
+- **...but the text layer must not gate the *figure pass*.** The pass fires on
+  two triggers — no described figure block came back, or the reply added nothing
+  to what was already known. Only the second needs a text layer to measure
+  against; binding both to one made the pass unreachable on scanned briefs,
+  which are the documents that need it most. Measured on the same RFP supplied
+  digitally and fully rasterized: the pass could fire on 4 of 10 digital pages
+  and **0 of 10** scanned ones, so the scan's cover photo and site plans went
+  undescribed. On a page with no text layer the transcription reply is the
+  baseline instead (1.000 recall against the digital copy). Cost is bounded by
+  `DOCPARSE_FIGURE_PASS_MAX_PAGES`, because on a scan "no figure block" is also
+  true of every ordinary text page — and an exhausted budget is stamped into the
+  page's provenance, never silent.
+
+- **Novelty could not see numbers, and that silently discarded correct work.**
+  `_content_words` required a leading letter, so a year or an amount was never
+  counted. RFP page 5's maps are labelled `Civic Park - 2023`, `Tower Park -
+  2025` — place names the page's prose already uses, plus years — so a correct
+  reading of them scored 0.048 and was dropped as an echo, **16 times out of
+  16** probed replies that had read the map. The page looked like a model
+  failure for two sessions and was a regex. Numbers now count, on both sides of
+  the ratio, so the valve against re-typed captions still holds.
+
+- **Novelty is a ratio, so it also punishes padding.** A reply that reads the
+  picture and then restates the page around it is diluted by its own restatement
+  — two replies recovering the same map labels scored 0.154 and 0.065. "Did this
+  bring anything back" is a count, so `figure_pass_min_novel_words` (3) keeps a
+  reply the ratio would drop. Measured: map reading 4 novel words, a table
+  misread as a picture 1, a pure caption echo 0.
+
+- **Prompt probes against this endpoint must be interleaved, never blocked.**
+  Under load the model returns fast, shallow replies — page 5's figure recovery
+  measured 6/14 while the endpoint was saturated and 14/14 rested, with the
+  *same* prompt. A block design (all of arm A, then all of arm B) attributes
+  that to whichever arm ran while it was busy. One call at a time, arms
+  alternating, spaced. A prompt "improvement" was measured, written, and
+  reverted on this exact confound.
+
 - **`VISION_TIMEOUT` is 45s, deliberately below `LLM_TIMEOUT`.** Under rate
   limiting this endpoint throttles by *delaying*, not by returning 429, so
   tenacity never fires. The ceiling converts an indefinite stall into one entry

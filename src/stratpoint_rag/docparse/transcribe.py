@@ -16,11 +16,14 @@ Five rules here are easy to break and expensive to debug:
 3. **Python owns the page wrapper.** The ``## Page N`` heading and the
    provenance comment are emitted here, never asked of the model, because
    ``pages_failed`` accounting depends on the numbering being exact.
-4. **A figure page may cost a second call.** When the transcription reply holds
-   nothing the page's embedded text layer already had, the vision call bought
-   no information and ``_figure_pass`` asks again with a picture-only prompt.
-   It is gated on novelty rather than run unconditionally because on a real RFP
-   only one page in ten needed it. See ``prompts.FIGURE_PROMPT``.
+4. **A figure page may cost a second call.** When no described figure came back,
+   or when the reply holds nothing already known about the page, the vision call
+   bought no picture and ``_figure_pass`` asks again with a picture-only prompt.
+   The second trigger needs a baseline to measure against and the first does not
+   — binding both to a text layer made the pass unreachable on scanned briefs,
+   which are the documents that need it most. A per-document budget bounds the
+   cost, because on a scan "no figure block" is also true of every text page.
+   See ``prompts.FIGURE_PROMPT``.
 5. **Shallow headings are clamped, in-page only.** Nemotron emits ``#`` and
    ``##`` headings in about half of runs despite the prompt rule, and a ``##``
    in a page body collides with the wrapper in rule 3. ``_clamp_headings``
@@ -33,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -99,7 +103,25 @@ def _clamp_headings(text: str) -> str:
     return _SHALLOW_HEADING.sub("###", text)
 
 
-_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9'-]+")
+# Numbers are content. The second alternative is not decoration: until
+# 2026-08-09 this pattern required a leading letter, so a year, an amount or a
+# count was never a content word, and `_novelty` could not see the single most
+# decisive evidence that a vision call looked at a picture.
+#
+# Measured on RFP page 5, two aerial maps labelled "Civic Park - 2023", "Tower
+# Park - 2025", "Yanaguana Garden - 2015". Those place names are already in the
+# page's prose, so with the years invisible a correct reading of the maps scored
+# 0.048 novelty and was dropped as an echo — 16 times out of 16 probed replies,
+# every one of which had read the map. The page carried no figure block across
+# every run of two sessions and looked like a model failure; the model had done
+# the work each time and this regex threw it away. With numbers counted the same
+# replies score 0.167.
+#
+# Counting them on BOTH sides of the ratio is what keeps the safety valve: a
+# reply re-serving figures the page already prints gains nothing, which is how a
+# table misread as a picture stays out of the artifact (measured 0.045 -> 0.042).
+# No page of the 10-page corpus changes its trigger decision.
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9'-]+|\d[\d.,:/-]*\d|\d")
 
 # Words that say nothing about whether the model looked at the picture: function
 # words, and the scaffolding this pipeline's own prompts inject. Counting them
@@ -119,6 +141,16 @@ _NOVELTY_STOPWORDS = frozenset(
 
 def _content_words(text: str) -> set[str]:
     return {w.lower() for w in _WORD_RE.findall(text)} - _NOVELTY_STOPWORDS
+
+
+def _novel_count(reply: str, baseline: str) -> int:
+    """How many content words the reply has that the baseline does not.
+
+    The absolute companion to ``_novelty``. A ratio answers "what share of this
+    reply is new", which penalizes a correct reading that pads itself with the
+    page's prose; this answers "did it bring anything back at all".
+    """
+    return len(_content_words(reply) - _content_words(baseline))
 
 
 def _novelty(reply: str, text_layer: str) -> float:
@@ -266,8 +298,33 @@ def _needs_vision(doc: render.Document, index: int, min_chars: int) -> bool:
     return doc.page_has_large_image(index)
 
 
+class _FigureBudget:
+    """Per-document ceiling on figure passes, shared across the page workers.
+
+    Deliberately an object threaded through the call, not module state: the API
+    serves concurrent uploads from one process, and a module-level counter would
+    let the first brief of the day exhaust the budget for every brief after it.
+
+    ``take`` is first-come rather than page-ordered — the pool hands pages out in
+    order but they finish out of order, so under a cap the pages that get a pass
+    are approximately, not exactly, the earliest ones. Exact ordering would mean
+    serializing the gate behind page 1, which costs more than it buys.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self._left = max(0, limit)
+        self._lock = threading.Lock()
+
+    def take(self) -> bool:
+        with self._lock:
+            if self._left <= 0:
+                return False
+            self._left -= 1
+            return True
+
+
 def _figure_pass(
-    page_no: int, image: bytes, vision: VisionClient, text_layer: str = ""
+    page_no: int, image: bytes, vision: VisionClient, baseline: str = ""
 ) -> tuple[str, dict]:
     """Second, figure-only call. Returns ``(block, usage)``; block may be ''.
 
@@ -283,6 +340,12 @@ def _figure_pass(
     that puts a duplicated caption into the artifact dressed as a description of
     a picture nothing ever looked at. Dropping it leaves the page honestly
     without a figure block, which is the recoverable failure.
+
+    ``baseline`` is the page's text layer where it has one and the transcription
+    pass's own reply where it does not — see ``_render_page``. A scanned page
+    reaches this check with a baseline either way, which is the point: the
+    caption echo above was measured on a page whose captions are *printed on the
+    page*, and rasterizing that page does not make them stop being printed.
     """
     try:
         reply, usage = vision.describe(
@@ -298,11 +361,16 @@ def _figure_pass(
         return "", usage  # declined: the page has no picture. Usage still counts.
     if _is_unusable(text):
         return "", usage
+    # Two ways to pass, because the ratio alone discards correct work: a reply
+    # that reads the picture and then restates the page around it is diluted by
+    # its own padding. Measured on page 5, two replies that both recovered the
+    # map labels scored 0.154 and 0.065 — the second dropped for padding only.
     if (
-        len(text_layer.strip()) >= config.figure_pass_min_text_chars()
-        and _novelty(text, text_layer) < config.figure_pass_novelty()
+        len(baseline.strip()) >= config.figure_pass_min_text_chars()
+        and _novelty(text, baseline) < config.figure_pass_novelty()
+        and _novel_count(text, baseline) < config.figure_pass_min_novel_words()
     ):
-        log.info("page %d: figure pass echoed the text layer, dropped", page_no)
+        log.info("page %d: figure pass echoed what was already read, dropped", page_no)
         return "", usage
     return _clamp_headings(text), usage
 
@@ -312,6 +380,7 @@ def _render_page(
     image: bytes,
     vision: VisionClient,
     text_layer: str = "",
+    budget: _FigureBudget | None = None,
 ) -> PageResult:
     """Runs in a worker thread. Returns usage; never accumulates it."""
     try:
@@ -337,22 +406,42 @@ def _render_page(
     #   a Markdown table scored 0.315 novelty, so novelty alone judged the call
     #   informative and the map went undescribed. Reading a legend is not
     #   describing a picture.
-    # - A figure block came back, but the reply holds nothing the text layer did
+    # - A figure block came back, but the reply holds nothing the baseline did
     #   not already have, so the block is the page's own caption re-typed.
     #
     # Novelty is kept as the second trigger rather than replaced by the first:
     # it is what catches a well-formed block with no information in it.
-    if len(text_layer.strip()) >= config.figure_pass_min_text_chars() and (
-        not _has_figure_block(markdown)
-        or _novelty(markdown, text_layer) < config.figure_pass_novelty()
+    #
+    # Only the SECOND trigger needs a baseline to measure against. Binding both
+    # to one was the 2026-08-09 bug: a scanned page has no text layer, so the
+    # whole gate was unreachable and a fully rasterized brief got zero figure
+    # passes on every page. Replayed over the same RFP supplied both ways, the
+    # pass could fire on 4 of 10 digital pages and 0 of 10 scanned ones, and the
+    # scan's cover photo and site plans went undescribed while the digital copy's
+    # were recovered. The failing document was the one MOST in need of the pass:
+    # every page of it is a picture.
+    #
+    # Where there is no text layer the transcription reply stands in as the
+    # baseline for the downstream echo check. It cannot serve as a novelty
+    # baseline here — a reply compared against itself scores zero — which is why
+    # that trigger keeps its precondition and this one does not.
+    has_text = len(text_layer.strip()) >= config.figure_pass_min_text_chars()
+    if not _has_figure_block(markdown) or (
+        has_text and _novelty(markdown, text_layer) < config.figure_pass_novelty()
     ):
-        block, fig_usage = _figure_pass(page_no, image, vision, text_layer)
-        for k in _USAGE_KEYS:
-            usage[k] = (usage.get(k) or 0) + (fig_usage.get(k) or 0)
-        if block:
-            markdown = f"{markdown}\n\n{block}"
-            note = "figure pass"
-            log.info("page %d: figure pass added %d chars", page_no, len(block))
+        if budget is not None and not budget.take():
+            # Never silent: a capped page must not read as a page with no figure.
+            note = "figure pass skipped: document budget"
+            log.info("page %d: figure pass skipped, document budget spent", page_no)
+        else:
+            baseline = text_layer if has_text else markdown
+            block, fig_usage = _figure_pass(page_no, image, vision, baseline)
+            for k in _USAGE_KEYS:
+                usage[k] = (usage.get(k) or 0) + (fig_usage.get(k) or 0)
+            if block:
+                markdown = f"{markdown}\n\n{block}"
+                note = "figure pass"
+                log.info("page %d: figure pass added %d chars", page_no, len(block))
 
     # Last, and over the combined text: a figure pass that re-served what the
     # transcription pass already said must collapse into it, not double it.
@@ -437,9 +526,13 @@ def transcribe_document(
     if pending:
         vision = vision or NimVisionClient()
         workers = max(1, min(config.concurrency(), len(pending)))
+        # One budget per document, built here so it cannot outlive the request.
+        budget = _FigureBudget(config.figure_pass_max_pages())
         with ThreadPoolExecutor(max_workers=workers) as pool:
             done.extend(
-                pool.map(lambda a: _render_page(a[0], a[1], vision, a[2]), pending)
+                pool.map(
+                    lambda a: _render_page(a[0], a[1], vision, a[2], budget), pending
+                )
             )
 
     pages = sorted(done, key=lambda p: p.number)

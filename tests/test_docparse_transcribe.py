@@ -21,6 +21,20 @@ from stratpoint_rag.docparse.transcribe import transcribe_document
 A4_W, A4_H = 595, 842
 
 
+# The default reply carries a figure block on purpose. Since 2026-08-09 a page
+# whose reply has no described figure earns a second, figure-only call — true of
+# every page of a scanned brief, since a scan has no text layer to fall back on.
+# Most tests in this file are about routing, failure accounting or usage, and a
+# second call perturbs all three (it doubles usage, and FakeVisionClient's
+# arrival-order indexing shifts under it). A default that satisfies the gate
+# keeps those tests measuring their own subject. Tests about the figure pass
+# itself pass an explicit reply.
+_DEFAULT_REPLY = (
+    "### Transcribed heading\n\nSome real body text.\n\n"
+    "> **Figure:** An aerial map of the district, US-281 and Market Street."
+)
+
+
 @pytest.fixture
 def serial(monkeypatch):
     """Pin page concurrency to 1.
@@ -42,7 +56,7 @@ class FakeVisionClient:
     ``serial`` fixture.
     """
 
-    def __init__(self, reply="### Transcribed heading\n\nSome real body text.",
+    def __init__(self, reply=_DEFAULT_REPLY,
                  usage=None, fail_on=(), figure_reply="> **Figure:** A map."):
         self._reply = reply
         self._figure_reply = figure_reply
@@ -187,7 +201,9 @@ def test_page_with_text_and_a_diagram_still_uses_vision(tmp_path, make_pdf):
     doc.save(path)
     doc.close()
 
-    vision = FakeVisionClient()
+    # Explicitly figure-less: the second assertion below is about what happens
+    # when a page routed for its diagram comes back without one.
+    vision = FakeVisionClient(reply="### Architecture\n\nThe platform is hosted.")
     result = transcribe_document(path, vision=vision)
 
     # The subject here is the ROUTE, not the call count: this page must not take
@@ -266,7 +282,9 @@ def test_a_refusal_is_treated_as_a_failed_page(scanned_pdf, serial):
 
 
 def test_empty_output_is_treated_as_a_failed_page(scanned_pdf, serial):
-    vision = FakeVisionClient(reply=lambda n: "" if n == 2 else "### Fine\n\nBody text here.")
+    # The good pages answer with a figure block so they cost one call each —
+    # otherwise their figure passes shift the arrival index this lambda keys on.
+    vision = FakeVisionClient(reply=lambda n: "" if n == 2 else _DEFAULT_REPLY)
 
     result = transcribe_document(scanned_pdf, vision=vision)
 
@@ -554,14 +572,20 @@ def test_a_declined_figure_pass_appends_nothing(figure_page_pdf):
     assert "figure pass" not in result.markdown
 
 
-def test_a_scan_never_pays_for_a_figure_pass(scanned_pdf):
-    """No text layer means novelty is trivially 1.0 and says nothing. Guessing
-    there would put a second call on every page of every scanned brief."""
+def test_a_scan_with_no_figure_block_still_gets_a_figure_pass(scanned_pdf):
+    """Retargeted 2026-08-09. This asserted ``figure_calls == []`` on the
+    reasoning that novelty is trivially 1.0 without a text layer — true of
+    *novelty*, but it was written as a precondition on the whole gate, and the
+    figure-block trigger needs no text layer at all. Measured consequence: a
+    fully rasterized 10-page RFP got zero figure passes on all ten pages, and
+    its cover photo and two site plans went undescribed while the digital copy
+    of the same document described them.
+    """
     vision = FakeVisionClient(reply=_ECHO)
 
     transcribe_document(scanned_pdf, vision=vision)
 
-    assert vision.figure_calls == []
+    assert len(vision.figure_calls) == 3
 
 
 def test_figure_pass_tokens_are_accounted(figure_page_pdf):
@@ -843,3 +867,277 @@ def test_the_figure_block_is_clamped_too(figure_page_pdf):
 
     assert "### Figure" in result.markdown
     assert "\n## Figure" not in result.markdown
+
+
+# Regression, 2026-08-09. Reported against one live artifact: "when the pdf
+# itself is full images, the actual images are not detected and described".
+#
+# Cause was not the model. The figure-pass gate carried a precondition —
+# len(text_layer) >= figure_pass_min_text_chars — on BOTH its triggers, and a
+# scanned page has no text layer, so the pass was unreachable by construction
+# on every page of every scanned brief. Replayed offline over the same 10-page
+# RFP supplied twice: the figure pass could fire on 4 of 10 digital pages and
+# 0 of 10 rasterized ones. Only the novelty trigger needs a text layer.
+#
+# What replaces it on a scan is the transcription pass's own reply: it is
+# measured at 1.000 content-word recall against the digital copy's text layer,
+# so it is the best available baseline for "did the second call add anything".
+
+
+# _ECHO alone is 184 chars, under figure_pass_min_text_chars — as a *text layer*
+# it rides along with the fixture's repeated body, but as a stand-in baseline it
+# is the reply itself and would fall under the floor. A real scanned page
+# transcribes to well over 200 chars; these tests say so explicitly rather than
+# passing by an accident of fixture length.
+_SCAN_ECHO = (
+    _ECHO + " Trees are planted as tributes to memorialize a loved one who has "
+    "passed, or to honour someone living, and each carries a donor plaque."
+)
+
+
+def test_a_scan_whose_reply_carries_a_figure_block_pays_no_second_call(scanned_pdf):
+    """The cost guard has to survive losing the text layer, or every page of
+    every scan pays twice."""
+    vision = FakeVisionClient(
+        reply=_ECHO + "\n\n> **Figure:** Two aerial maps, US-281 and Market Street."
+    )
+
+    transcribe_document(scanned_pdf, vision=vision)
+
+    assert vision.figure_calls == []
+
+
+def test_on_a_scan_the_figure_pass_is_validated_against_the_transcription(
+    scanned_pdf, serial
+):
+    """Page 5's protection, restored without a text layer.
+
+    The model returns the page's printed captions instead of the picture's
+    contents. On a digital page that is caught by comparing against the text
+    layer; on a scan the transcription reply holds the same captions and serves
+    the same purpose. Unvalidated, a re-typed caption enters the artifact
+    dressed as a reading of a picture nothing looked at.
+    """
+    vision = FakeVisionClient(
+        reply=_SCAN_ECHO,
+        figure_reply="> **Figure:** The garden and the park, thirteen acres downtown.",
+    )
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert len(vision.figure_calls) == 3
+    assert "figure pass -->" not in result.markdown
+    assert result.pages_failed == []
+
+
+def test_a_novel_figure_pass_on_a_scan_is_kept(scanned_pdf, serial):
+    """The other side of the same check — the case the whole fix exists for."""
+    vision = FakeVisionClient(
+        reply=_SCAN_ECHO,
+        figure_reply="> **Figure:** SHEET L1.007, SHEET L1.008, permit AP #A12295605.",
+    )
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert "SHEET L1.007" in result.markdown
+    assert "| figure pass -->" in result.markdown
+
+
+# The cap. Firing on every figure-less page is right for a 10-page brief and
+# unaffordable at the 40-page ceiling, where it would double a parse that
+# already spends the whole of NIM's 40 RPM quota.
+
+
+def test_the_figure_pass_is_capped_per_document(scanned_pdf, monkeypatch, serial):
+    monkeypatch.setenv("DOCPARSE_FIGURE_PASS_MAX_PAGES", "1")
+    vision = FakeVisionClient(reply=_ECHO)
+
+    transcribe_document(scanned_pdf, vision=vision)
+
+    assert len(vision.figure_calls) == 1
+
+
+def test_a_page_skipped_for_budget_says_so_in_its_provenance(
+    scanned_pdf, monkeypatch, serial
+):
+    """A silent cap reads as 'this page had no figure'. It must read as
+    'nobody looked'."""
+    monkeypatch.setenv("DOCPARSE_FIGURE_PASS_MAX_PAGES", "1")
+    vision = FakeVisionClient(reply=_ECHO)
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert result.markdown.count("figure pass skipped: document budget") == 2
+    assert result.pages_failed == []
+
+
+def test_the_budget_is_per_document_not_per_process(scanned_pdf, monkeypatch, serial):
+    """A module-level counter would exhaust on the first upload and leave every
+    later one in the same API process without a figure pass at all."""
+    monkeypatch.setenv("DOCPARSE_FIGURE_PASS_MAX_PAGES", "2")
+
+    first = FakeVisionClient(reply=_ECHO)
+    transcribe_document(scanned_pdf, vision=first)
+    second = FakeVisionClient(reply=_ECHO)
+    transcribe_document(scanned_pdf, vision=second)
+
+    assert len(first.figure_calls) == 2
+    assert len(second.figure_calls) == 2
+
+
+# ── prompt/parser contract ──────────────────────────────────────────────────
+#
+# The prompts hand the model an output shape and transcribe.py parses that shape
+# back out. Nothing but these tests couples the two, and the coupling is easy to
+# break silently: a prompt edit that changes the marker leaves every regex here
+# matching nothing, the figure gate permanently unsatisfied, and the failure
+# looks like "the model stopped describing figures" rather than like an edit.
+
+
+def test_the_figure_prompts_output_form_is_what_the_parser_matches():
+    """Both prompts show the model a blockquote; _FIGURE_LINE must accept it."""
+    for prompt in (transcribe.prompts.FIGURE_PROMPT,
+                   transcribe.prompts.TRANSCRIPTION_PROMPT):
+        shown = [
+            ln for ln in prompt.splitlines()
+            if ln.lstrip().startswith("> **Figure:**")
+        ]
+        assert shown, f"prompt no longer shows a figure blockquote:\n{prompt}"
+        for line in shown:
+            assert transcribe._FIGURE_LINE.match(line), line
+            assert transcribe._FIGURE_MARK.search(line), line
+
+
+def test_the_declines_wording_is_one_the_decline_matcher_accepts():
+    """FIGURE_PROMPT dictates an exact sentence; NO_FIGURES_MARKERS must cover
+    it, or a decline is appended to the artifact as though it were a figure."""
+    sentence = "There are no pictures on this page."
+    assert sentence in transcribe.prompts.FIGURE_PROMPT
+    assert any(m in sentence.lower() for m in transcribe.prompts.NO_FIGURES_MARKERS)
+
+
+def test_the_figure_prompt_still_asks_for_the_words_inside_the_picture():
+    """The one instruction the pass exists for. It currently sits inside the
+    prompt's own "> **Figure:** <...>" template; a 2026-08-09 probe tested
+    hoisting it into a numbered step and found NO difference on a rested
+    endpoint (8/8 both arms), so the shape is not load-bearing — but the
+    directive's presence is."""
+    prompt = transcribe.prompts.FIGURE_PROMPT
+    assert [
+        ln for ln in prompt.splitlines()
+        if "printed" in ln and "inside" in ln.lower()
+    ], "the copy-every-word-inside-the-picture directive is gone"
+
+
+# Regression, 2026-08-09. Page 5 of the live RFP carried two aerial maps and
+# never got a figure block, across every run of two sessions. The figure pass
+# was not failing: probed directly on that page's production raster, 16 of 16
+# replies read "Civic Park - 2023", "Tower Park - 2025" and "Yanaguana Garden -
+# 2015" off the map. All 16 were then DROPPED by the novelty check at 0.048.
+#
+# _WORD_RE required a leading letter, so a number was never a content word. The
+# map's labels are place names the page's prose already uses plus the years, and
+# with the years invisible a correct reading of the picture scored as a pure
+# echo of the text layer. The most decisive evidence that the model looked --
+# numbers printed inside the picture -- was the one thing the metric could not
+# see. Counting numbers takes those replies to 0.167 and keeps 16 of 16, and
+# moves no page's trigger decision on the 10-page corpus.
+
+
+def test_numbers_printed_inside_a_picture_count_as_content():
+    assert transcribe._content_words("Civic Park - 2023") == {"civic", "park", "2023"}
+
+
+def test_a_figure_pass_whose_only_new_information_is_numbers_is_kept(figure_page_pdf):
+    """The page-5 shape in miniature: every WORD of the reply is already in the
+    text layer and only the numbers are new."""
+    vision = FakeVisionClient(
+        reply=_ECHO,
+        figure_reply="> **Figure:** The garden 2023, the park 2025, downtown 2015.",
+    )
+
+    result = transcribe_document(figure_page_pdf, vision=vision)
+
+    assert len(vision.figure_calls) == 1
+    assert "2023" in result.markdown and "2015" in result.markdown
+    assert "| figure pass -->" in result.markdown
+
+
+def test_a_reply_whose_numbers_are_already_known_is_still_dropped(scanned_pdf, serial):
+    """The valve must keep working: numbers count on BOTH sides of the ratio, so
+    re-serving figures the page already prints buys nothing. This is what keeps
+    a table misread as a picture out of the artifact — measured live on a page
+    of insurance limits, 0.045 before this change and 0.042 after.
+
+    Uses the scanned route deliberately: there the baseline is the transcription
+    reply, so the test controls both sides of the comparison.
+    """
+    vision = FakeVisionClient(
+        reply=_SCAN_ECHO + " The budget range is 50000 to 100000 for the work.",
+        figure_reply="> **Figure:** 50000 100000 garden park thirteen acres downtown.",
+    )
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert len(vision.figure_calls) == 3
+    assert "figure pass -->" not in result.markdown
+
+
+# Regression, 2026-08-09, the other half of page 5. Novelty is a RATIO over the
+# whole reply, so a reply that reads the picture correctly AND then pads itself
+# with the page's prose is punished for the padding. Traced live on the scanned
+# route, four reps of the same page: two replies read the maps, and one of those
+# was dropped at 0.065 because it restated the page body around the labels.
+#
+# The question the check exists to ask is "did this reply bring anything back",
+# which is a count, not a proportion. Measured novel-content-word counts on the
+# corpus: a reply that read the maps carries 4, a table misread as a figure
+# carries 1, a pure caption echo carries 0. A floor of 3 sits in that gap with
+# margin on both sides, the same way 0.10 sits between 1.6% and 17.7%.
+
+# Long enough that four novel tokens cannot clear the ratio on their own.
+_PADDED_BASE = (
+    "The green space in Yanaguana Garden and Civic Park covers thirteen acres in "
+    "downtown San Antonio. Donor sponsored trees have already been planted, so "
+    "creating a pilot programme this year is necessary. At Civic Park the rows of "
+    "Mexican Sycamores that flank the main promenade stand twenty feet apart "
+    "across it and eighteen feet along its length. Visitors may scan a code "
+    "beside any tree to open a recorded tribute, a photograph and a short message "
+    "from the family who gave it. Future phases will add historic structures, "
+    "renderings of planned amenities and a searchable directory of every donor."
+)
+_PADDED_FIGURE = (
+    "> **Figure:** Civic Park - 2023 Tower Park - 2025 Yanaguana Garden - 2015. "
+    + _PADDED_BASE
+)
+
+
+def test_a_padded_reply_that_did_read_the_picture_is_kept(scanned_pdf, serial):
+    novel = len(
+        transcribe._content_words(_PADDED_FIGURE)
+        - transcribe._content_words(_PADDED_BASE)
+    )
+    assert transcribe._novelty(_PADDED_FIGURE, _PADDED_BASE) < 0.10, (
+        "fixture must reproduce the dilution, else the test is vacuous"
+    )
+    assert novel >= 3, "fixture must carry real new information"
+
+    vision = FakeVisionClient(reply=_PADDED_BASE, figure_reply=_PADDED_FIGURE)
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert "2023" in result.markdown and "Tower Park" in result.markdown
+    assert "| figure pass -->" in result.markdown
+
+
+def test_one_stray_novel_word_does_not_clear_the_floor(scanned_pdf, serial):
+    """The page-9 shape: a table of insurance limits reported as figures, whose
+    only new token was "employer's". One is not information."""
+    vision = FakeVisionClient(
+        reply=_PADDED_BASE,
+        figure_reply="> **Figure:** " + _PADDED_BASE + " Employer's.",
+    )
+
+    result = transcribe_document(scanned_pdf, vision=vision)
+
+    assert "figure pass -->" not in result.markdown
