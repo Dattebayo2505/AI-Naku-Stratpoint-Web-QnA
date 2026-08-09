@@ -16,13 +16,30 @@ Two constraints in this prompt are counter-intuitive and will be re-litigated:
    only. Do not post-process heading levels across pages afterwards — that is
    guessing at document structure from twenty independent guesses.
 
-2. **Anti-summarization language is load-bearing, not boilerplate.** Under load
-   a vision model's failure mode is summarizing instead of transcribing:
-   measured on meta/llama-3.2-11b, the same invoice page that transcribed
-   perfectly at 1120x1456 dropped its entire Overview body and only summarized
-   at 2240x2912. Nemotron has not been observed doing this, but it has also
-   never been run without these bullets. Every dropped clause is a lost
-   requirement; do not remove them to find out.
+2. **Anti-summarization language: measured inert on nemotron, kept anyway.**
+   The bullets are "Transcribe EVERY word...", "Do not add commentary..." and
+   "Do not interpret...". They were long justified by meta/llama-3.2-11b
+   dropping an invoice page's entire Overview body at 2240x2912 while
+   transcribing it perfectly at 1120x1456 — but read that comparison again: the
+   prompt was the CONTROL in it. It showed that summarization is a real failure
+   mode of a vision model on this task. It never showed that these bullets
+   prevent it. "Load-bearing" was an inference wearing a measurement's clothes.
+
+   Actually ablated 2026-08-09: three control runs against three ablated runs
+   over the same 10-page scan, interleaved and rate-limited. Content-word recall
+   was 1.000 on every page that returned, in both arms. Commentary and
+   interpretation phrases — which recall cannot see, because they ADD words —
+   were counted separately and came to zero, in both arms. The only difference
+   was ~5% more output characters without them. On this corpus they do nothing.
+
+   They stay for two reasons that are not inertia. The corpus does not contain
+   the condition meta actually failed on, a dense page at an oversized raster;
+   1.000 recall is a ceiling and this document may simply be easy. And the trade
+   is asymmetric — ~100 prompt tokens per page against a silently dropped clause
+   in a priced proposal. Summarization is the one hop-1 failure with no
+   signature: it yields a clean, well-formed page and an empty ``pages_failed``.
+   Do not drop them without re-running that ablation on a document that is
+   dense, not merely long.
 
 Observed behaviour on the live endpoint, after tuning (recorded so the next
 person does not repeat the search):

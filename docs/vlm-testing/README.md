@@ -51,3 +51,43 @@ No drift from the numbers above. The empty `shallow_headings` column is the
 clamp doing its job — the raw model output in three of six pre-switch runs
 carried `#`/`##` headings, and none reach the artifact now.
 
+### `pages_failed` is not reliably `[]` — budget for ~3%
+
+Across six further rate-limited runs of the scanned file (60 vision pages),
+**two pages failed, both with `The read operation timed out`** — one in a
+control run, one in an ablated run. That is `VISION_TIMEOUT` firing on the
+endpoint's throttle-by-*delaying* behaviour, working exactly as designed: an
+indefinite stall becomes one recorded entry in `pages_failed` instead of a
+hung parse.
+
+So a single clean run is luck, not the contract. If you are re-validating, read
+the failure *reason* out of the provenance comment rather than counting
+failures — a read timeout is the endpoint, and a refusal or short response
+would be the model. Do not retune `VISION_TIMEOUT` off a couple of timeouts;
+that soft failure is the degradation the page loop is built around.
+
+## Prompt ablation, 2026-08-09
+
+Question: are `TRANSCRIPTION_PROMPT`'s three anti-summarization bullets
+("Transcribe EVERY word...", "Do not add commentary...", "Do not interpret...")
+doing anything on nemotron, or are they meta-era cargo?
+
+Method: three control runs interleaved with three ablated runs over
+`[TECH] rfp16_IMAGE.pdf`, spaced to stay under the 40 RPM limit. Two metrics,
+because recall alone only tests the first bullet — summarization *drops* words,
+while commentary and interpretation *add* them and are invisible to recall.
+
+| Arm | Runs | Recall (pages that returned) | Commentary phrases | Output chars |
+|---|---|---|---|---|
+| control | 3 | 1.000 on every page | 0 | ~11,400 |
+| ablated | 3 | 1.000 on every page | 0 | ~11,980 |
+
+**No measurable effect on this corpus.** The bullets are kept anyway — the
+reasoning, and the trap in the original meta measurement, are recorded in
+`docparse/prompts.py` constraint 2. Read that before deleting them.
+
+A first, unspaced pass fired ~54 calls in a few minutes and showed 2 failed
+pages in the ablated arm against 0 in control. That was rate limiting landing
+unevenly, not a prompt effect; it disappeared once the runs were spaced. Space
+your runs, or you will measure the endpoint instead of the model.
+
