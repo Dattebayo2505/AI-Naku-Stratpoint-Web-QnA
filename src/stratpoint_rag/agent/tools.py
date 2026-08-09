@@ -42,6 +42,7 @@ from stratpoint_rag.agent.contracts import (
     RoleBreakdownItem,
 )
 from stratpoint_rag.agent.models import ProposalData
+from stratpoint_rag.currency_calculator import calculate_role_rate
 from stratpoint_rag.docparse import BriefRef, extract_brief
 from stratpoint_rag.rag.answer import answer_grounded as _rag_answer_grounded
 from stratpoint_rag.rag.retrieve import retrieve as _retrieve
@@ -460,55 +461,74 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
             complexity=d.get("complexity", "medium"),
         )
 
-    # Skeleton placeholder calculation (returns realistic stub data so agent loop remains runnable)
+    # Detect target currency and tech stack hints from captured session requirements / input payload
+    captured = _proposal_sink.get()
+    target_currency = "USD"
+    if captured and captured.requirements and captured.requirements.currency_code:
+        target_currency = captured.requirements.currency_code
+
+    tech_hints = list(payload.features) + list(payload.target_platform)
+
     num_features = max(1, len(payload.features))
     complexity_mult = 1.2 if payload.complexity in ("high", "complex") else (0.8 if payload.complexity in ("low", "simple") else 1.0)
     weeks = round((4.0 + num_features * 1.3) * complexity_mult, 1)
+
+    # Handbook.md rate lookup per role adjusted by tech stack and target currency
+    tech_lead_rate, _ = calculate_role_rate("Tech Lead / Solutions Architect", target_currency=target_currency, tech_stack_hints=tech_hints)
+    engineer_rate, _ = calculate_role_rate("Senior Fullstack Engineer", target_currency=target_currency, tech_stack_hints=tech_hints)
+    qa_rate, _ = calculate_role_rate("QA Automation Manager", target_currency=target_currency, tech_stack_hints=tech_hints)
+    designer_rate, _ = calculate_role_rate("UI/UX Designer", target_currency=target_currency, tech_stack_hints=tech_hints)
+
+    r1_rate = float(tech_lead_rate)
+    r2_rate = float(engineer_rate)
+    r3_rate = float(qa_rate)
+    r4_rate = float(designer_rate)
 
     roles = [
         RoleBreakdownItem(
             role="Tech Lead / Solutions Architect",
             estimated_hours=weeks * 15,
-            hourly_rate=100.0,
-            total_cost=weeks * 15 * 100.0,
+            hourly_rate=r1_rate,
+            total_cost=round(weeks * 15 * r1_rate, 2),
         ),
         RoleBreakdownItem(
             role="Senior Fullstack Engineer",
             estimated_hours=weeks * 30,
-            hourly_rate=75.0,
-            total_cost=weeks * 30 * 75.0,
+            hourly_rate=r2_rate,
+            total_cost=round(weeks * 30 * r2_rate, 2),
         ),
         RoleBreakdownItem(
             role="QA Automation Manager",
             estimated_hours=weeks * 15,
-            hourly_rate=50.0,
-            total_cost=weeks * 15 * 50.0,
+            hourly_rate=r3_rate,
+            total_cost=round(weeks * 15 * r3_rate, 2),
         ),
         RoleBreakdownItem(
             role="UI/UX Designer",
             estimated_hours=weeks * 10,
-            hourly_rate=60.0,
-            total_cost=weeks * 10 * 60.0,
+            hourly_rate=r4_rate,
+            total_cost=round(weeks * 10 * r4_rate, 2),
         ),
     ]
 
     total_cost = sum(r.total_cost for r in roles)
 
+    feature_str = ", ".join(payload.features[:3]) if payload.features else "Core System Features"
     phases = [
         PhaseTimelineItem(
             phase_name="Phase 1: Discovery & System Architecture",
             duration_weeks=round(weeks * 0.2, 1),
-            milestones=["Technical Architecture Document", "UI/UX Wireframes"],
+            milestones=["Technical Architecture Document", "UI/UX Wireframes & Component Specs"],
         ),
         PhaseTimelineItem(
             phase_name="Phase 2: Core Development & Integration",
             duration_weeks=round(weeks * 0.5, 1),
-            milestones=["Feature Implementation", "API Integrations", "Database Setup"],
+            milestones=[f"Sprint Deliverables ({feature_str})", "API Integrations & Database Schema"],
         ),
         PhaseTimelineItem(
-            phase_name="Phase 3: QA, Security & Deployment",
+            phase_name="Phase 3: QA, Security & Production Deployment",
             duration_weeks=round(weeks * 0.3, 1),
-            milestones=["Security Audit & GDPR Compliance", "User Acceptance Testing", "Production Launch"],
+            milestones=["End-to-End QA Testing", "Security Audit & Performance Optimization", "Production Launch & Handoff"],
         ),
     ]
 
@@ -517,7 +537,7 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
         estimated_weeks=weeks,
         role_breakdown=roles,
         phase_timeline=phases,
-        summary=f"Skeleton Stub Estimate: {weeks} weeks duration for a total investment of ${total_cost:,.2f} USD.",
+        summary=f"Handbook-Based Estimate: {weeks} weeks duration for a total investment of {target_currency} {total_cost:,.2f}.",
     )
     _update_proposal_data(estimation=result)
     return result

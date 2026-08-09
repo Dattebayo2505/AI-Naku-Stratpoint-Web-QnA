@@ -16,20 +16,47 @@ from typing import Any
 EXCHANGE_RATE_PESOS_PER_DOLLAR: float = 60.0
 DEFAULT_EXCHANGE_RATE: Decimal = Decimal("60.0")
 
-# Standard Handbook PHP rates per hour (Handbook section 1.1)
+# Standard Handbook PHP rates per hour by role & tech stack (Handbook Section 1.1)
 HANDBOOK_PHP_RATES: dict[str, Decimal] = {
-    "Tech Lead / Solutions Architect": Decimal("3600.00"),
-    "Senior Fullstack Engineer": Decimal("2700.00"),
-    "QA Automation Manager": Decimal("1800.00"),
-    "UI/UX Designer": Decimal("2100.00"),
+    "Tech Lead / Solutions Architect": Decimal("3567.00"),  # ₱3,190 - ₱3,944/hr
+    "Solution Architect": Decimal("3915.00"),               # ₱3,480 - ₱4,350/hr
+    "Senior Fullstack Engineer": Decimal("2987.00"),        # ₱2,610 - ₱3,364/hr
+    "Senior Frontend Developer": Decimal("2668.00"),        # ₱2,320 - ₱3,016/hr
+    "Senior Backend Developer": Decimal("2813.00"),         # ₱2,436 - ₱3,190/hr
+    "QA Automation Manager": Decimal("1856.00"),            # ₱1,624 - ₱2,436/hr
+    "UI/UX Designer": Decimal("2100.00"),                   # ₱1,740 - ₱2,436/hr
 }
 
-# Standard Base USD rates per hour
-BASE_USD_RATES: dict[str, Decimal] = {
-    "Tech Lead / Solutions Architect": Decimal("100.00"),
-    "Senior Fullstack Engineer": Decimal("75.00"),
-    "QA Automation Manager": Decimal("50.00"),
-    "UI/UX Designer": Decimal("60.00"),
+# Tech-Stack Specific Senior Rates from Handbook Section 1.1
+HANDBOOK_STACK_RATES_PHP: dict[str, Decimal] = {
+    "go": Decimal("3567.00"),          # Go: ₱3,190 – ₱3,944/hr
+    "golang": Decimal("3567.00"),
+    "ai": Decimal("3625.00"),          # Senior AI/ML: ₱3,190 – ₱4,060/hr
+    "ml": Decimal("3625.00"),
+    "blockchain": Decimal("3857.00"),  # Senior Blockchain: ₱3,364 – ₱4,350/hr
+    "security": Decimal("3480.00"),    # Senior Security: ₱3,016 – ₱3,944/hr
+    "mobile": Decimal("2987.00"),      # Senior Mobile (iOS/Android): ₱2,610 – ₱3,364/hr
+    "ios": Decimal("2987.00"),
+    "android": Decimal("2987.00"),
+    "next.js": Decimal("3132.00"),     # Next.js/Nuxt: ₱2,784 – ₱3,480/hr
+    "nuxt": Decimal("3132.00"),
+    "python": Decimal("2987.00"),      # Python: ₱2,610 – ₱3,364/hr
+    "angular": Decimal("2987.00"),     # Angular: ₱2,610 – ₱3,364/hr
+    "react": Decimal("2813.00"),       # React: ₱2,436 – ₱3,190/hr
+    "node.js": Decimal("2813.00"),     # Node.js: ₱2,436 – ₱3,190/hr
+    "vue.js": Decimal("2668.00"),      # Vue.js: ₱2,320 – ₱3,016/hr
+    "php": Decimal("2494.00"),         # PHP/Laravel: ₱2,204 – ₱2,784/hr
+    "laravel": Decimal("2494.00"),
+}
+
+# Software & License Annual Prices in PHP from Handbook Section 1.2
+HANDBOOK_LICENSE_PHP_ANNUAL: dict[str, Decimal] = {
+    "google_workspace_starter": Decimal("6467.64"),
+    "google_workspace_standard": Decimal("15872.04"),
+    "google_workspace_plus": Decimal("20579.64"),
+    "gemini_standard": Decimal("23132.04"),
+    "gemini_plus": Decimal("38364.84"),
+    "google_ai_pro": Decimal("12574.81"),
 }
 
 
@@ -92,25 +119,56 @@ def convert_currency(
     return converted.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def lookup_handbook_rate(
+    role_name: str,
+    tech_stack_hints: list[str] | None = None,
+    target_currency: str = "USD",
+    rate: float | Decimal = EXCHANGE_RATE_PESOS_PER_DOLLAR,
+) -> Decimal:
+    """Look up exact PHP hourly rate from handbook.md based on role and tech stack hints,
+    and convert to target_currency (USD or PHP) using 60 Pesos = 1 Dollar rate.
+    """
+    target_c = normalize_currency_code(target_currency)
+
+    # Check for tech stack specific rate in handbook.md
+    php_rate = None
+    if tech_stack_hints:
+        for hint in tech_stack_hints:
+            h_clean = hint.strip().lower()
+            for key, stack_rate in HANDBOOK_STACK_RATES_PHP.items():
+                if key in h_clean:
+                    php_rate = stack_rate
+                    break
+            if php_rate:
+                break
+
+    if not php_rate:
+        php_rate = HANDBOOK_PHP_RATES.get(role_name, Decimal("2987.00"))
+
+    if target_c == "PHP":
+        return php_rate
+    else:
+        return convert_currency(php_rate, "PHP", "USD", rate=rate)
+
+
 def calculate_role_rate(
     role_name: str,
     target_currency: str = "USD",
     rate: float | Decimal = EXCHANGE_RATE_PESOS_PER_DOLLAR,
+    tech_stack_hints: list[str] | None = None,
 ) -> tuple[Decimal, str]:
     """Calculate hourly rate for a role in target currency (PHP or USD).
 
-    If target_currency is 'PHP', uses Handbook PHP rates (or converts USD base rates).
-    If target_currency is 'USD', converts Handbook PHP rates using 60 Pesos = 1 Dollar.
+    Refers to handbook.md PHP rates and converts using 60 Pesos = 1 Dollar.
 
     Returns:
         tuple[Decimal, str]: (hourly_rate, target_currency_code)
     """
     target_c = normalize_currency_code(target_currency)
-    base_usd = BASE_USD_RATES.get(role_name, Decimal("75.00"))
-    handbook_php = HANDBOOK_PHP_RATES.get(role_name, base_usd * Decimal("60.0"))
-
-    if target_c == "PHP":
-        return (handbook_php, "PHP")
-    else:
-        usd_rate = convert_currency(handbook_php, "PHP", "USD", rate=rate)
-        return (usd_rate, "USD")
+    converted_rate = lookup_handbook_rate(
+        role_name=role_name,
+        tech_stack_hints=tech_stack_hints,
+        target_currency=target_c,
+        rate=rate,
+    )
+    return (converted_rate, target_c)

@@ -45,11 +45,25 @@ def test_convert_currency_same_currency():
 def test_calculate_role_rate():
     rate_php, code_php = calculate_role_rate("Tech Lead / Solutions Architect", "PHP")
     assert code_php == "PHP"
-    assert rate_php == Decimal("3600.00")
+    assert rate_php == Decimal("3567.00")
 
     rate_usd, code_usd = calculate_role_rate("Tech Lead / Solutions Architect", "USD")
     assert code_usd == "USD"
-    assert rate_usd == Decimal("60.00")  # 3600 / 60 = 60.00
+    assert rate_usd == Decimal("59.45")  # 3567 / 60 = 59.45
+
+
+def test_tech_stack_handbook_rate():
+    # Go Senior rate from handbook.md (₱3,567/hr PHP -> $59.45/hr USD)
+    rate_go, _ = calculate_role_rate("Senior Fullstack Engineer", "USD", tech_stack_hints=["Go Backend"])
+    assert rate_go == Decimal("59.45")
+
+    # React Senior rate from handbook.md (₱2,813/hr PHP -> $46.88/hr USD)
+    rate_react, _ = calculate_role_rate("Senior Fullstack Engineer", "USD", tech_stack_hints=["React SPA"])
+    assert rate_react == Decimal("46.88")
+
+    # AI/ML Senior rate from handbook.md (₱3,625/hr PHP -> $60.42/hr USD)
+    rate_ai, _ = calculate_role_rate("Senior Fullstack Engineer", "USD", tech_stack_hints=["AI Model Tuning"])
+    assert rate_ai == Decimal("60.42")
 
 
 def test_discrepancy_conversion_in_mapping():
