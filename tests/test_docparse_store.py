@@ -280,3 +280,39 @@ def test_sweep_removes_the_session_dir_once_it_is_empty(uploads, monkeypatch):
 
 def test_sweep_is_safe_when_the_root_does_not_exist(uploads):
     assert store.sweep(now=0.0) == 0
+
+
+# ── reserved filenames ─────────────────────────────────────────────────────
+#
+# The upload directory also holds meta.json and transcription.md. An upload
+# landing on either name collides with a file the pipeline owns — and
+# "transcription.md" was the damaging one: it made resolve_briefs report the
+# brief as transcribed when hop 1 had never run, so read_brief served the raw
+# upload as a transcription and extract_brief's guard was bypassed.
+
+
+@pytest.mark.parametrize("name", ["transcription.md", "meta.json", "Transcription.MD", "META.JSON"])
+def test_uploads_cannot_claim_a_reserved_filename(uploads, name):
+    record = store.save_upload("sess", "up1", name, PDF)
+
+    assert record.path.name.casefold() not in ("transcription.md", "meta.json")
+    assert record.path.read_bytes() == PDF               # payload intact
+    assert record.path != record.transcription_path
+    # The metadata write must not have clobbered the payload.
+    assert store.find_upload("sess", "up1").sha256 == hashlib.sha256(PDF).hexdigest()
+
+
+def test_a_reserved_name_upload_is_not_reported_as_transcribed(uploads):
+    """The bypass this guards: no hop 1 has run, so the brief is untranscribed."""
+    store.save_upload("sess", "up1", "transcription.md", PDF)
+
+    briefs = store.resolve_briefs("sess", ["up1"])
+
+    assert len(briefs) == 1
+    assert briefs[0].transcribed is False
+    assert briefs[0].markdown_path is None
+
+
+def test_ordinary_filenames_are_untouched(uploads):
+    record = store.save_upload("sess", "up1", "client-brief.pdf", PDF)
+    assert record.path.name == "client-brief.pdf"

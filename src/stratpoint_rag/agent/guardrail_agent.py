@@ -17,7 +17,15 @@ from stratpoint_rag.rag.answer import answer_grounded
 
 log = logging.getLogger(__name__)
 
+# Bounded, because the API is a long-lived uvicorn on an LXC that may not
+# restart for days and a session id is created per browser tab. Entries were
+# only ever removed by an explicit "Reset conversation", so every abandoned tab
+# leaked one ConversationMemory and its whole turn history, permanently.
+# Insertion order is eviction order — the same rule and the same reasoning as
+# `docparse/extract._CACHE`. Evicting the oldest conversation is safe: it costs
+# that session its history, which is exactly what a restart would have cost it.
 _memories: dict[str, ConversationMemory] = {}
+_MEMORIES_MAX = 256
 
 _RESOURCE_PATTERNS = re.compile(
     r"(pdf|whitepaper|white\s*paper|download|resource|document|report|brochure|"
@@ -89,6 +97,8 @@ def _wants_resource(message: str) -> bool:
 def _get_memory(session_id: str | None = None) -> ConversationMemory:
     sid = session_id or "default"
     if sid not in _memories:
+        if len(_memories) >= _MEMORIES_MAX:
+            _memories.pop(next(iter(_memories)))
         _memories[sid] = ConversationMemory(session_id=sid)
     return _memories[sid]
 
@@ -110,7 +120,11 @@ def _name_suggestion(briefs: list[BriefRef] | None) -> tuple[str | None, str | N
     iteration does not answer.
     """
     for brief in briefs or []:
-        if not brief.transcribed:
+        # Read the attribute rather than the `transcribed` property: they mean
+        # the same thing, but only this form tells a type checker the path is
+        # not None — and a `Path(None)` would raise TypeError, which the OSError
+        # handler below would not catch.
+        if not brief.markdown_path:
             continue
         try:
             markdown = Path(brief.markdown_path).read_text(encoding="utf-8")
@@ -342,7 +356,17 @@ def run_with_guardrails(
             from stratpoint_rag.rag.store import VectorStore
             store = VectorStore()
             got = store.col.get(where_document={"$contains": "office"}, include=["metadatas"])
-            slugs = [m["slug"].replace("_", " ") for m in (got.get("metadatas") or [])]
+            # .get(), not [] — this is a query-expansion nicety, and a metadata
+            # row written without a slug (a partial or older ingest) must not
+            # turn an ordinary contact question into a KeyError and a 502.
+            # str() as well as .get(): Chroma metadata values are typed as
+            # str|int|float|bool, so a slug written as a number would fail on
+            # .replace the same way a missing key failed on [].
+            slugs = [
+                str(m.get("slug")).replace("_", " ")
+                for m in (got.get("metadatas") or [])
+                if m and m.get("slug")
+            ]
             if slugs:
                 query = f"{message} {' '.join(slugs[:10])}"
         raw, source_chunks, grounded, reasoning = answer_grounded(query, k=8, enable_reasoning=enable_reasoning)
@@ -360,12 +384,17 @@ def run_with_guardrails(
     safe_text, out_block = _run_output_guardrails(result.answer, source_chunks, config, use_nemo)
     if out_block:
         log.warning("Output blocked: %s", out_block)
+        # Recorded on the result whichever mode we are in. Fail-open used to
+        # return the answer with `guardrail_reason` unset, so a rail that
+        # actually fired left no trace anywhere the user or /metrics can see —
+        # the turn read as clean. Only fail_closed replaces the text; fail-open
+        # still ships the answer, it just stops pretending nothing happened.
+        result.guardrail_reason = out_block
         if config.mode == "fail_closed":
             result.answer = (
                 "I generated a response, but it failed safety checks. "
                 "Please rephrase your question or contact our team for assistance."
             )
-            result.guardrail_reason = out_block
             return result
     elif safe_text != result.answer:
         result.answer = safe_text

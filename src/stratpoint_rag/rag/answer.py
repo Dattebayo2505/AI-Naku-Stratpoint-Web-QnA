@@ -28,14 +28,20 @@ log = logging.getLogger(__name__)
 _DEFAULT_K = 8
 
 
-def _strip_code_fences(s: str) -> str:
+def _strip_code_fences(s: str | None) -> str:
     """Strip a leading ```json / ``` fence and trailing ``` from a model reply.
 
     Without response_format=json_object (the reasoning-on path), NIM often wraps
     the JSON body in a markdown code fence, which breaks strict JSON parsing.
     Harmless no-op when no fence is present.
+
+    ``(s or "")`` matches the twin in ``docparse/extract.py``, which has always
+    had the guard. A NIM reply can carry ``content: null`` — a filtered or
+    empty completion — and a bare ``s.strip()`` raised AttributeError there.
+    The caller's ``except`` swallowed it and returned ``None`` as the answer,
+    which then failed ``AgentResult`` validation and surfaced as a 502.
     """
-    s = s.strip()
+    s = (s or "").strip()
     if s.startswith("```"):
         s = s.split("\n", 1)[1] if "\n" in s else s[3:]
         if s.rstrip().endswith("```"):
@@ -134,7 +140,10 @@ def answer_grounded(
     data = resp.json()
     llmops.add_usage(data.get("usage"))  # per-request token accumulator
     message = data["choices"][0]["message"]
-    raw_response = message["content"]
+    # `or ""` for the same reason as the guard in _strip_code_fences: the key is
+    # present but null on a filtered or empty completion, and every downstream
+    # consumer here is typed as str.
+    raw_response = message.get("content") or ""
 
     reasoning = None
     if enable_reasoning:

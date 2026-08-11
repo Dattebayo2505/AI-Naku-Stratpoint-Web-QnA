@@ -102,3 +102,42 @@ def test_split_reasoning_leaves_plain_json_untouched():
     raw = json.dumps(_BODY)
     body, reasoning = answer_mod._split_reasoning(raw)
     assert body == raw and reasoning is None
+
+
+# ── null content from the endpoint ─────────────────────────────────────────
+#
+# `content` is present but null on a filtered or empty completion. The helper
+# did a bare `s.strip()` (its twin in docparse/extract.py has always guarded
+# with `(s or "")`), so this raised AttributeError, the surrounding except
+# swallowed it, and `answer=None` came back — which then failed AgentResult
+# validation on the non-agent path and surfaced to the user as a 502.
+
+
+def test_strip_code_fences_tolerates_none():
+    assert answer_mod._strip_code_fences(None) == ""
+
+
+@respx.mock
+def test_null_content_degrades_to_empty_text_not_an_exception(monkeypatch):
+    _stub(monkeypatch)
+    respx.post(_NIM_URL).mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": None}}]})
+    )
+
+    text, chunks, grounded, reasoning = answer_mod.answer_grounded("q")
+
+    assert text == ""          # a str, never None
+    assert grounded is None    # parse failed, as it should
+    assert chunks              # retrieval still happened
+
+
+@respx.mock
+def test_missing_content_key_degrades_the_same_way(monkeypatch):
+    _stub(monkeypatch)
+    respx.post(_NIM_URL).mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {}}]})
+    )
+
+    text, _, grounded, _ = answer_mod.answer_grounded("q")
+    assert text == ""
+    assert grounded is None

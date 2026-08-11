@@ -9,6 +9,7 @@ rates in PHP or base estimates in USD) and the client RFP / brief document curre
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -119,6 +120,27 @@ def convert_currency(
     return converted.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+# Stack hints arrive as free-text feature descriptions from an LLM, so they are
+# tokenised before they are matched. Substring matching over keys this short is
+# indefensible: "ai" is inside "Email", "Plain" and "Domain", "ml" is inside
+# "HTML", and "go" is inside "Google" and "Logo". Measured before the fix, a
+# UI/UX Designer on a brief whose features said "Plain CRUD forms" billed at the
+# senior AI/ML rate — PHP 3,625.00/hr against their own PHP 2,100.00/hr, a 73%
+# overcharge on a plain CRUD website.
+#
+# Dots, plus and hash are kept inside a token so "next.js", "node.js", "vue.js"
+# and languages like "c#"/"c++" survive tokenisation as single terms.
+_STACK_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.+#]*")
+
+
+def _stack_tokens(hints: list[str] | None) -> set[str]:
+    """Every whole word across the hints, lowercased."""
+    tokens: set[str] = set()
+    for hint in hints or []:
+        tokens.update(_STACK_TOKEN_RE.findall(str(hint).lower()))
+    return tokens
+
+
 def lookup_handbook_rate(
     role_name: str,
     tech_stack_hints: list[str] | None = None,
@@ -127,19 +149,21 @@ def lookup_handbook_rate(
 ) -> Decimal:
     """Look up exact PHP hourly rate from handbook.md based on role and tech stack hints,
     and convert to target_currency (USD or PHP) using 60 Pesos = 1 Dollar rate.
+
+    A stack hint only overrides the role's own rate on a **whole-token** match —
+    see ``_STACK_TOKEN_RE`` for what substring matching cost here.
     """
     target_c = normalize_currency_code(target_currency)
 
-    # Check for tech stack specific rate in handbook.md
+    # Check for a tech-stack-specific rate in handbook.md. Iterating the hint
+    # tokens against the rate table (rather than the table against the text)
+    # means a hint matches a key only when it *is* that key.
     php_rate = None
-    if tech_stack_hints:
-        for hint in tech_stack_hints:
-            h_clean = hint.strip().lower()
-            for key, stack_rate in HANDBOOK_STACK_RATES_PHP.items():
-                if key in h_clean:
-                    php_rate = stack_rate
-                    break
-            if php_rate:
+    tokens = _stack_tokens(tech_stack_hints)
+    if tokens:
+        for key, stack_rate in HANDBOOK_STACK_RATES_PHP.items():
+            if key in tokens:
+                php_rate = stack_rate
                 break
 
     if not php_rate:

@@ -100,6 +100,28 @@ def parse_upload(session_id: str, upload_id: str) -> Dict[str, Any]:
         raise _handle(e, what="transcribing the document") from None
 
 
+def fetch_transcription(session_id: str, upload_id: str) -> str | None:
+    """Fetch hop 1's Markdown for an upload, or None.
+
+    Returns None rather than raising, like ``fetch_proposal``: a swept, purged
+    or not-yet-parsed upload is an expected outcome, and the caller turns it
+    into "no panel" rather than an error banner over the sidebar.
+    """
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/upload/{upload_id}/transcription",
+            params={"session_id": session_id},
+            timeout=UPLOAD_TIMEOUT,
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        response.encoding = "utf-8"
+        return response.text
+    except requests.RequestException:
+        return None
+
+
 def fetch_proposal(download_url: str) -> bytes | None:
     """Fetch a generated proposal (or its HTML twin) by the URL the agent returned.
 

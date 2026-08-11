@@ -408,3 +408,78 @@ def test_startup_purges_the_upload_dir(pdf_bytes, monkeypatch):
         pass
 
     assert purged, "uploads survived an API restart"
+
+
+# ── the size guard runs before the body is materialised ────────────────────
+
+
+def test_oversized_upload_is_rejected_before_the_body_is_handled(pdf_bytes, monkeypatch):
+    """413 was already the old behaviour — the *ordering* is what changed.
+
+    The ceiling used to be enforced only inside save_upload, i.e. on the far
+    side of the `file.file.read()` that allocates the bytes it exists to
+    prevent. Asserting the status alone would pass against either version, so
+    this asserts the request never reaches the storage layer at all.
+    """
+    monkeypatch.setenv("UPLOAD_MAX_BYTES", "100")
+    reached = []
+    monkeypatch.setattr(
+        app_module.store, "save_upload",
+        lambda *a, **kw: reached.append(1),
+    )
+
+    r = _upload(pdf_bytes)
+
+    assert r.status_code == 413
+    assert "exceeds" in r.json()["detail"]
+    assert not reached, "the oversized body reached the storage layer"
+
+
+def test_upload_within_the_limit_still_succeeds(pdf_bytes, monkeypatch):
+    monkeypatch.setenv("UPLOAD_MAX_BYTES", str(len(pdf_bytes) + 1))
+    assert _upload(pdf_bytes).status_code == 200
+
+
+# ── GET /upload/{id}/transcription ─────────────────────────────────────────
+#
+# The UI fetches this instead of stat-ing markdown_path on its own filesystem:
+# that path names a file on the API host, so the old check was always false
+# whenever Streamlit ran anywhere else and the panel silently disappeared.
+
+
+def test_transcription_is_served_over_http(pdf_bytes, monkeypatch):
+    up = _upload(pdf_bytes).json()
+    monkeypatch.setattr(
+        app_module,
+        "transcribe_document",
+        lambda path: TranscriptionResult(
+            markdown="## Page 1\n\nHello from the brief.",
+            source_file="brief.pdf", sha256="h",
+            pages_total=1, pages_parsed=1, pages_failed=[], pages_via_vision=1,
+        ),
+    )
+    client.post(f"/upload/{up['upload_id']}/parse", params={"session_id": SESSION})
+
+    r = client.get(
+        f"/upload/{up['upload_id']}/transcription", params={"session_id": SESSION}
+    )
+
+    assert r.status_code == 200
+    assert "Hello from the brief." in r.text
+
+
+def test_transcription_404s_before_parsing(pdf_bytes):
+    up = _upload(pdf_bytes).json()
+    r = client.get(
+        f"/upload/{up['upload_id']}/transcription", params={"session_id": SESSION}
+    )
+    assert r.status_code == 404
+
+
+def test_transcription_is_session_scoped(pdf_bytes):
+    """Another session's id must not reach this upload."""
+    up = _upload(pdf_bytes).json()
+    r = client.get(
+        f"/upload/{up['upload_id']}/transcription", params={"session_id": "othersess"}
+    )
+    assert r.status_code == 404

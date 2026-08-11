@@ -85,8 +85,9 @@ class RoleBreakdownItem(BaseModel):
 
     role: str = Field(..., description="Role title (e.g., Tech Lead, Senior Dev, QA).")
     estimated_hours: float = Field(..., description="Total estimated hours.")
-    hourly_rate: float = Field(..., description="Hourly rate in USD.")
-    total_cost: float = Field(..., description="Total cost in USD for this role.")
+    # Denominated in the parent EstimationResult.currency_code, not in USD.
+    hourly_rate: float = Field(..., description="Hourly rate, in the estimate's currency.")
+    total_cost: float = Field(..., description="Total cost for this role, same currency.")
 
 
 class PhaseTimelineItem(BaseModel):
@@ -100,9 +101,30 @@ class PhaseTimelineItem(BaseModel):
 
 
 class EstimationResult(BaseModel):
-    """Output payload containing cost, timeline, and breakdown details."""
+    """Output payload containing cost, timeline, and breakdown details.
 
-    total_cost_usd: float = Field(..., description="Total estimated cost in USD.")
+    **The amounts are denominated in ``currency_code``, not necessarily USD.**
+    The estimator prices from a PHP handbook and converts to whatever currency
+    the brief was written in, so a peso brief yields peso amounts. Carrying the
+    code is what stops the number being *relabelled* downstream: it used to be
+    absent, so the one Observation handed to the ReAct loop read both "a total
+    investment of PHP 1,379,994.00" and "Total Cost: $1,379,994.00 USD" — the
+    same figure under two currencies 60x apart, and the loop is instructed to
+    quote that figure to the visitor.
+
+    ``total_cost_usd`` keeps its name only so existing callers and stored
+    payloads keep resolving; read it together with ``currency_code``, never as
+    dollars. Renaming it is a worthwhile follow-up, not part of this fix.
+    """
+
+    total_cost_usd: float = Field(
+        ..., description="Total estimated cost, denominated in currency_code."
+    )
+    currency_code: str = Field(
+        "USD",
+        description="ISO code the amounts are in ('USD' or 'PHP'). Defaults to "
+        "USD so payloads written before this field existed keep their meaning.",
+    )
     estimated_weeks: float = Field(..., description="Total project timeline in weeks.")
     role_breakdown: list[RoleBreakdownItem] = Field(
         default_factory=list, description="Role-by-role cost breakdown."

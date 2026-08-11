@@ -33,14 +33,19 @@ class VectorStore:
             configuration={"hnsw": _HNSW_CONFIG},
         )
 
+    # Metadata is read with .get(), never []. A row missing a key is a partial
+    # or older ingest, and the right response is to treat that page as unknown
+    # (so it re-embeds) rather than to raise out of an ingest or a chat turn.
     def stored_hash(self, slug: str) -> str | None:
         got = self.col.get(where={"slug": slug}, limit=1, include=["metadatas"])
         metas = got.get("metadatas") or []
-        return metas[0]["content_hash"] if metas else None
+        return metas[0].get("content_hash") if metas and metas[0] else None
 
     def slugs(self) -> set[str]:
         got = self.col.get(include=["metadatas"])
-        return {m["slug"] for m in (got.get("metadatas") or [])}
+        return {
+            m["slug"] for m in (got.get("metadatas") or []) if m and m.get("slug")
+        }
 
     def delete_slug(self, slug: str) -> None:
         self.col.delete(where={"slug": slug})
@@ -78,9 +83,9 @@ class VectorStore:
         return [
             Chunk(
                 id="",
-                slug=m["slug"],
-                url=m["url"],
-                title=m["title"],
+                slug=(m or {}).get("slug") or "",
+                url=(m or {}).get("url") or "",
+                title=(m or {}).get("title") or "",
                 text=doc,
                 score=1.0 - dist,  # cosine distance -> similarity
             )

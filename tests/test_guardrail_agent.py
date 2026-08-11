@@ -268,3 +268,94 @@ def test_guardrail_agent_integration():
     """Requires NVIDIA_API_KEY and a populated Chroma store."""
     result = run_with_guardrails("What services does Stratpoint offer?")
     assert result.answer.strip()
+
+
+# ── the session-memory dict is bounded ─────────────────────────────────────
+#
+# One ConversationMemory per session id, only ever removed by an explicit
+# "Reset conversation". On a uvicorn that may not restart for days, every
+# abandoned browser tab leaked one permanently.
+
+
+def test_memories_do_not_grow_without_bound():
+    from stratpoint_rag.agent import guardrail_agent as ga
+
+    ga._memories.clear()
+    try:
+        for n in range(ga._MEMORIES_MAX + 50):
+            ga._get_memory(f"sess-{n}")
+
+        assert len(ga._memories) == ga._MEMORIES_MAX
+        # Insertion order is eviction order: the oldest went first.
+        assert "sess-0" not in ga._memories
+        assert f"sess-{ga._MEMORIES_MAX + 49}" in ga._memories
+    finally:
+        ga._memories.clear()
+
+
+def test_an_active_session_keeps_its_memory_object():
+    """Eviction must not swap the object out from under a live conversation."""
+    from stratpoint_rag.agent import guardrail_agent as ga
+
+    ga._memories.clear()
+    try:
+        first = ga._get_memory("sess-a")
+        first.clarify_streak = 2
+        assert ga._get_memory("sess-a") is first
+        assert ga._get_memory("sess-a").clarify_streak == 2
+    finally:
+        ga._memories.clear()
+
+
+# ── a fail-open output block still leaves a trace ──────────────────────────
+
+
+def test_fail_open_output_block_records_the_reason(monkeypatch):
+    """Fail-open ships the answer, but it must stop pretending nothing fired.
+
+    The reason was only ever set on the fail_closed branch, so a rail that
+    actually blocked left no mark on the response and the turn read as clean in
+    /metrics and in the debug panel.
+    """
+    from stratpoint_rag.agent import guardrail_agent as ga
+    from stratpoint_rag.guardrails.schemas import GuardrailConfig
+
+    monkeypatch.setattr(
+        ga, "_run_output_guardrails",
+        lambda text, chunks, config, use_nemo: (text, "hallucination: unsupported claim"),
+    )
+    monkeypatch.setattr(
+        ga, "route",
+        lambda msg, session_memory=None: _route_stub(),
+    )
+    monkeypatch.setattr(
+        ga, "answer_grounded",
+        lambda q, k=8, enable_reasoning=False: ("the answer", [], None, None),
+    )
+
+    config = GuardrailConfig()
+    config.mode = "fail_open"
+    result = ga.run_with_guardrails(
+        "What services does Stratpoint offer?",
+        session_id="fail-open-test",
+        guardrail_config=config,
+        use_nemo=False,
+    )
+
+    assert result.answer == "the answer"          # fail-open still ships it
+    assert result.guardrail_reason == "hallucination: unsupported claim"
+    ga.clear_memory("fail-open-test")
+
+
+def _route_stub():
+    """A minimal 'ask about Stratpoint, no clarification needed' route result."""
+    from stratpoint_rag.disambiguation.schemas import IntentCategory
+
+    class R:
+        intent = IntentCategory.ASK_STRATPOINT
+        clarification_question = None
+        rejection_reason = None
+        slots: dict = {}
+        matched_keyword = None
+
+    return R()

@@ -141,6 +141,19 @@ def upload(session_id: str = Form(...), file: UploadFile = ...) -> UploadRespons
     if not store.is_safe_id(session_id):
         raise HTTPException(status_code=400, detail="invalid session_id")
 
+    # Checked BEFORE the read, not after. `store.save_upload` enforces the same
+    # ceiling, but it can only do so once `data` is already a bytes object in
+    # memory — so the guard sat on the far side of the allocation it exists to
+    # prevent. Starlette has already spooled the part to disk past its own
+    # threshold and populated `.size`, so this costs nothing and rejects an
+    # oversized brief before the 6GB LXC has to hold it.
+    max_bytes = docparse_config.upload_max_bytes()
+    if file.size is not None and file.size > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{file.size} bytes exceeds the {max_bytes}-byte upload limit",
+        )
+
     data = file.file.read()
     # Bound disk on a container that never reboots. No scheduler, no background
     # thread — the clock is read here, at the API layer, and passed down.
@@ -224,6 +237,31 @@ def parse_upload(upload_id: str, session_id: str) -> ParseResponse:
     )
     _record_parse(t, session_id)
     return ParseResponse(upload_id=upload_id, markdown_path=str(path), **provenance)
+
+
+@app.get("/upload/{upload_id}/transcription")
+def get_transcription(upload_id: str, session_id: str) -> FileResponse:
+    """Serve hop 1's Markdown artifact over HTTP.
+
+    The UI used to render this by stat-ing ``markdown_path`` on its own
+    filesystem — but that path names a file on the *API* host. Running Streamlit
+    against the LXC, which ``STRATPOINT_API_URL`` explicitly supports, made
+    ``os.path.isfile`` always false and the "View transcription" panel silently
+    vanish. Same rule proposals already follow: the UI fetches, it never reads
+    a path the API handed it.
+
+    Session-scoped through ``find_upload``, so an id from another session is a
+    404 like any other unknown id.
+    """
+    record = store.find_upload(session_id, upload_id)
+    if record is None or not record.transcription_path.is_file():
+        raise HTTPException(status_code=404, detail=f"no transcription for {upload_id}")
+    return FileResponse(
+        record.transcription_path,
+        media_type="text/markdown; charset=utf-8",
+        filename=f"{upload_id}-transcription.md",
+        content_disposition_type="inline",
+    )
 
 
 @app.delete("/upload/{upload_id}")

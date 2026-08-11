@@ -60,6 +60,11 @@ __all__ = [
 _META = "meta.json"
 _TRANSCRIPTION = "transcription.md"
 
+# Names the pipeline owns inside an upload directory. An upload may not take
+# one — see _safe_filename. Compared casefolded because the store runs on
+# Windows too, where "Meta.JSON" is the same file.
+_RESERVED_NAMES = frozenset({_META.casefold(), _TRANSCRIPTION.casefold()})
+
 # Ids are ours (uuid4 hex) or the caller's session id, but both arrive back
 # over HTTP before being joined onto a path. Allowlist, never blocklist.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -108,10 +113,27 @@ def _dir_for(session_id: str, upload_id: str) -> Path:
 
 
 def _safe_filename(name: str) -> str:
-    """Reduce a user-supplied filename to one harmless path component."""
+    """Reduce a user-supplied filename to one harmless path component.
+
+    Traversal is handled by ``Path(name).name`` plus the character allowlist.
+    The reserved-name check is the other half: this directory also holds
+    ``meta.json`` and ``transcription.md``, and an upload landing on either of
+    those names collides with a file the pipeline owns.
+
+    ``transcription.md`` was the damaging one. The upload was written to the
+    exact path hop 1 writes to, so ``resolve_briefs`` saw the artifact on disk
+    and marked the brief transcribed without hop 1 ever running — ``read_brief``
+    then served the raw upload as though it were a transcription, with all-zero
+    page provenance, and ``extract_brief``'s "hop 1 has not run" guard was
+    bypassed by construction. ``meta.json`` was merely broken: the metadata
+    write two lines later overwrote the upload.
+    """
     stem = Path(name).name  # drops any directory part, including ../
     cleaned = _UNSAFE_FILENAME_CHARS.sub("_", stem).lstrip(".")
-    return cleaned[:120] or "upload"
+    cleaned = cleaned[:120] or "upload"
+    if cleaned.casefold() in _RESERVED_NAMES:
+        cleaned = f"upload_{cleaned}"
+    return cleaned
 
 
 def save_upload(

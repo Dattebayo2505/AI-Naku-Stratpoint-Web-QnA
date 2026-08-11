@@ -423,3 +423,101 @@ def test_usage_is_accumulated_on_the_calling_thread(monkeypatch):
     extract.extract_requirements(doc(7), text=client)
 
     assert llmops.pop_usage()["total_tokens"] == 30  # 2 calls x 15
+
+
+# ── currency detection ─────────────────────────────────────────────────────
+#
+# "PHP" is the programming language far more often than it is pesos in a
+# software RFP. The old pattern matched the bare token and returned on the first
+# hit, so an explicit "$250,000 USD" lost to a mention of the backend stack —
+# and the detected currency drives the x60 conversion in pdf_gen/mapping.py.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Backend must be PHP 8.2 with Laravel.",
+        "Budget is $250,000 USD. Stack: PHP/Laravel.",
+        "We need PHP developers and a PHP framework.",
+        "Rewrite the legacy PHP application.",
+    ],
+)
+def test_php_the_language_is_not_read_as_pesos(text):
+    assert extract.detect_currency(text) == ("$", "USD")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Target budget: ₱250,000",
+        "Project budget is in pesos (PhP 100,000)",
+        "Budget is 600,000 PHP",
+        "Total: 1,200,000 pesos",
+        "Budget PHP 2,500,000 for a PHP/Laravel rebuild.",  # both senses, one text
+    ],
+)
+def test_real_peso_amounts_are_still_detected(text):
+    assert extract.detect_currency(text) == ("₱", "PHP")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Budget is 500,000 USD", "Target price: $10,000", ""],
+)
+def test_usd_and_empty_text_default_to_dollars(text):
+    assert extract.detect_currency(text) == ("$", "USD")
+
+
+# ── the hop-2 cache is keyed by bytes, but a path is not a property of bytes ──
+
+
+def test_cached_extraction_carries_the_callers_own_source_path(tmp_path):
+    """Two sessions, identical bytes: each must get its own markdown path back.
+
+    The cache key is the sha256, which is right — identical bytes extract to
+    identical requirements. But `source_markdown_path` points inside one
+    session's upload directory, and mapping.py read_text()s it when building the
+    quote. Returning the first session's path handed the second a file the TTL
+    sweep may delete underneath it.
+    """
+    extract.clear_cache()
+
+    a = tmp_path / "sess_a" / "transcription.md"
+    b = tmp_path / "sess_b" / "transcription.md"
+    for p in (a, b):
+        p.parent.mkdir(parents=True)
+        p.write_text("## Page 1\n\nBuild a web portal.", encoding="utf-8")
+
+    def brief(path):
+        return BriefRef(
+            upload_id="u", filename="f.pdf", sha256="samehash",
+            markdown_path=str(path), pages_total=1, pages_parsed=1,
+        )
+
+    client = FakeTextClient(payload())
+    first = extract.extract_brief(brief(a), text=client)
+    second = extract.extract_brief(brief(b), text=client)   # cache hit
+
+    assert first.source_markdown_path == str(a)
+    assert second.source_markdown_path == str(b)
+    # Still a cache hit: the second call must not have spent another LLM call.
+    assert len(client.calls) == 1
+
+
+def test_cache_hit_still_returns_the_same_extracted_content(tmp_path):
+    """Re-stamping the path must not disturb anything else on the model."""
+    extract.clear_cache()
+    p = tmp_path / "transcription.md"
+    p.write_text("## Page 1\n\nBuild a web portal.", encoding="utf-8")
+    ref = BriefRef(
+        upload_id="u", filename="f.pdf", sha256="h",
+        markdown_path=str(p), pages_total=1, pages_parsed=1,
+    )
+
+    client = FakeTextClient(payload())
+    first = extract.extract_brief(ref, text=client)
+    second = extract.extract_brief(ref, text=client)
+
+    assert second.model_dump(exclude={"source_markdown_path"}) == first.model_dump(
+        exclude={"source_markdown_path"}
+    )

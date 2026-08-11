@@ -135,10 +135,20 @@ def _render_attachment_chips():
                 "could not be read.",
                 icon=":material/warning:",
             )
-        path = attachment.get("markdown_path")
-        if path and os.path.isfile(path):
+        # Fetched over HTTP, never read off disk: `markdown_path` names a file
+        # on the API host, so stat-ing it here worked only when both processes
+        # happened to share a filesystem and silently hid the panel otherwise.
+        # Loaded lazily, inside the expander, so a rerun does not re-fetch a
+        # 40k-character document the user never opened.
+        if attachment.get("parsed") and attachment.get("markdown_path"):
             with st.expander("View transcription"):
-                st.markdown(open(path, encoding="utf-8").read())
+                markdown = api_client.fetch_transcription(
+                    st.session_state.session_id, attachment["upload_id"]
+                )
+                if markdown is None:
+                    st.caption("The transcription is no longer available.")
+                else:
+                    st.markdown(markdown)
 
 
 def main():

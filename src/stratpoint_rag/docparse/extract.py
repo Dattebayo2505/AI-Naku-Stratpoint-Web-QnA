@@ -74,10 +74,27 @@ log = logging.getLogger(__name__)
 
 __all__ = ["clear_cache", "detect_currency", "extract_brief", "extract_requirements"]
 
-_PHP_PATTERN = re.compile(
-    r"(₱|\b(PHP|Php|PhP|pesos?|philippine pesos?|philippine peso)\b)",
+# An amount, not just any number: either thousands-separated (100,000) or four
+# digits and up (100000). This is what tells "PHP 100,000" (a price) apart from
+# "PHP 8.2" (a language version).
+_MONEY_NUMBER = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{4,}(?:\.\d+)?"
+
+# Unambiguous peso signals: the symbol, or the word.
+_PHP_STRONG = re.compile(r"₱|\b(?:philippine\s+)?pesos?\b", re.IGNORECASE)
+
+# The bare token "PHP" is ambiguous — it is also the programming language, which
+# is far more likely than pesos in a software RFP. It counts as currency only
+# when it sits against a monetary amount. Before this, `\bPHP\b` alone decided
+# it and the check returned on the first hit, so "Budget is $250,000 USD.
+# Stack: PHP/Laravel." was read as peso-denominated: the explicit USD amount
+# lost to a mention of the backend language. That currency then drives the x60
+# conversion in pdf_gen/mapping.py, so a US client's quote came out in pesos
+# built from USD rates multiplied by sixty.
+_PHP_AMOUNT = re.compile(
+    rf"\bPHP\b\s*(?:{_MONEY_NUMBER})|(?:{_MONEY_NUMBER})\s*\bPHP\b",
     re.IGNORECASE,
 )
+
 _USD_PATTERN = re.compile(
     r"(\$|\b(USD|dollars?|us dollars?|us dollar)\b)",
     re.IGNORECASE,
@@ -87,20 +104,22 @@ _USD_PATTERN = re.compile(
 def detect_currency(text: str | None) -> tuple[str, str]:
     """Detect whether source document text specifies PH Pesos (₱/PHP) or US Dollars ($/USD).
 
+    Evidence is *weighed*, not short-circuited: the first peso-ish token used to
+    win outright regardless of how much dollar evidence sat beside it. Ties go
+    to pesos, since an explicit peso mention is stronger evidence of intent than
+    a stray "$".
+
     Returns:
         tuple[str, str]: (currency_symbol, currency_code), e.g. ("₱", "PHP") or ("$", "USD").
     """
     if not text:
         return ("$", "USD")
 
-    php_matches = len(_PHP_PATTERN.findall(text))
+    php_matches = len(_PHP_STRONG.findall(text)) + len(_PHP_AMOUNT.findall(text))
     usd_matches = len(_USD_PATTERN.findall(text))
 
-    if php_matches > 0:
+    if php_matches > 0 and php_matches >= usd_matches:
         return ("₱", "PHP")
-    elif usd_matches > 0:
-        return ("$", "USD")
-
     return ("$", "USD")
 
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
@@ -452,7 +471,14 @@ def extract_brief(brief: BriefRef, *, text: TextClient | None = None) -> Extract
 
     cached = _CACHE.get(brief.sha256)
     if cached is not None:
-        return cached
+        # Re-stamp the provenance path onto *this* caller's copy. The cache key
+        # is the file's bytes, which is right — identical bytes extract to
+        # identical requirements — but `source_markdown_path` is not a property
+        # of the bytes, it is a path inside one session's upload directory. A
+        # second session uploading the same file used to get the first
+        # session's path back, and mapping.py read_text()s that path when
+        # building the quote: a file the TTL sweep may delete underneath it.
+        return cached.model_copy(update={"source_markdown_path": brief.markdown_path})
 
     markdown = Path(brief.markdown_path).read_text(encoding="utf-8")
     result = extract_requirements(

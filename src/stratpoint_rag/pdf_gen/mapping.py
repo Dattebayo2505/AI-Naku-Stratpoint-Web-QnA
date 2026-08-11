@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from stratpoint_rag.agent.contracts import EstimationResult, ExtractedRequirements
-from stratpoint_rag.currency_calculator import convert_currency
+from stratpoint_rag.currency_calculator import convert_currency, normalize_currency_code
 from stratpoint_rag.docparse.extract import detect_currency
 from stratpoint_rag.pdf_gen import config
 from stratpoint_rag.pdf_gen.assets import data_uri
@@ -55,6 +55,25 @@ __all__ = ["EmptyEstimate", "build_quote_context", "quote_number_for"]
 _CHEVRON_LABEL_CHARS = 40
 
 _PHASE_PREFIX = re.compile(r"^\s*(phase\s*\d+\s*[:.\-–]\s*)", re.IGNORECASE)
+
+# Category keys are matched as whole words. Cached because `infer_project_title`
+# tests ~40 keys and may run against a whole brief's text.
+_WORD_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _word_in(key: str, text: str) -> bool:
+    """True when ``key`` appears in ``text`` as a whole word or phrase.
+
+    ``\\b`` on both ends, so "ai" matches "ai" and "ai/ml" but not "email";
+    multi-word keys ("machine learning") match across a single space run.
+    Keys containing regex metacharacters ("e-commerce", "node.js") are escaped.
+    """
+    pattern = _WORD_CACHE.get(key)
+    if pattern is None:
+        body = r"\s+".join(re.escape(part) for part in key.split())
+        pattern = re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
+        _WORD_CACHE[key] = pattern
+    return pattern.search(text) is not None
 
 
 class EmptyEstimate(ValueError):
@@ -108,9 +127,20 @@ def _line_items(
     own Line Total is the fastest way to lose a client's trust in every other
     number on the page, and when the two disagree the printed factors are the
     ones the reader can check.
+
+    **The source currency is read, never guessed.** This used to infer it from
+    the size of the number — under 500 meant dollars, 500 or more meant pesos —
+    which happens to hold for the current handbook rates and for nothing else. A
+    genuine USD rate of 600/hr was divided by 60 and printed as $10.00/hr. The
+    estimator has always known which currency it priced in; it now says so on
+    ``EstimationResult.currency_code`` and this reads it.
     """
     if estimation is None:
         return []
+
+    source_currency = normalize_currency_code(
+        getattr(estimation, "currency_code", None) or "USD"
+    )
 
     items: list[LineItem] = []
     for role in estimation.role_breakdown:
@@ -118,10 +148,8 @@ def _line_items(
             continue
 
         rate = Decimal(str(role.hourly_rate))
-        if target_currency == "PHP" and role.hourly_rate < 500:
-            rate = convert_currency(role.hourly_rate, "USD", "PHP")
-        elif target_currency == "USD" and role.hourly_rate >= 500:
-            rate = convert_currency(role.hourly_rate, "PHP", "USD")
+        if source_currency != target_currency:
+            rate = convert_currency(role.hourly_rate, source_currency, target_currency)
 
         items.append(
             LineItem(
@@ -135,13 +163,15 @@ def _line_items(
         return items
 
     # No role breakdown, but a real total: quote it as one fixed-scope line
-    # rather than dropping the number the estimator did produce.
+    # rather than dropping the number the estimator did produce. Same rule as
+    # above — convert on the declared code. The old branch here keyed on the
+    # substring "PHP" appearing in the estimator's free-text summary prose.
     if estimation.total_cost_usd > 0:
         total_val = Decimal(str(estimation.total_cost_usd))
-        if target_currency == "PHP" and estimation.total_cost_usd < 5000:
-            total_val = convert_currency(estimation.total_cost_usd, "USD", "PHP")
-        elif target_currency == "USD" and estimation.total_cost_usd >= 100000 and "PHP" in estimation.summary.upper():
-            total_val = convert_currency(estimation.total_cost_usd, "PHP", "USD")
+        if source_currency != target_currency:
+            total_val = convert_currency(
+                estimation.total_cost_usd, source_currency, target_currency
+            )
 
         return [
             LineItem(
@@ -231,15 +261,25 @@ def infer_project_title(
         except Exception:
             pass
 
-    has_ai = any(k in all_text for k in ("ai", "ml", "machine learning", "llm", "rag", "gemini", "ai pro", "model"))
-    has_cloud = any(k in all_text for k in ("cloud", "devops", "infrastructure", "sre", "aws", "gcp", "azure", "kubernetes", "docker"))
-    has_data = any(k in all_text for k in ("data", "data engineering", "analytics", "pipeline", "etl", "data science"))
-    has_qa = any(k in all_text for k in ("qa", "testing", "automation test", "quality assurance")) and not any(k in all_text for k in ("web", "app", "mobile"))
+    # Whole-word matching, because these keys are short and `all_text` includes
+    # the entire brief. `"ai" in all_text` was true for any document containing
+    # "email", "domain", "maintain", "detail", "available", "chain" or "main" —
+    # and since has_ai is tested first, essentially every proposal was titled
+    # "Artificial Intelligence — AI/ML Engineering & Model Solutions". Measured:
+    # features of ["Plain contact form"] produced exactly that.
+    def has(*keys: str) -> bool:
+        """True when any key appears in ``all_text`` as a whole word/phrase."""
+        return any(_word_in(k, all_text) for k in keys)
 
-    has_web = any(k in all_text for k in ("web", "website", "web app", "webapp", "portal", "browser", "dashboard", "frontend", "fullstack", "backend"))
-    has_mobile = any(k in all_text for k in ("mobile", "ios", "android", "app store", "flutter", "react native"))
-    has_ecommerce = any(k in all_text for k in ("ecommerce", "e-commerce", "checkout", "store", "product catalog", "cart", "payment gateway"))
-    has_website_only = any(k in all_text for k in ("cms", "landing page", "corporate website", "marketing site", "wordpress")) and not any(k in all_text for k in ("dashboard", "backend api", "microservice", "saas", "fullstack"))
+    has_ai = has("ai", "ml", "machine learning", "llm", "rag", "gemini", "ai pro", "model")
+    has_cloud = has("cloud", "devops", "infrastructure", "sre", "aws", "gcp", "azure", "kubernetes", "docker")
+    has_data = has("data", "data engineering", "analytics", "pipeline", "etl", "data science")
+    has_qa = has("qa", "testing", "automation test", "quality assurance") and not has("web", "app", "mobile")
+
+    has_web = has("web", "website", "web app", "webapp", "portal", "browser", "dashboard", "frontend", "fullstack", "backend")
+    has_mobile = has("mobile", "ios", "android", "app store", "flutter", "react native")
+    has_ecommerce = has("ecommerce", "e-commerce", "checkout", "store", "product catalog", "cart", "payment gateway")
+    has_website_only = has("cms", "landing page", "corporate website", "marketing site", "wordpress") and not has("dashboard", "backend api", "microservice", "saas", "fullstack")
 
     # Handbook Category 5: Artificial Intelligence
     if has_ai:

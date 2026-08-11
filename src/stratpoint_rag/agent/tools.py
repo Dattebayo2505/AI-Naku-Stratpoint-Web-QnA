@@ -60,19 +60,50 @@ _proposal_sink: contextvars.ContextVar[ProposalData | None] = contextvars.Contex
     "agent_proposal_sink", default=None
 )
 
+# **Capture is re-entrant, and it has to be.** `run_with_guardrails` opens a
+# capture and then calls `run_react`, which opens its own and closes it in a
+# `finally`. Both run in one context, so a non-counting `end_capture` reset the
+# sinks to None *before* the outer caller read them — and its reads came back
+# empty every time. Measured: a turn whose `search_stratpoint` really did record
+# a chunk reported zero chunks and zero grounded results to the layer above.
+#
+# What that cost, all silently: the output hallucination check verified answers
+# against no source at all, and `is_grounded`/`confidence` were never set on any
+# agent turn, which also made the clarify-streak hand-off unreachable there.
+# `proposal_data` escaped only because `_finish` reads it before the reset.
+#
+# Only the outermost begin/end touches the sinks. `end_capture` clamps at zero
+# rather than going negative so an unpaired call stays a hard reset — tests use
+# it exactly that way, to clear state between cases.
+_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "agent_capture_depth", default=0
+)
+
 
 def begin_capture() -> None:
-    """Start capturing tool-retrieved chunks, grounded metadata, and proposal data."""
-    _chunk_sink.set([])
-    _grounded_sink.set([])
-    _proposal_sink.set(ProposalData())
+    """Start capturing tool-retrieved chunks, grounded metadata, and proposal data.
+
+    Nestable: an inner `begin_capture`/`end_capture` pair leaves the outer
+    caller's sinks intact.
+    """
+    if _depth.get() == 0:
+        _chunk_sink.set([])
+        _grounded_sink.set([])
+        _proposal_sink.set(ProposalData())
+    _depth.set(_depth.get() + 1)
 
 
 def end_capture() -> None:
-    """Stop capturing and reset sinks."""
-    _chunk_sink.set(None)
-    _grounded_sink.set(None)
-    _proposal_sink.set(None)
+    """Close one capture scope; the sinks clear only when the outermost closes.
+
+    An unpaired call (depth already 0) resets the sinks unconditionally.
+    """
+    depth = max(0, _depth.get() - 1)
+    _depth.set(depth)
+    if depth == 0:
+        _chunk_sink.set(None)
+        _grounded_sink.set(None)
+        _proposal_sink.set(None)
 
 
 def captured_chunks() -> list:
@@ -534,6 +565,10 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
 
     result = EstimationResult(
         total_cost_usd=total_cost,
+        # The amounts above are in target_currency. Recording which one it was is
+        # what keeps every reader downstream — the Observation formatter, the
+        # quote mapping — from having to guess it back from the magnitude.
+        currency_code=target_currency,
         estimated_weeks=weeks,
         role_breakdown=roles,
         phase_timeline=phases,
@@ -757,13 +792,23 @@ def _wrap_extract_brief_requirements(briefs: list[BriefRef]) -> Callable[[str], 
 
 
 def _wrap_estimate_cost_and_timeline(raw_input: str) -> str:
+    """Render an estimate as an Observation.
+
+    Every amount is labelled with the estimate's own currency code. Hardcoding
+    "$...USD" here put a peso figure in front of the model as dollars, in the
+    same Observation whose summary line said PHP — and the system prompt tells
+    the loop to repeat that figure to the visitor.
+    """
     res = estimate_cost_and_timeline(raw_input)
-    roles = ", ".join(f"{r.role} (${r.total_cost:,.0f})" for r in res.role_breakdown)
+    code = res.currency_code
+    roles = ", ".join(
+        f"{r.role} ({code} {r.total_cost:,.0f})" for r in res.role_breakdown
+    )
     return (
         f"Estimation Results:\n"
         f"- Summary: {res.summary}\n"
         f"- Duration: {res.estimated_weeks} weeks\n"
-        f"- Total Cost: ${res.total_cost_usd:,.2f} USD\n"
+        f"- Total Cost: {code} {res.total_cost_usd:,.2f}\n"
         f"- Role Breakdown: {roles}"
     )
 
