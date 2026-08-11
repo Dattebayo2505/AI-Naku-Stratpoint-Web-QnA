@@ -32,3 +32,45 @@ Module I own: **Prompt Engineering** (system prompts, few-shot examples, Chain-o
     *   Built an "Under the hood" debug panel (`debug_panel.py`) for every assistant turn that surfaces retrieved citations, the agent's ReAct trace (thoughts/actions/observations), grounding/refusal status, and the raw JSON response payload.
     *   Used defensive `.get()` programming to ensure the UI gracefully degrades if optional backend modules (like guardrails) are missing.
     *   Resolved a dependency issue by adding `streamlit` and `requests` to the project's `pyproject.toml` via `uv add` and testing the system end-to-end.
+
+## 2026-07-07 to 2026-07-09
+*   **Guardrails & Routing Logic Integration**:
+    *   Integrated multi-layer guardrails combining NeMo Guardrails with fast keyword pre-filtering to catch harmful or out-of-scope queries before LLM execution.
+    *   Updated default routing logic to direct general questions straight to `ASK_STRATPOINT` and skip unnecessary clarification loops.
+    *   Remediated F1-F3 testing handoff defects, fixed PDF link matching regex, and added configurable LLM timeouts.
+    *   Preserved markdown link integrity during document chunk splitting.
+*   **Prompt Schema Refinements**:
+    *   Removed explicit reasoning field from `GroundedAnswer` schema to support native LLM reasoning traces.
+    *   Added dedicated prompt ablation test suite for automated prompt regression evaluations.
+
+## 2026-07-27
+*   **LLM Cutover to Llama-3.1-8B-Instruct**:
+    *   Switched default backend model from `google/gemma-4-31b-it` to `meta/llama-3.1-8b-instruct`.
+    *   Rebuilt assistant architecture to be provider-portable and decoupled from heavy agent framework dependencies.
+*   **Plain-Text ReAct Agent Architecture**:
+    *   Designed and implemented custom plain-text ReAct parser and execution loop (`src/stratpoint_rag/agent/react.py`) with automatic reprompting, tool registry (`TOOL_SPECS`), and RAG fallback.
+    *   Implemented `anchor_entity` query rewriter to convert ambiguous pronouns into explicit entity references.
+*   **Retrieval Evaluation Framework**:
+    *   Built evaluation CLI with gold-case schema validation, rank capture, hit-rate by axis, MRR calculations, and baseline diffing.
+    *   Established corpus fingerprint baseline with separation reports to gate retrieval quality.
+
+## 2026-08-03
+*   **LLMOps & Observability**:
+    *   Implemented JSONL trace logging sink for agent turns and added a `/metrics` API endpoint for real-time operational monitoring.
+
+## 2026-08-07 to 2026-08-09
+*   **Document Parsing Engine (`docparse`)**:
+    *   Built two-hop document processing pipeline for uploaded RFPs and client briefs:
+        *   **Hop-1 (Transcription)**: Switched vision backend to `nvidia/nemotron-nano-12b-v2-vl` NIM model for document OCR, table reconstruction, and markdown rendering.
+        *   **Hop-2 (Structured Extraction)**: Extracted structured scope metadata (`EstimationInput`, features, target platforms) from client documents.
+    *   Created `read_brief` tool allowing the agent to query uploaded brief context (capped at 40 chunks max).
+*   **Proposal Generator & Currency Calculator**:
+    *   Developed currency calculator supporting PHP and USD conversions with configurable exchange rates (`EXCHANGE_RATE_PESOS_PER_DOLLAR`).
+    *   Built HTML proposal generator and PDF export pipeline (`pdf_gen`) with custom line item formatting (`license` vs `hrs`), role breakdown, and payment schedules.
+    *   Added background document processing dialog to Streamlit UI for seamless asynchronous uploads.
+
+## 2026-08-10 to 2026-08-11
+*   **Category Costing & Pricing Handbook Rules**:
+    *   Added `get_category_costings()` in `currency_calculator.py` to automatically detect Cloud/DevOps, AI/ML, Data Engineering, Security, and Software License categories from extracted brief features.
+    *   Integrated category-specific handbook rates (e.g. Senior AI/ML @ ₱3,625/hr, Senior DevOps @ ₱2,610/hr) and annual licenses (Gemini Enterprise, Cloud Storage, Google Workspace) directly into `estimate_cost_and_timeline()`.
+    *   Streamlined Streamlit sidebar layout, restored reset conversation controls, and added unit tests (`test_category_costing.py`).

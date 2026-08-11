@@ -196,3 +196,105 @@ def calculate_role_rate(
         rate=rate,
     )
     return (converted_rate, target_c)
+
+
+def get_category_costings(
+    features: list[str],
+    target_platform: list[str],
+    weeks: float,
+    target_currency: str = "USD",
+    rate: float | Decimal = EXCHANGE_RATE_PESOS_PER_DOLLAR,
+) -> list[dict[str, Any]]:
+    """Generate category-specific costing line items referenced from handbook.md
+
+    based on extracted brief features, platforms, and services.
+    Returns list of dicts suitable for creating RoleBreakdownItem objects.
+    """
+    target_c = normalize_currency_code(target_currency)
+    all_text = " ".join((features or []) + (target_platform or [])).lower()
+    additions: list[dict[str, Any]] = []
+
+    # 1. Cloud & Infrastructure Category (Handbook Section 3)
+    has_cloud = any(k in all_text for k in ("cloud", "aws", "gcp", "azure", "devops", "infrastructure", "kubernetes", "docker", "sre", "storage"))
+    if has_cloud:
+        devops_php = Decimal("2610.00")  # Senior DevOps / SRE: ₱2,610/hr
+        devops_rate = float(convert_currency(devops_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(devops_php)
+        hours = max(15.0, round(weeks * 12.0, 1))
+        additions.append({
+            "role": "Senior DevOps & Cloud Infrastructure Engineer",
+            "estimated_hours": hours,
+            "hourly_rate": round(devops_rate, 2),
+            "total_cost": round(hours * devops_rate, 2),
+        })
+
+        if any(k in all_text for k in ("storage", "10tb", "cloud storage", "backup")):
+            storage_php = Decimal("132908.04")  # Handbook Section 3: ₱132,908.04/user/yr
+            storage_cost = float(convert_currency(storage_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(storage_php)
+            additions.append({
+                "role": "Cloud Storage & Backup License Add-on (Annual)",
+                "estimated_hours": 1.0,
+                "hourly_rate": round(storage_cost, 2),
+                "total_cost": round(storage_cost, 2),
+            })
+
+    # 2. Artificial Intelligence Category (Handbook Section 5)
+    has_ai = any(k in all_text for k in ("ai", "ml", "machine learning", "llm", "rag", "model", "gemini", "ai pro", "gpt"))
+    if has_ai:
+        ai_php = Decimal("3625.00")  # Senior AI/ML Engineer: ₱3,625/hr
+        ai_rate = float(convert_currency(ai_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(ai_php)
+        hours = max(20.0, round(weeks * 15.0, 1))
+        additions.append({
+            "role": "Senior AI/ML & LLM Integration Specialist",
+            "estimated_hours": hours,
+            "hourly_rate": round(ai_rate, 2),
+            "total_cost": round(hours * ai_rate, 2),
+        })
+
+        gemini_php = Decimal("23132.04")  # Gemini Standard License: ₱23,132.04/yr
+        gemini_cost = float(convert_currency(gemini_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(gemini_php)
+        additions.append({
+            "role": "Gemini Enterprise AI Software License (Annual)",
+            "estimated_hours": 1.0,
+            "hourly_rate": round(gemini_cost, 2),
+            "total_cost": round(gemini_cost, 2),
+        })
+
+    # 3. Data Services Category (Handbook Section 4)
+    has_data = any(k in all_text for k in ("data", "etl", "analytics", "pipeline", "data engineering", "data science"))
+    if has_data and not has_ai:
+        data_php = Decimal("2610.00")  # Python Data Developer: ₱2,610/hr
+        data_rate = float(convert_currency(data_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(data_php)
+        hours = max(15.0, round(weeks * 10.0, 1))
+        additions.append({
+            "role": "Senior Data Engineering Specialist",
+            "estimated_hours": hours,
+            "hourly_rate": round(data_rate, 2),
+            "total_cost": round(hours * data_rate, 2),
+        })
+
+    # 4. Security & Audit Category (Handbook Section 1.1)
+    has_security = any(k in all_text for k in ("security", "audit", "compliance", "gdpr", "penetration", "encryption"))
+    if has_security:
+        sec_php = Decimal("3480.00")  # Security Engineer: ₱3,480/hr
+        sec_rate = float(convert_currency(sec_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(sec_php)
+        hours = max(10.0, round(weeks * 8.0, 1))
+        additions.append({
+            "role": "Senior Security & Compliance Engineer",
+            "estimated_hours": hours,
+            "hourly_rate": round(sec_rate, 2),
+            "total_cost": round(hours * sec_rate, 2),
+        })
+
+    # 5. Software & Workspace Licenses Category (Handbook Section 1.2)
+    has_workspace = any(k in all_text for k in ("google workspace", "workspace license", "email license", "google frontline"))
+    if has_workspace:
+        gw_php = Decimal("15872.04")  # Google Workspace Standard: ₱15,872.04/yr
+        gw_cost = float(convert_currency(gw_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(gw_php)
+        additions.append({
+            "role": "Google Workspace Enterprise License (Annual)",
+            "estimated_hours": 1.0,
+            "hourly_rate": round(gw_cost, 2),
+            "total_cost": round(gw_cost, 2),
+        })
+
+    return additions
