@@ -123,11 +123,12 @@ def _line_items(
         elif target_currency == "USD" and role.hourly_rate >= 500:
             rate = convert_currency(role.hourly_rate, "PHP", "USD")
 
+        unit_str = "license" if any(k in role.role.lower() for k in ("license", "add-on")) else "hrs"
         items.append(
             LineItem(
                 item_name=role.role,
                 quantity=money(role.estimated_hours),
-                unit="hrs",
+                unit=unit_str,
                 unit_price=money(rate),
             )
         )

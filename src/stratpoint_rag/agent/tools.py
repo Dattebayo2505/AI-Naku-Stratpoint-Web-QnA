@@ -42,7 +42,7 @@ from stratpoint_rag.agent.contracts import (
     RoleBreakdownItem,
 )
 from stratpoint_rag.agent.models import ProposalData
-from stratpoint_rag.currency_calculator import calculate_role_rate
+from stratpoint_rag.currency_calculator import calculate_role_rate, get_category_costings
 from stratpoint_rag.docparse import BriefRef, extract_brief
 from stratpoint_rag.rag.answer import answer_grounded as _rag_answer_grounded
 from stratpoint_rag.rag.retrieve import retrieve as _retrieve
@@ -511,7 +511,24 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
         ),
     ]
 
-    total_cost = sum(r.total_cost for r in roles)
+    # Category-specific handbook costing additions (Cloud, AI/ML, Data, Security, Licenses)
+    extra_costings = get_category_costings(
+        features=payload.features,
+        target_platform=payload.target_platform,
+        weeks=weeks,
+        target_currency=target_currency,
+    )
+    for c_item in extra_costings:
+        roles.append(
+            RoleBreakdownItem(
+                role=c_item["role"],
+                estimated_hours=c_item["estimated_hours"],
+                hourly_rate=c_item["hourly_rate"],
+                total_cost=c_item["total_cost"],
+            )
+        )
+
+    total_cost = round(sum(r.total_cost for r in roles), 2)
 
     feature_str = ", ".join(payload.features[:3]) if payload.features else "Core System Features"
     phases = [
