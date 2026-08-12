@@ -167,12 +167,16 @@ endpoint — deliberately not LangChain/LangGraph, for deterministic parsing and
 | `find_resource` — downloadable PDFs mined from retrieved chunks | live |
 | `read_brief` — read/search what an uploaded document says | live (registered only with an attachment) |
 | `extract_brief_requirements` — structured requirements from a brief | live (registered only with an attachment) |
-| `estimate_cost_and_timeline` — cost/timeline/role breakdown | **stub** (typed contract only) |
+| `estimate_cost_and_timeline` — cost/timeline/role breakdown | live (prices from `handbook.md` via `currency_calculator.py`) |
 | `generate_proposal_pdf` — render the branded proposal PDF | live (`pdf_gen`: Jinja + headless Chromium) |
 
-The remaining stub returns its real Pydantic type from `agent/contracts.py` but has a placeholder
-body marked `# TODO(teammate - …)`; swapping in an implementation means replacing the body only —
-the loop and the API are unchanged. `stratpoint_rag.api` serves the agent over HTTP,
+`estimate_cost_and_timeline` prices four base roles plus the category add-ons a brief's features
+trigger (Cloud, AI/ML, Data, Security, licences), at the handbook's PHP rates converted at a fixed
+60 PHP = 1 USD, **in whichever currency the brief itself was written in** — the amounts are
+denominated in `EstimationResult.currency_code`, not necessarily USD. Its hours-and-phases heuristics
+are still the original skeleton's, so the body keeps its `# TODO(teammate - …)` marker; swapping in
+a fuller calculator means replacing the body only — the loop and the API are unchanged.
+`stratpoint_rag.api` serves the agent over HTTP,
 wrapped by `run_with_guardrails()` (input guardrails → disambiguation → answer → output guardrails).
 
 Build the retrieval index first (one-time; regenerated from `data/`):
@@ -240,7 +244,10 @@ curl -s -F "file=@client-brief.pdf" -F "session_id=demo" \
 curl -s -X POST "http://localhost:8000/upload/<upload_id>/parse?session_id=demo"
 # -> {"markdown_path":"...","pages_total":12,"pages_parsed":11,"pages_failed":[7],...}
 
-# 3. drop it
+# 3. read the transcription back (what the UI's "View transcription" panel fetches)
+curl -s "http://localhost:8000/upload/<upload_id>/transcription?session_id=demo"
+
+# 4. drop it
 curl -s -X DELETE "http://localhost:8000/upload/<upload_id>?session_id=demo"
 ```
 
@@ -327,13 +334,22 @@ turn the sink off, or `LLMOPS_LOG_PATH` to move the file (default `llmops_traces
 
 ## Usage — cost calculator (standalone)
 
-`website_calculator.py` at the repo root is a stdlib-only website-design cost estimator. It is
-**not** wired into either package — it's reference pricing logic for the
-`estimate_cost_and_timeline` tool while that tool is still a stub.
+`util/website_calculator.py` is a stdlib-only website-design cost estimator. It is **not** wired
+into either package. It was the reference pricing logic while `estimate_cost_and_timeline` was a
+stub; the live tool prices from `handbook.md` via `src/stratpoint_rag/currency_calculator.py`
+instead, so this script is now a sanity check rather than the source of truth.
 
 ```bash
-python website_calculator.py                          # interactive prompts
-python website_calculator.py --pages 12 --style adv   # or --json for machine-readable output
+python util/website_calculator.py                          # interactive prompts
+python util/website_calculator.py --pages 12 --style adv   # or --json for machine-readable output
+```
+
+`util/count_tokens.py` is the other standalone helper — it counts NIM tokens for one or more files,
+which is how the docparse token budgets were sized. Unlike the calculator it hits the NIM endpoint,
+so it needs `NVIDIA_API_KEY` in `.env`.
+
+```bash
+python util/count_tokens.py -i data/pages/about-us.md data/pages/careers.md
 ```
 
 ## Usage — Docker (whole app, single command)

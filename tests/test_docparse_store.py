@@ -316,3 +316,32 @@ def test_a_reserved_name_upload_is_not_reported_as_transcribed(uploads):
 def test_ordinary_filenames_are_untouched(uploads):
     record = store.save_upload("sess", "up1", "client-brief.pdf", PDF)
     assert record.path.name == "client-brief.pdf"
+
+
+# ── Win32 drops trailing dots and spaces on create ──────────────────────────
+#
+# `_UNSAFE_FILENAME_CHARS` allows "." and only *leading* dots were stripped, so
+# "transcription.md." passed the reserved-name check unchanged and then landed
+# on disk as "transcription.md" — re-opening the bypass above in full.
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["transcription.md.", "transcription.md...", "TRANSCRIPTION.MD.", "meta.json."],
+)
+def test_a_trailing_dot_cannot_claim_a_reserved_filename(uploads, name):
+    record = store.save_upload("sess", "up1", name, PDF)
+
+    assert record.path.name.casefold().rstrip(". ") not in ("transcription.md", "meta.json")
+    assert not record.transcription_path.exists()
+    assert record.path.read_bytes() == PDF
+    assert store.find_upload("sess", "up1").sha256 == hashlib.sha256(PDF).hexdigest()
+
+
+def test_a_trailing_dot_upload_is_not_reported_as_transcribed(uploads):
+    store.save_upload("sess", "up1", "transcription.md.", PDF)
+
+    briefs = store.resolve_briefs("sess", ["up1"])
+
+    assert briefs[0].transcribed is False
+    assert briefs[0].markdown_path is None

@@ -127,10 +127,16 @@ def _safe_filename(name: str) -> str:
     page provenance, and ``extract_brief``'s "hop 1 has not run" guard was
     bypassed by construction. ``meta.json`` was merely broken: the metadata
     write two lines later overwrote the upload.
+
+    **Trailing dots and spaces are stripped, not only leading ones.** Win32
+    drops them on create, so ``"transcription.md."`` passed the reserved-name
+    comparison unchanged and then landed on disk as ``transcription.md`` —
+    re-opening the whole bypass above. The same casefolding comment applies:
+    this store runs on Windows too.
     """
     stem = Path(name).name  # drops any directory part, including ../
-    cleaned = _UNSAFE_FILENAME_CHARS.sub("_", stem).lstrip(".")
-    cleaned = cleaned[:120] or "upload"
+    cleaned = _UNSAFE_FILENAME_CHARS.sub("_", stem).strip(". ")
+    cleaned = cleaned[:120].strip(". ") or "upload"
     if cleaned.casefold() in _RESERVED_NAMES:
         cleaned = f"upload_{cleaned}"
     return cleaned

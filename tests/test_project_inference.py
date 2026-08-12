@@ -97,3 +97,70 @@ def test_genuine_ai_keywords_still_classify_as_ai():
         assert infer_project_title(req) == (
             "Artificial Intelligence — AI/ML Engineering & Model Solutions"
         ), feats
+
+
+# ── "model" and "data" are ordinary procurement boilerplate ────────────────
+#
+# Whole-word matching removed the email->ai class of false positive, but
+# has_ai still keyed on "model" and has_data on "data", and has_ai is tested
+# first — so a WordPress brochure site whose brief says "operating model" was
+# still headed as an AI/ML engagement.
+
+
+def test_the_word_model_does_not_title_a_proposal_as_ai():
+    req = ExtractedRequirements(
+        features=["An operating model and governance model will be agreed"],
+        target_platform=["Web"],
+        tech_stack=["WordPress"],
+    )
+    assert infer_project_title(req) != (
+        "Artificial Intelligence — AI/ML Engineering & Model Solutions"
+    )
+
+
+def test_the_word_data_alone_does_not_title_a_proposal_as_data_services():
+    req = ExtractedRequirements(
+        features=["Master data must be migrated by the vendor"],
+    )
+    assert infer_project_title(req) != (
+        "Data Services — Data Engineering & Analytics Platform"
+    )
+
+
+def test_data_engineering_keywords_still_classify_as_data():
+    req = ExtractedRequirements(features=["ETL pipeline", "Analytics warehouse"])
+    assert infer_project_title(req) == (
+        "Data Services — Data Engineering & Analytics Platform"
+    )
+
+
+def test_the_title_is_inferred_from_the_structured_fields_not_the_whole_brief(tmp_path):
+    """The whole-document read made the title depend on prose the estimate never
+    saw — one 'model' or 'store' anywhere in a 20-page RFP re-categorised it."""
+    brief = tmp_path / "transcription.md"
+    brief.write_text(
+        "An operating model and governance model will be agreed. "
+        "Records are kept in a document store.",
+        encoding="utf-8",
+    )
+    req = ExtractedRequirements(
+        features=["Contact form"],
+        target_platform=["Web"],
+        tech_stack=["WordPress"],
+        source_markdown_path=str(brief),
+    )
+    assert infer_project_title(req) == "Software Services — Custom Website & CMS"
+
+
+# ── whole-word matching must still see plurals ────────────────────────────
+#
+# The guard keys sit inside a `not has(...)`, so losing "dashboards" and
+# "microservices" made the website-only branch *more* permissive.
+
+
+def test_plural_guard_keys_keep_a_microservices_brief_out_of_the_cms_branch():
+    req = ExtractedRequirements(
+        features=["WordPress CMS front-end with admin dashboards", "microservices backend"],
+        target_platform=["Web"],
+    )
+    assert infer_project_title(req) == "Software Services — Full-Stack Web Application"

@@ -51,6 +51,7 @@ read that line as a mitigation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -72,7 +73,13 @@ from stratpoint_rag.docparse.schema import (
 
 log = logging.getLogger(__name__)
 
-__all__ = ["clear_cache", "detect_currency", "extract_brief", "extract_requirements"]
+__all__ = [
+    "clear_cache",
+    "declared_currency",
+    "detect_currency",
+    "extract_brief",
+    "extract_requirements",
+]
 
 # An amount, not just any number: either thousands-separated (100,000) or four
 # digits and up (100000). This is what tells "PHP 100,000" (a price) apart from
@@ -100,27 +107,87 @@ _USD_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# The same amount-adjacency test as `_PHP_AMOUNT`, for the dollar side. Used
+# only in the amount tier below, so a stray "$" in prose no longer outweighs a
+# peso *amount*: "Total budget: PHP 5,000,000 (approximately USD 83,000)" scored
+# PHP 1 against USD 2 under a flat majority and printed the whole proposal in
+# dollars for a client whose procurement rules are in pesos.
+_USD_AMOUNT = re.compile(
+    rf"\$\s*(?:{_MONEY_NUMBER})|\b(?:USD|(?:US\s+)?dollars?)\b\s*(?:{_MONEY_NUMBER})"
+    rf"|(?:{_MONEY_NUMBER})\s*\b(?:USD|(?:US\s+)?dollars?)\b",
+    re.IGNORECASE,
+)
+
+# A currency *declared*, rather than merely mentioned: a money noun, then a
+# connector, then the code. The connector is what keeps "the budget covers PHP
+# developers" out — a declaration reads "in PHP", "Currency: PHP", "(PHP)", not
+# "budget covers PHP". `[^.\n]` keeps the match inside one sentence and one
+# line, so a table header cannot reach across into the next row.
+_DECLARING_NOUN = (
+    r"(?:currenc(?:y|ies)|amounts?|figures?|prices?|pricing|costs?|fees?|rates?"
+    r"|budgets?|totals?|payments?|quotations?|values?|denominations?)"
+)
+_CONNECTOR = r"(?:\bin\b|\bto\b|:|=|\()\s*"
+
+
+def _declaration(token: str) -> re.Pattern[str]:
+    return re.compile(rf"{_DECLARING_NOUN}[^.\n]{{0,24}}?{_CONNECTOR}{token}", re.IGNORECASE)
+
+
+_PHP_DECLARED = _declaration(r"(?:₱|PHP\b|(?:philippine\s+)?pesos?\b)")
+_USD_DECLARED = _declaration(r"(?:\$|USD\b|(?:us\s+)?dollars?\b)")
+
+
+def declared_currency(text: str | None) -> str | None:
+    """The currency ``text`` actually names — ``"PHP"``, ``"USD"``, or None.
+
+    Three tiers, because the evidence is not all of one kind and a flat count
+    over mixed evidence loses to whichever currency the document happens to
+    mention most casually:
+
+    1. **A declaration wins.** "Currency: PHP", "All amounts are stated in
+       PHP", "Total Pricing (PHP)". Requiring an amount beside "PHP" kept the
+       *programming language* out, but it also excluded every declaration not
+       written next to a number — so a brief declaring pesos over a fee table of
+       bare figures scored zero and the client got a dollar quote for a
+       peso-budgeted engagement.
+    2. **Then amounts.** ₱ and the word "peso" count unconditionally (neither is
+       ambiguous); "PHP" and "USD"/"$"/"dollars" count when they sit against a
+       monetary amount. Ties go to pesos.
+    3. **Otherwise None** — the document is silent. ``detect_currency`` answers
+       USD there because a quote must be denominated in something; callers
+       *inferring* a source currency must be able to tell silence from a
+       positive reading, which is why this function exists separately.
+    """
+    if not text:
+        return None
+
+    php_declared = len(_PHP_DECLARED.findall(text))
+    usd_declared = len(_USD_DECLARED.findall(text))
+    if php_declared or usd_declared:
+        return "PHP" if php_declared >= usd_declared else "USD"
+
+    php_amounts = len(_PHP_STRONG.findall(text)) + len(_PHP_AMOUNT.findall(text))
+    usd_amounts = len(_USD_AMOUNT.findall(text))
+    if php_amounts and php_amounts >= usd_amounts:
+        return "PHP"
+    if usd_amounts:
+        return "USD"
+    return "USD" if _USD_PATTERN.search(text) else None
+
 
 def detect_currency(text: str | None) -> tuple[str, str]:
     """Detect whether source document text specifies PH Pesos (₱/PHP) or US Dollars ($/USD).
 
     Evidence is *weighed*, not short-circuited: the first peso-ish token used to
-    win outright regardless of how much dollar evidence sat beside it. Ties go
-    to pesos, since an explicit peso mention is stronger evidence of intent than
-    a stray "$".
+    win outright regardless of how much dollar evidence sat beside it. See
+    ``declared_currency`` for how the weighing works; a silent document reads as
+    dollars, which is this function's only difference from it.
 
     Returns:
         tuple[str, str]: (currency_symbol, currency_code), e.g. ("₱", "PHP") or ("$", "USD").
     """
-    if not text:
-        return ("$", "USD")
-
-    php_matches = len(_PHP_STRONG.findall(text)) + len(_PHP_AMOUNT.findall(text))
-    usd_matches = len(_USD_PATTERN.findall(text))
-
-    if php_matches > 0 and php_matches >= usd_matches:
-        return ("₱", "PHP")
-    return ("$", "USD")
+    return ("₱", "PHP") if declared_currency(text) == "PHP" else ("$", "USD")
 
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
@@ -440,11 +507,20 @@ def _collect(
 
 # ── cache ───────────────────────────────────────────────────────────────────
 #
-# Keyed by sha256, because the answer is about the file's bytes. This is not an
-# optimization bolted on: the ReAct loop can call the same tool more than once
-# in a single turn and Streamlit reruns constantly, so without it a redundant
-# call re-runs map-reduce — up to 5 LLM calls, ~20s. The cache is what makes the
-# tool safe to call repeatedly.
+# Not an optimization bolted on: the ReAct loop can call the same tool more than
+# once in a single turn and Streamlit reruns constantly, so without it a
+# redundant call re-runs map-reduce — up to 5 LLM calls, ~20s. The cache is what
+# makes the tool safe to call repeatedly.
+#
+# Keyed by the upload's sha256 **and the transcription's**. The upload hash
+# alone was wrong because hop 1 is a vision pipeline and its page outcomes are
+# not deterministic across runs: a 20-page scan that lost 6 pages to
+# VISION_TIMEOUT, re-uploaded and read cleanly, was handed the failed run's
+# `pages_failed` and the failed run's features back — re-uploading could never
+# produce a clean result. Hashing what hop 1 actually produced makes a better
+# transcription a different question. (Keeping the upload hash in the key too
+# preserves "different bytes are a different extraction" even when two uploads
+# happen to transcribe identically.)
 #
 # Bounded because the API process is a long-lived uvicorn on an LXC that may not
 # restart for days. Insertion order is eviction order.
@@ -469,30 +545,37 @@ def extract_brief(brief: BriefRef, *, text: TextClient | None = None) -> Extract
             f"upload {brief.upload_id} has no transcription; hop 1 has not run"
         )
 
-    cached = _CACHE.get(brief.sha256)
-    if cached is not None:
-        # Re-stamp the provenance path onto *this* caller's copy. The cache key
-        # is the file's bytes, which is right — identical bytes extract to
-        # identical requirements — but `source_markdown_path` is not a property
-        # of the bytes, it is a path inside one session's upload directory. A
-        # second session uploading the same file used to get the first
-        # session's path back, and mapping.py read_text()s that path when
-        # building the quote: a file the TTL sweep may delete underneath it.
-        return cached.model_copy(update={"source_markdown_path": brief.markdown_path})
-
     markdown = Path(brief.markdown_path).read_text(encoding="utf-8")
+    key = f"{brief.sha256}:{hashlib.sha256(markdown.encode('utf-8')).hexdigest()}"
+
+    provenance = {
+        "pages_total": brief.pages_total,
+        "pages_parsed": brief.pages_parsed,
+        "pages_failed": list(brief.pages_failed),
+    }
+
+    cached = _CACHE.get(key)
+    if cached is not None:
+        # Re-stamp the **whole** provenance block onto *this* caller's copy, not
+        # just the path. None of it is a property of the cached answer: the path
+        # points inside one session's upload directory (mapping.py read_text()s
+        # it when building the quote, so a stale one is a file the TTL sweep may
+        # delete underneath it), and the page accounting is this session's
+        # record of what hop 1 managed to read. Serving one session's
+        # `pages_failed=[]` to a session that lost six pages breaks "lost pages
+        # travel with the price" — the quote reads as if built on a clean brief.
+        return cached.model_copy(
+            update={"source_markdown_path": brief.markdown_path, **provenance}
+        )
+
     result = extract_requirements(
         markdown,
-        provenance={
-            "pages_total": brief.pages_total,
-            "pages_parsed": brief.pages_parsed,
-            "pages_failed": brief.pages_failed,
-        },
+        provenance=provenance,
         source_markdown_path=brief.markdown_path,
         text=text,
     )
 
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.pop(next(iter(_CACHE)))
-    _CACHE[brief.sha256] = result
+    _CACHE[key] = result
     return result

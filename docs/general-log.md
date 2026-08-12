@@ -10,6 +10,66 @@ refreshes the newest entry below.
 
 ---
 
+## 2026-08-09 — The chatbot now hands over a real, branded proposal PDF
+
+**What we did**
+- Worked from the task tracker at
+  `src/stratpoint_rag/ui/templates/templating-task.md` and completed all five of its
+  sections, replacing the placeholder proposal file the assistant used to produce
+  with a genuine two-page A4 document.
+- Decided the quote is **one validated data contract, rendered once**: the assistant's
+  scope and cost figures are checked against a strict schema before any document is
+  drawn. A missing field now fails loudly instead of printing a professional-looking
+  quote with a blank column.
+- Decided the document's **arithmetic is computed, never accepted from the assistant.**
+  Subtotal, tax, and grand total are derived from the line items, so the figures a
+  client checks by hand always add up. "The numbers on the quote don't add up" is the
+  single most damaging thing this document could do.
+- Decided that **an empty estimate is a failure, not a $0.00 quote.** If the scoping
+  step produced no priced work, the proposal is refused rather than issued looking
+  finished.
+- Decided **nothing on the page is invented.** No client name, company, or feature that
+  did not come from the brief, from the visitor, or from a configured constant. A
+  visitor who declines to give a name gets a correctly generic quote, which was already
+  the project's rule for extracted requirements.
+- Decided **unread pages travel with the price.** If the document reader could not read
+  pages of the brief, that appears in the quote's own notes — a proposal built on a
+  partly unreadable brief must not look like one built on a clean brief.
+- Chose **headless Chromium** as the print engine, reusing the browser the crawler
+  already installs rather than adding a second rendering toolchain to the deployment
+  container. It also renders the template's chevron roadmap graphics, which the
+  lighter alternatives cannot.
+- Established that generated quotes are **confidential and short-lived**, on the same
+  terms as uploaded briefs: stored per conversation, only downloadable by the
+  conversation that produced them, deleted on reset, swept automatically, and wiped
+  when the service restarts.
+- Verified the whole chain end to end — brief → requirements → cost scoping → PDF —
+  driven by a locally hosted model rather than the cloud endpoint, confirming the
+  proposal flow works independently of the paid API.
+
+**What we produced**
+- A two-page A4 proposal: **page 1** carries client details, scope of work, the costed
+  deliverable schedule and the grand total; **page 2** carries the phased delivery
+  roadmap with dates, clarifications, and payment terms.
+- A **Download PDF proposal** button with an in-app preview, appearing in the chat the
+  moment a proposal is ready.
+- Branding, tax rate, validity window and payment terms are configurable without
+  touching the document — see `.envexample` and the Configuration table in `README.md`.
+- Documentation: a new "Usage — proposal PDF" section in `README.md`, the design
+  rationale in `CLAUDE.md`, and the file-by-file map in `docs/ARCHITECTURE.md`.
+
+**Open / to decide**
+- The **cost calculator is still a placeholder.** The proposal now renders whatever
+  numbers it is given, so its figures are only as good as that step — this is now the
+  last stub in the proposal chain and the obvious next piece of work.
+- **Company contact details on the quote are blank by default** (address, phone, email).
+  Someone needs to supply the real ones, plus a logo file, before this is shown to a
+  client.
+- **Tax is off by default.** Whether a Philippine VAT rate should be shown, and at what
+  rate, is a business call rather than a technical one.
+
+---
+
 ## 2026-08-07 — Built the client-brief reader: drop in a PDF, get a faithful transcription
 
 **What we did**

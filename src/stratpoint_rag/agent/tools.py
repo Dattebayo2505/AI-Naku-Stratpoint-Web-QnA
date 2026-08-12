@@ -817,7 +817,10 @@ def _wrap_estimate_cost_and_timeline(raw_input: str) -> str:
     the loop to repeat that figure to the visitor.
     """
     res = estimate_cost_and_timeline(raw_input)
-    code = res.currency_code
+    # The estimator always declares one; `currency_code` is optional on the
+    # contract only so a re-supplied dict can say "undeclared" rather than
+    # silently claim dollars (see EstimationResult).
+    code = res.currency_code or "USD"
     roles = ", ".join(
         f"{r.role} ({code} {r.total_cost:,.0f})" for r in res.role_breakdown
     )

@@ -34,8 +34,12 @@ from pathlib import Path
 from typing import Any
 
 from stratpoint_rag.agent.contracts import EstimationResult, ExtractedRequirements
-from stratpoint_rag.currency_calculator import convert_currency, normalize_currency_code
-from stratpoint_rag.docparse.extract import detect_currency
+from stratpoint_rag.currency_calculator import (
+    convert_currency,
+    normalize_currency_code,
+    word_in as _word_in,
+)
+from stratpoint_rag.docparse.extract import declared_currency, detect_currency
 from stratpoint_rag.pdf_gen import config
 from stratpoint_rag.pdf_gen.assets import data_uri
 from stratpoint_rag.pdf_gen.schema import (
@@ -56,24 +60,10 @@ _CHEVRON_LABEL_CHARS = 40
 
 _PHASE_PREFIX = re.compile(r"^\s*(phase\s*\d+\s*[:.\-–]\s*)", re.IGNORECASE)
 
-# Category keys are matched as whole words. Cached because `infer_project_title`
-# tests ~40 keys and may run against a whole brief's text.
-_WORD_CACHE: dict[str, re.Pattern[str]] = {}
-
-
-def _word_in(key: str, text: str) -> bool:
-    """True when ``key`` appears in ``text`` as a whole word or phrase.
-
-    ``\\b`` on both ends, so "ai" matches "ai" and "ai/ml" but not "email";
-    multi-word keys ("machine learning") match across a single space run.
-    Keys containing regex metacharacters ("e-commerce", "node.js") are escaped.
-    """
-    pattern = _WORD_CACHE.get(key)
-    if pattern is None:
-        body = r"\s+".join(re.escape(part) for part in key.split())
-        pattern = re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
-        _WORD_CACHE[key] = pattern
-    return pattern.search(text) is not None
+# Category keys are matched as whole words, by the one matcher the rate lookup
+# uses too (`currency_calculator.word_in`, imported above). Two copies of this
+# rule had already drifted: only one of them tolerated a trailing full stop, and
+# neither matched plurals — which mattered most inside the negative guard below.
 
 
 class EmptyEstimate(ValueError):
@@ -116,6 +106,32 @@ def _as_requirements(
     return None
 
 
+def _source_currency(estimation: EstimationResult, target_currency: str) -> str:
+    """Which currency ``estimation``'s amounts are in.
+
+    Read off ``currency_code`` when the payload declares one. It often does not:
+    the model re-supplies an estimation as a dict copied out of an Observation
+    written before that field existed, and every such dict used to take the
+    contract's "USD" default. On a peso engagement that default is a **60x**
+    error in the client's favour-of-nobody — PHP 2,987.00/hr printed as
+    PHP 179,220.00/hr — and it is silent, because a relabelled number is still a
+    well-formed number.
+
+    Undeclared, the payload is asked rather than assumed: its own summary line
+    ("a total investment of PHP 1,379,994.00") is written by the estimator and
+    names the currency it priced in. Failing even that, the amounts are taken to
+    be in the quote's own currency: relabelling costs nothing, while dividing or
+    multiplying by sixty on no evidence is the error this whole function exists
+    to prevent.
+    """
+    declared = getattr(estimation, "currency_code", None)
+    if declared:
+        return normalize_currency_code(declared)
+
+    inferred = declared_currency(estimation.summary)
+    return inferred or normalize_currency_code(target_currency)
+
+
 def _line_items(
     estimation: EstimationResult | None,
     target_currency: str = "USD",
@@ -138,9 +154,7 @@ def _line_items(
     if estimation is None:
         return []
 
-    source_currency = normalize_currency_code(
-        getattr(estimation, "currency_code", None) or "USD"
-    )
+    source_currency = _source_currency(estimation, target_currency)
 
     items: list[LineItem] = []
     for role in estimation.role_breakdown:
@@ -252,29 +266,32 @@ def infer_project_title(
     platforms = [p.lower() for p in (requirements.target_platform or [])]
     features = [f.lower() for f in (requirements.features or [])]
     stack = [s.lower() for s in (requirements.tech_stack or [])]
+    # **The structured fields only.** This used to append the entire brief
+    # markdown, which made the title depend on prose the estimate never saw: one
+    # "model" or "store" anywhere in a 20-page RFP re-categorised the whole
+    # engagement, and hop 2's job is precisely to decide which of those words
+    # were requirements. `source_markdown_path` stays on the contract — the
+    # currency detector below still reads it, deliberately, because a currency
+    # *is* stated in prose.
     all_text = " ".join(platforms + features + stack).lower()
 
-    if requirements.source_markdown_path:
-        try:
-            p = Path(requirements.source_markdown_path)
-            if p.exists():
-                all_text += " " + p.read_text(encoding="utf-8").lower()
-        except Exception:
-            pass
-
-    # Whole-word matching, because these keys are short and `all_text` includes
-    # the entire brief. `"ai" in all_text` was true for any document containing
-    # "email", "domain", "maintain", "detail", "available", "chain" or "main" —
-    # and since has_ai is tested first, essentially every proposal was titled
-    # "Artificial Intelligence — AI/ML Engineering & Model Solutions". Measured:
-    # features of ["Plain contact form"] produced exactly that.
+    # Whole-word matching, because these keys are short. `"ai" in all_text` was
+    # true for any document containing "email", "domain", "maintain", "detail",
+    # "available", "chain" or "main" — and since has_ai is tested first,
+    # essentially every proposal was titled "Artificial Intelligence — AI/ML
+    # Engineering & Model Solutions". Measured: features of ["Plain contact
+    # form"] produced exactly that.
     def has(*keys: str) -> bool:
         """True when any key appears in ``all_text`` as a whole word/phrase."""
         return any(_word_in(k, all_text) for k in keys)
 
-    has_ai = has("ai", "ml", "machine learning", "llm", "rag", "gemini", "ai pro", "model")
+    # "model" and "data" are gone as standalone keys: both are ordinary
+    # procurement boilerplate ("operating model", "governance model", "master
+    # data"), and has_ai is tested first, so a WordPress brochure site was still
+    # headed as an AI/ML engagement. The compound forms carry the real signal.
+    has_ai = has("ai", "ml", "machine learning", "llm", "rag", "gemini", "ai pro")
     has_cloud = has("cloud", "devops", "infrastructure", "sre", "aws", "gcp", "azure", "kubernetes", "docker")
-    has_data = has("data", "data engineering", "analytics", "pipeline", "etl", "data science")
+    has_data = has("data engineering", "data pipeline", "data warehouse", "analytics", "pipeline", "etl", "data science")
     has_qa = has("qa", "testing", "automation test", "quality assurance") and not has("web", "app", "mobile")
 
     has_web = has("web", "website", "web app", "webapp", "portal", "browser", "dashboard", "frontend", "fullstack", "backend")

@@ -7,6 +7,7 @@ from stratpoint_rag.currency_calculator import (
     EXCHANGE_RATE_PESOS_PER_DOLLAR,
     calculate_role_rate,
     convert_currency,
+    get_category_costings,
     normalize_currency_code,
 )
 from stratpoint_rag.agent.contracts import EstimationResult, RoleBreakdownItem
@@ -116,9 +117,14 @@ def test_discrepancy_conversion_in_mapping():
     ],
 )
 def test_ordinary_words_do_not_trigger_a_stack_rate(hint):
-    """A plain CRUD website must not bill at the senior AI/ML rate."""
-    rate, _ = calculate_role_rate("UI/UX Designer", "PHP", tech_stack_hints=[hint])
-    assert rate == Decimal("2100.00")  # the designer's own handbook rate
+    """A plain CRUD website must not bill at the senior AI/ML rate.
+
+    Asked of a role the stack table *is* about, so the assertion is about
+    tokenisation and not about role eligibility — see
+    ``test_a_shared_stack_hint_does_not_override_a_non_engineering_role``.
+    """
+    rate, _ = calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=[hint])
+    assert rate == Decimal("2668.00")  # the role's own handbook rate
 
 
 @pytest.mark.parametrize(
@@ -134,7 +140,7 @@ def test_ordinary_words_do_not_trigger_a_stack_rate(hint):
 )
 def test_real_stack_hints_still_win(hint, expected):
     """The override itself must keep working — including dotted keys."""
-    rate, _ = calculate_role_rate("UI/UX Designer", "PHP", tech_stack_hints=[hint])
+    rate, _ = calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=[hint])
     assert rate == Decimal(expected)
 
 
@@ -192,3 +198,133 @@ def test_php_estimate_converts_to_a_usd_quote():
     )
     assert ctx.currency_code == "USD"
     assert ctx.line_items[0].unit_price == Decimal("50.00")  # 3000 / 60
+
+
+# ── an undeclared estimation currency is inferred, never assumed to be USD ──
+#
+# The model re-supplies an estimation as a *dict* copied out of a prior
+# Observation, and that dict predates `currency_code`. With the field defaulting
+# to "USD" the peso amounts inside it were relabelled dollars and multiplied by
+# 60 on the way to a peso quote: PHP 2,987.00/hr printed as PHP 179,220.00/hr.
+
+
+_UNDECLARED_PESO_ESTIMATE = {
+    "total_cost_usd": 1379994.0,
+    "estimated_weeks": 6.6,
+    "role_breakdown": [
+        {
+            "role": "Tech Lead",
+            "estimated_hours": 99.0,
+            "hourly_rate": 2987.0,
+            "total_cost": 295713.0,
+        }
+    ],
+    "phase_timeline": [],
+    "summary": "Handbook-Based Estimate: 6.6 weeks for a total investment of PHP 1,379,994.00.",
+}
+
+
+def test_an_undeclared_estimation_currency_is_read_from_the_estimate_itself():
+    ctx = build_quote_context(proposal_id="p9", estimation=dict(_UNDECLARED_PESO_ESTIMATE))
+
+    assert ctx.currency_code == "PHP"
+    assert ctx.line_items[0].unit_price == Decimal("2987.00")
+
+
+def test_an_undeclared_currency_survives_the_proposal_input_contract():
+    """The real path: `ProposalPDFInput` coerces the dict into an
+    `EstimationResult` before `mapping` ever sees it, so a "USD" default on the
+    contract is applied silently."""
+    from stratpoint_rag.agent.contracts import ProposalPDFInput
+
+    payload = ProposalPDFInput.model_validate(
+        {"estimation": dict(_UNDECLARED_PESO_ESTIMATE)}
+    )
+    ctx = build_quote_context(proposal_id="p10", estimation=payload.estimation)
+
+    assert ctx.currency_code == "PHP"
+    assert ctx.line_items[0].unit_price == Decimal("2987.00")
+    assert ctx.grand_total_amount < Decimal("1000000")
+
+
+# ── the stack table is consulted for the roles it is about ─────────────────
+#
+# Handbook 1.1's stack rates are labelled "Senior <stack> Engineer". One shared
+# hint list is passed for every role, so testing the table before the role's own
+# rate billed a QA manager (+61%) and a designer (+42%) at senior mobile rates.
+
+
+def test_a_shared_stack_hint_does_not_override_a_non_engineering_role():
+    hints = ["User login", "Product catalog", "Mobile"]
+
+    assert calculate_role_rate("QA Automation Manager", "PHP", tech_stack_hints=hints)[0] == Decimal("1856.00")
+    assert calculate_role_rate("UI/UX Designer", "PHP", tech_stack_hints=hints)[0] == Decimal("2100.00")
+    assert calculate_role_rate("Tech Lead / Solutions Architect", "PHP", tech_stack_hints=hints)[0] == Decimal("3567.00")
+    # The engineer the "Mobile" hint is actually about still moves.
+    assert calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=hints)[0] == Decimal("2987.00")
+
+
+@pytest.mark.parametrize(
+    "hint,expected",
+    [
+        ("Backend in Python.", "2987.00"),
+        ("Built on blockchain.", "3857.00"),
+        ("Frontend in React.", "2813.00"),
+    ],
+)
+def test_a_trailing_full_stop_does_not_hide_a_stack_token(hint, expected):
+    """`tech_hints` is LLM-written prose that ends sentences; the token regex
+    admitted `.` so `next.js` would survive and swallowed the full stop too."""
+    rate, _ = calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=[hint])
+    assert rate == Decimal(expected)
+
+
+def test_the_first_matching_hint_wins_not_the_first_table_key():
+    """Flattening every hint into one set discarded hint order, so the winner
+    became whichever key is declared first in `HANDBOOK_STACK_RATES_PHP`."""
+    rate, _ = calculate_role_rate(
+        "Senior Frontend Developer",
+        "PHP",
+        tech_stack_hints=["React SPA dashboard", "Python reporting API"],
+    )
+    assert rate == Decimal("2813.00")  # React — the first hint that matched
+
+
+# ── category costings match whole words, and invent no products ────────────
+
+
+def test_category_costings_ignore_words_that_merely_contain_a_key():
+    """'ai' is inside Email, Plain and Domain — and here it appends *priced*
+    line items, not just a label."""
+    items = get_category_costings(
+        ["Email notifications", "Plain contact form", "Domain registration"],
+        ["Web"],
+        6.6,
+        "PHP",
+    )
+    assert items == []
+
+
+def test_category_costings_ignore_data_and_storage_inside_longer_words():
+    items = get_category_costings(
+        ["Database metadata sync", "Image storagebox"], ["Web"], 6.0, "PHP"
+    )
+    assert [i["role"] for i in items] == []
+
+
+def test_genuine_category_keywords_still_bill():
+    items = get_category_costings(["LLM chatbot with RAG"], ["Web"], 6.0, "PHP")
+    assert any("AI/ML" in i["role"] for i in items)
+
+    cloud = get_category_costings(["Kubernetes deployment"], ["Web"], 6.0, "PHP")
+    assert any("DevOps" in i["role"] for i in cloud)
+
+
+def test_a_gemini_licence_is_only_billed_when_the_brief_names_it():
+    """Nothing on the page is invented — a line item for a named third-party
+    product is a feature the brief never asked for."""
+    generic = get_category_costings(["LLM chatbot with RAG"], ["Web"], 6.0, "PHP")
+    assert not any("Gemini" in i["role"] for i in generic)
+
+    named = get_category_costings(["Gemini Enterprise integration"], ["Web"], 6.0, "PHP")
+    assert any("Gemini" in i["role"] for i in named)

@@ -521,3 +521,95 @@ def test_cache_hit_still_returns_the_same_extracted_content(tmp_path):
     assert second.model_dump(exclude={"source_markdown_path"}) == first.model_dump(
         exclude={"source_markdown_path"}
     )
+
+
+# ── a currency declared in words, and a peso budget quoted in dollars too ──
+#
+# Requiring an amount beside "PHP" excluded the language, but it also excluded
+# every currency *declaration* not written next to a number. A brief whose fee
+# table holds bare numbers under "Currency: PHP" scored zero peso matches and
+# the client got a dollar-denominated proposal for a peso-budgeted engagement.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Currency: PHP",
+        "All amounts are stated in PHP.",
+        "All prices in PHP unless noted.",
+        "Fees are denominated in PHP.",
+        "Total Pricing (PHP)",
+    ],
+)
+def test_a_currency_declared_in_words_is_read_as_pesos(text):
+    assert extract.detect_currency(text) == ("₱", "PHP")
+
+
+def test_a_peso_budget_that_cites_a_dollar_equivalent_stays_pesos():
+    """'Any peso signal wins' became a majority vote, which a parenthetical
+    dollar equivalent plus a couple of stray '$' can carry."""
+    text = (
+        "Total budget: PHP 5,000,000 (approximately USD 83,000). "
+        "Payment in dollars is not accepted; the $ figure is indicative only."
+    )
+    assert extract.detect_currency(text) == ("₱", "PHP")
+
+
+# ── the hop-2 cache must not outlive the transcription it describes ────────
+
+
+def test_a_re_transcription_of_the_same_upload_is_not_served_the_failed_run(tmp_path):
+    """Hop 1 is a vision pipeline: the same bytes do not transcribe identically
+    twice. A 20-page scan that lost pages, re-uploaded and read cleanly, must
+    not get the lost-page run back out of the cache."""
+    extract.clear_cache()
+
+    lossy = tmp_path / "a" / "transcription.md"
+    clean = tmp_path / "b" / "transcription.md"
+    for p in (lossy, clean):
+        p.parent.mkdir(parents=True)
+    lossy.write_text(doc(1), encoding="utf-8")
+    clean.write_text(doc(2), encoding="utf-8")
+
+    def brief(path, parsed, failed):
+        return BriefRef(
+            upload_id="u", filename="scan.pdf", sha256="samebytes",
+            markdown_path=str(path), pages_total=2,
+            pages_parsed=parsed, pages_failed=failed,
+        )
+
+    client = FakeTextClient(payload(features=["A"]), payload(features=["B"]))
+    first = extract.extract_brief(brief(lossy, 1, [2]), text=client)
+    second = extract.extract_brief(brief(clean, 2, []), text=client)
+
+    assert first.pages_failed == [2]
+    assert second.pages_failed == []
+    assert second.features == ["B"]
+    assert len(client.calls) == 2
+
+
+def test_a_cache_hit_carries_this_callers_own_page_accounting(tmp_path):
+    """Lost pages travel with the price: a session that lost pages must not be
+    handed a clean session's provenance just because the bytes matched."""
+    extract.clear_cache()
+
+    a = tmp_path / "sess_a" / "transcription.md"
+    b = tmp_path / "sess_b" / "transcription.md"
+    for p in (a, b):
+        p.parent.mkdir(parents=True)
+        p.write_text(doc(2), encoding="utf-8")
+
+    def brief(path, parsed, failed):
+        return BriefRef(
+            upload_id="u", filename="f.pdf", sha256="samebytes",
+            markdown_path=str(path), pages_total=2,
+            pages_parsed=parsed, pages_failed=failed,
+        )
+
+    client = FakeTextClient(payload())
+    extract.extract_brief(brief(a, 2, []), text=client)
+    second = extract.extract_brief(brief(b, 1, [7]), text=client)
+
+    assert second.pages_failed == [7]
+    assert second.pages_parsed == 1
+    assert len(client.calls) == 1  # still a cache hit

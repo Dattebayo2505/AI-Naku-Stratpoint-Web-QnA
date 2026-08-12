@@ -115,15 +115,28 @@ class EstimationResult(BaseModel):
     ``total_cost_usd`` keeps its name only so existing callers and stored
     payloads keep resolving; read it together with ``currency_code``, never as
     dollars. Renaming it is a worthwhile follow-up, not part of this fix.
+
+    **``currency_code`` is optional and defaults to None, not to "USD".** The
+    estimator always sets it, but the ReAct loop routinely re-supplies an
+    estimation as a *dict* copied out of a prior Observation — and that dict
+    predates the field, so it arrives without one. Under a "USD" default the
+    peso amounts inside it were relabelled dollars and multiplied by sixty on
+    the way to a peso quote: a PHP 2,987.00/hr rate printed as PHP 179,220.00/hr
+    and a ~PHP 331,000 engagement as PHP 17,742,780.00. None means *undeclared*,
+    which ``pdf_gen.mapping`` infers from the payload's own amounts and summary;
+    it does not mean dollars. Making the field required is not the fix — it
+    would raise a ValidationError on exactly the re-supply path the capture-sink
+    fallback exists to serve, and the loop cannot tell a schema error from a
+    real one.
     """
 
     total_cost_usd: float = Field(
         ..., description="Total estimated cost, denominated in currency_code."
     )
-    currency_code: str = Field(
-        "USD",
-        description="ISO code the amounts are in ('USD' or 'PHP'). Defaults to "
-        "USD so payloads written before this field existed keep their meaning.",
+    currency_code: str | None = Field(
+        None,
+        description="ISO code the amounts are in ('USD' or 'PHP'). Omit only if "
+        "genuinely unknown — it is then inferred, never assumed to be USD.",
     )
     estimated_weeks: float = Field(..., description="Total project timeline in weeks.")
     role_breakdown: list[RoleBreakdownItem] = Field(
