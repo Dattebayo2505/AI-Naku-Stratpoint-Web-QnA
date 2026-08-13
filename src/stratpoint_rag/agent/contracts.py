@@ -78,6 +78,15 @@ class EstimationInput(BaseModel):
     role_rates: dict[str, float] | None = Field(
         None, description="Optional hourly rate overrides by role."
     )
+    timeline_weeks: float | None = Field(
+        None, description="Optional target project duration in weeks."
+    )
+    target_launch_date: str | None = Field(
+        None, description="Optional target launch date or deadline."
+    )
+    custom_phases: list[PhaseTimelineItem] | list[dict[str, Any]] | None = Field(
+        None, description="Optional dynamic LLM-generated phase roadmap items."
+    )
 
 
 class RoleBreakdownItem(BaseModel):
@@ -188,3 +197,12 @@ class PDFGenerationResult(BaseModel):
     file_size_bytes: int = Field(..., description="File size in bytes.")
     download_url: str = Field(..., description="Download URL or relative link.")
     status: str = Field("success", description="Generation status (e.g. 'success').")
+
+
+EstimationInput.model_rebuild()
+RoleBreakdownItem.model_rebuild()
+PhaseTimelineItem.model_rebuild()
+EstimationResult.model_rebuild()
+ProposalPDFInput.model_rebuild()
+PDFGenerationResult.model_rebuild()
+
