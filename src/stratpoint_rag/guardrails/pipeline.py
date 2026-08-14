@@ -4,7 +4,7 @@ import logging
 
 from stratpoint_rag.rag.models import Chunk
 
-from .input_guardrails import InputPipeline
+from .input_guardrails import DocumentRelevanceFilter, InputPipeline
 from .output_guardrails import OutputPipeline
 from .schemas import GuardrailConfig, GuardrailResult
 
@@ -23,9 +23,14 @@ class GuardrailPipeline:
             return user_input, [GuardrailResult(passed=True, action="allow", message="All input checks disabled")]
         return self.input_pipeline.run(user_input)
 
+    def run_document_check(self, text: str) -> GuardrailResult:
+        filter = DocumentRelevanceFilter(use_llm_fallback=self.config.use_llm_input_filter)
+        return filter.check(text)
+
     def run_output(
         self, response: str, source_chunks: list[Chunk]
     ) -> tuple[str, list[GuardrailResult]]:
         if self.output_pipeline is None:
             return response, [GuardrailResult(passed=True, action="allow", message="All output checks disabled")]
         return self.output_pipeline.run(response, source_chunks)
+

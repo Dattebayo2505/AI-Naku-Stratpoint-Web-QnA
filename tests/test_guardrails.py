@@ -252,3 +252,84 @@ def test_output_pipeline_redacts_pii():
     )
     assert any(r.action == "redact" for r in results)
     assert "[EMAIL]" in output
+
+
+# --- DocumentRelevanceFilter ---
+
+def test_document_relevance_filter_detects_resume():
+    from stratpoint_rag.guardrails.input_guardrails import DocumentRelevanceFilter
+    filter = DocumentRelevanceFilter(use_llm_fallback=False)
+    resume_text = """
+    # John Doe
+    Email: john@example.com | Phone: 555-0199
+    
+    ## Education
+    Bachelor of Science in Computer Science, GPA: 3.9
+    Dean's List 2020-2024
+    
+    ## Work Experience
+    Software Engineer Intern at Acme Corp (2023 - Present)
+    - Developed internal tools using Python and React.
+    
+    ## Skills & Proficiencies
+    Python, Java, Git, Docker
+    """
+    res = filter.check(resume_text)
+    assert not res.passed
+    assert res.action == "block"
+    assert "resume" in res.message.lower()
+
+
+def test_document_relevance_filter_detects_math_homework():
+    from stratpoint_rag.guardrails.input_guardrails import DocumentRelevanceFilter
+    filter = DocumentRelevanceFilter(use_llm_fallback=False)
+    math_text = """
+    ## Calculus III - Problem Set 4
+    Student Name: Alice Smith
+    
+    Problem 1: Solve for x: 3x^2 + 5x - 2 = 0. Show your work.
+    Problem 2: Calculate the integral of f(x) = sin(x)cos(x) dx.
+    Problem 3: Find the derivative of y = e^(2x).
+    """
+    res = filter.check(math_text)
+    assert not res.passed
+    assert res.action == "block"
+    assert "homework" in res.message.lower() or "math" in res.message.lower()
+
+
+def test_document_relevance_filter_detects_reflection_paper():
+    from stratpoint_rag.guardrails.input_guardrails import DocumentRelevanceFilter
+    filter = DocumentRelevanceFilter(use_llm_fallback=False)
+    essay_text = """
+    # Course: Ethics 101 - Reflection Paper
+    Instructor: Prof. Davis
+    Essay Prompt: Reflect on the moral implications of artificial intelligence in modern society.
+    
+    In this reflection paper, I explore how automated decision systems affect human autonomy...
+    """
+    res = filter.check(essay_text)
+    assert not res.passed
+    assert res.action == "block"
+    assert "essay" in res.message.lower() or "reflection" in res.message.lower()
+
+
+def test_document_relevance_filter_passes_valid_rfp():
+    from stratpoint_rag.guardrails.input_guardrails import DocumentRelevanceFilter
+    filter = DocumentRelevanceFilter(use_llm_fallback=False)
+    rfp_text = """
+    # Request for Proposal (RFP)
+    Project: Customer Loyalty Mobile Application
+    Client: Northwind Retail
+    
+    ## 1. Scope of Work & Deliverables
+    - Native mobile app for iOS and Android
+    - User authentication, points ledger, tier rewards
+    - Integration with existing POS system via REST APIs
+    
+    ## 2. Project Timeline & Budget
+    Target Launch: Q4 2026. Estimated Budget: $150,000 USD.
+    """
+    res = filter.check(rfp_text)
+    assert res.passed
+    assert res.action == "allow"
+

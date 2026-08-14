@@ -14,7 +14,7 @@ import pytest
 
 from stratpoint_rag.agent import guardrail_agent as ga
 from stratpoint_rag.agent.models import AgentResult
-from stratpoint_rag.disambiguation import engagement
+from stratpoint_rag.disambiguation import classifier, engagement
 from stratpoint_rag.docparse import BriefRef
 
 SESSION = "brief-flow"
@@ -25,8 +25,10 @@ def _clean(monkeypatch):
     ga.clear_memory(SESSION)
     # Keep every test offline: no guardrail LLM calls, no NeMo import attempt.
     monkeypatch.setattr(ga, "_run_output_guardrails", lambda t, c, cfg, n: (t, None))
+    monkeypatch.setattr(classifier, "_llm_classify", lambda text: None)
     yield
     ga.clear_memory(SESSION)
+
 
 
 @pytest.fixture
@@ -341,4 +343,72 @@ def test_full_confirmation_flow_multi_turn(monkeypatch, transcribed):
     )
     assert seen["message"] == "put together a proposal"
     assert seen["names"] == ("Clive", "Project Avisala")
+
+
+# ── irrelevant document guardrail tests ─────────────────────────────────────
+
+
+def test_attached_resume_is_blocked_with_polite_refusal(monkeypatch, tmp_path):
+    resume_path = tmp_path / "resume_transcription.md"
+    resume_path.write_text(
+        "## Page 1\n# Jane Doe\nEmail: jane@example.com\n\n"
+        "## Education\nBS Computer Science, GPA 3.8\n"
+        "## Work Experience\nFrontend Developer at Startup Co (2022-2024)\n"
+        "## Skills\nJavaScript, React, CSS\n",
+        encoding="utf-8",
+    )
+    brief = BriefRef(
+        upload_id="resume123",
+        filename="Jane_Doe_Resume.pdf",
+        sha256="sha_resume",
+        markdown_path=str(resume_path),
+        pages_total=1,
+        pages_parsed=1,
+    )
+
+    result = ga.run_with_guardrails(
+        "Can you create a proposal and estimate for this?",
+        session_id=SESSION,
+        use_nemo=False,
+        briefs=[brief],
+    )
+
+    assert "resume" in result.answer.lower()
+    assert "project brief" in result.answer.lower()
+    assert result.guardrail_reason is not None
+    assert "Irrelevant document" in result.guardrail_reason
+    assert not engagement.get(SESSION).awaiting_confirmation
+    assert engagement.get(SESSION).loop is None
+
+
+def test_attached_math_homework_is_blocked_on_generic_query(monkeypatch, tmp_path):
+    math_path = tmp_path / "math_transcription.md"
+    math_path.write_text(
+        "## Page 1\n# Math 101: Problem Set 2\n"
+        "Student: Bob\n\n"
+        "Problem 1: Solve for x in 2x + 4 = 10. Show your work.\n"
+        "Problem 2: Find the derivative of y = x^2.\n",
+        encoding="utf-8",
+    )
+    brief = BriefRef(
+        upload_id="math123",
+        filename="homework2.pdf",
+        sha256="sha_math",
+        markdown_path=str(math_path),
+        pages_total=1,
+        pages_parsed=1,
+    )
+
+    result = ga.run_with_guardrails(
+        "What is this document about?",
+        session_id=SESSION,
+        use_nemo=False,
+        briefs=[brief],
+    )
+
+    assert "assignment" in result.answer.lower() or "homework" in result.answer.lower() or "math" in result.answer.lower()
+    assert "project brief" in result.answer.lower()
+    assert result.guardrail_reason is not None
+    assert "Irrelevant document" in result.guardrail_reason
+
 

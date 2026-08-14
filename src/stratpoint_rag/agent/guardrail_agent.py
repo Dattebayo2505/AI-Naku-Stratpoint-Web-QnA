@@ -177,6 +177,57 @@ def _run_input_guardrails(
     return text, None
 
 
+def _format_irrelevant_document_block(reason: str) -> str:
+    """Format user-friendly refusal message when an irrelevant document is uploaded."""
+    lower = reason.lower()
+    if "resume" in lower:
+        doc_kind = "Resume / CV"
+    elif "essay" in lower or "reflection" in lower:
+        doc_kind = "Academic Essay / Reflection Paper"
+    elif "homework" in lower or "assignment" in lower or "math" in lower:
+        doc_kind = "Homework / Math Assignment"
+    else:
+        doc_kind = "unrelated personal/academic document"
+
+    return (
+        f"I noticed that the attached file appears to be a **{doc_kind}**. "
+        "The Stratpoint Assistant only processes software project briefs, RFPs, technical specifications, "
+        "and consulting requirements to generate proposals and answer project-related questions.\n\n"
+        "Please upload a valid project brief or ask me about Stratpoint's software development and cloud services."
+    )
+
+
+def _run_document_guardrails(
+    briefs: list[BriefRef] | None,
+    config: GuardrailConfig,
+    use_nemo: bool,
+) -> tuple[str | None, str | None]:
+    """Inspect attached brief transcriptions for irrelevant documents.
+    Returns (refusal_message, guardrail_reason) if blocked, else (None, None)."""
+    if not briefs:
+        return None, None
+
+    from stratpoint_rag.guardrails.input_guardrails import DocumentRelevanceFilter
+
+    doc_filter = DocumentRelevanceFilter(use_llm_fallback=config.use_llm_input_filter)
+
+    for brief in briefs:
+        if not brief.markdown_path:
+            continue
+        try:
+            markdown = Path(brief.markdown_path).read_text(encoding="utf-8")
+        except OSError as ex:
+            log.info("could not read transcription for %s: %s", brief.upload_id, ex)
+            continue
+
+        result = doc_filter.check(markdown)
+        if not result.passed and result.action == "block":
+            refusal = _format_irrelevant_document_block(result.message)
+            return refusal, result.message
+
+    return None, None
+
+
 def _run_output_guardrails(
     text: str,
     source_chunks: list,
@@ -238,7 +289,17 @@ def run_with_guardrails(
         memory.add_turn("assistant", _user_facing_block(block_reason))
         return AgentResult(answer=_user_facing_block(block_reason), guardrail_reason=block_reason)
 
+    # ── Document relevance guardrail for attached briefs ─────────────
+    if briefs:
+        doc_block_msg, doc_block_reason = _run_document_guardrails(briefs, config, use_nemo)
+        if doc_block_msg:
+            log.info("Attached document blocked: %s", doc_block_reason)
+            memory.add_turn("user", message)
+            memory.add_turn("assistant", doc_block_msg)
+            return AgentResult(answer=doc_block_msg, guardrail_reason=doc_block_reason)
+
     # ── The naming answer / confirmation response ─────────────────────
+
     resumed_consumed = False
     if engagement.get(session_id).awaiting_confirmation:
         resumed, next_prompt = engagement.record_confirmation_response(

@@ -26,3 +26,5 @@ class GuardrailConfig(BaseModel):
     block_keywords: bool = True
     check_hallucination: bool = True
     check_advice: bool = True
+    use_llm_input_filter: bool = True
+

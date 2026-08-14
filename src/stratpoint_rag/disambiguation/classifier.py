@@ -63,7 +63,7 @@ _STRATPOINT_KEYWORDS = [
 _PROPOSAL_PATTERNS = [
     re.compile(p, re.IGNORECASE)
     for p in (
-        r"\b(?:a |the )?proposal\b",
+        r"\b(?:a |the )?(?:proposal|quote)\b",
         r"\bquote (?:me|us|for|this)\b|\bgive me a quote\b|\ba quote for\b",
         r"\b(?:scope|estimate|price|cost|budget) (?:out |up )?(?:this|my|our|the) "
         r"(?:project|brief|rfp|document|build|app|idea)\b",
@@ -73,6 +73,7 @@ _PROPOSAL_PATTERNS = [
         r"\b(?:estimate|scope) (?:this|my|our) (?:out)?\b",
     )
 ]
+
 
 # A visitor who says "not a proposal" must not thereby request one. The
 # proposal patterns match a bare noun, so every *negated* mention matched too:

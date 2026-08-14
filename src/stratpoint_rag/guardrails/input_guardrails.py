@@ -211,3 +211,144 @@ class InputPipeline:
         results.append(topic_result)
 
         return redacted, results
+
+
+IRRELEVANT_DOC_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (
+        re.compile(
+            r"\b(curriculum\s+vitae|resume|work\s+experience|employment\s+history|"
+            r"education\s+history|professional\s+experience|skills\s+&\s+proficiencies|"
+            r"career\s+objective|personal\s+profile|references\s+available)\b",
+            re.IGNORECASE,
+        ),
+        "resume",
+    ),
+    (
+        re.compile(
+            r"\b(reflection\s+paper|essay\s+title|essay\s+prompt|course\s+code|"
+            r"professor\s*[:\-]|instructor\s*[:\-]|student\s+id|thesis\s+statement|"
+            r"term\s+paper|rubric\b)",
+            re.IGNORECASE,
+        ),
+        "academic_essay",
+    ),
+    (
+        re.compile(
+            r"\b(problem\s+set|homework\s*#?\d+|assignment\s*#?\d+|solve\s+for\s+[a-z]|"
+            r"show\s+(?:your\s+)?work|exercises\s*#?\d+|find\s+the\s+derivative|"
+            r"calculate\s+the\s+integral|differential\s+equation)\b",
+            re.IGNORECASE,
+        ),
+        "homework_assignment",
+    ),
+]
+
+_POSITIVE_RFP_PATTERNS = re.compile(
+    r"\b(scope\s+of\s+work|deliverables|functional\s+requirements|system\s+architecture|"
+    r"project\s+timeline|terms\s+of\s+reference|request\s+for\s+proposal|\brfp\b|"
+    r"client\s+brief|statement\s+of\s+work|\bsow\b|user\s+stories|technical\s+requirements|"
+    r"client\s*:\s*\w+|project\s*:\s*\w+)\b",
+    re.IGNORECASE,
+)
+
+
+_RESUME_BIO_TOKENS = re.compile(
+    r"\b(gpa\b|bachelor\s+of|master\s+of|dean's\s+list|graduated\s+(?:in|with)|cum\s+laude)\b",
+    re.IGNORECASE,
+)
+
+
+class DocumentRelevanceFilter:
+    """Evaluates whether an uploaded document transcription is a valid project brief/RFP
+    or an irrelevant document (resume, academic essay, math problem set, reflection paper)."""
+
+    def __init__(self, use_llm_fallback: bool = True):
+        self.use_llm_fallback = use_llm_fallback
+
+    def check(self, text: str) -> GuardrailResult:
+        if not text or not text.strip():
+            return GuardrailResult(passed=True, action="allow", message="Empty document allowed")
+
+        sample = text[:4000]
+
+        # 1. Positive RFP bypass: if the document clearly identifies as an RFP / project spec
+        if _POSITIVE_RFP_PATTERNS.search(sample):
+            # Only bypass if it doesn't also look overwhelmingly like a single student essay or resume
+            if not (_RESUME_BIO_TOKENS.search(sample) and "resume" in sample.lower()):
+                return GuardrailResult(
+                    passed=True,
+                    action="allow",
+                    message="Document contains clear project RFP/brief markers",
+                )
+
+        # 2. Heuristic check for known irrelevant categories
+        for pattern, doc_type in IRRELEVANT_DOC_PATTERNS:
+            if pattern.search(sample):
+                if doc_type == "resume":
+                    # Extra check for resume bio tokens or education/experience combination
+                    if _RESUME_BIO_TOKENS.search(sample) or ("education" in sample.lower() and "experience" in sample.lower()):
+                        return GuardrailResult(
+                            passed=False,
+                            action="block",
+                            message=f"Irrelevant document detected: {doc_type}",
+                        )
+                else:
+                    return GuardrailResult(
+                        passed=False,
+                        action="block",
+                        message=f"Irrelevant document detected: {doc_type}",
+                    )
+
+        # 3. LLM Fallback if heuristics are inconclusive
+        if not self.use_llm_fallback:
+            return GuardrailResult(passed=True, action="allow", message="Heuristics passed; LLM fallback disabled")
+
+        return self._llm_check(sample[:2000])
+
+    def _llm_check(self, text_sample: str) -> GuardrailResult:
+        key = config.nvidia_api_key()
+        if not key:
+            return GuardrailResult(passed=True, action="allow", message="No API key — allowing document")
+
+        try:
+            resp = httpx.post(
+                f"{config.nvidia_base_url()}/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": config.llm_model(),
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an input document validator for a software engineering and cloud consulting chatbot.\n"
+                                "Determine if the document is a software project brief, RFP, technical requirements specification, or commercial consultation document.\n"
+                                "If the document is a resume/CV, homework/math problem set, student essay, reflection paper, or personal non-project file, set is_project_brief to false.\n"
+                                "Respond strictly with JSON: {\"is_project_brief\": bool, \"document_type\": str, \"reason\": str}"
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Document excerpt:\n{text_sample}",
+                        },
+                    ],
+                    "max_tokens": 128,
+                    "temperature": 0.1,
+                    "response_format": {"type": "json_object"},
+                    "stream": False,
+                },
+                timeout=config.llm_timeout(),
+            )
+            resp.raise_for_status()
+            data = json.loads(resp.json()["choices"][0]["message"]["content"])
+            if data.get("is_project_brief", True):
+                return GuardrailResult(passed=True, action="allow", message="LLM confirmed project brief")
+            doc_type = data.get("document_type", "unrelated_document")
+            return GuardrailResult(
+                passed=False,
+                action="block",
+                message=f"Irrelevant document detected: {doc_type}",
+            )
+        except Exception as e:
+            log.warning("LLM document relevance check failed: %s", e)
+            return GuardrailResult(passed=True, action="allow", message="Document check error — allowing")
+
