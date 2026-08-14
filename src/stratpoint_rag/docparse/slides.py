@@ -88,6 +88,9 @@ class Converter(Protocol):
     Anything that turns ``src`` into ``<outdir>/<src.stem>.pdf`` satisfies it.
     Tests inject a fake that writes a stub file, which is what lets the entire
     deck path be exercised on a machine with no LibreOffice installed.
+
+    ``src`` is a staged copy under a temp directory, not the stored upload —
+    see ``ensure_pdf``. An implementation may write beside it freely.
     """
 
     def __call__(self, src: Path, outdir: Path) -> None: ...
@@ -170,6 +173,15 @@ def ensure_pdf(path: str | Path, *, convert: Converter | None = None) -> Path:
     second conversion. The result is cached at ``<parent>/converted.pdf``.
 
     ``convert`` is injected by tests; production uses ``_soffice_convert``.
+
+    **The deck is staged into the temp dir and LibreOffice is pointed at the
+    copy**, never at the file inside ``data/uploads/``. LibreOffice writes
+    beside its input — a ``.~lock.<name>#`` file at minimum — and on Windows the
+    upload directory routinely sits under a folder Controlled Folder Access
+    protects (this repo lives under ``Desktop``), where Defender blocks
+    ``soffice.bin`` from writing at all. Staging costs one copy of a file
+    already capped at ``upload_max_bytes`` and makes the process's entire
+    working set a directory it owns.
     """
     path = Path(path)
     if not is_pptx(path):
@@ -181,9 +193,18 @@ def ensure_pdf(path: str | Path, *, convert: Converter | None = None) -> Path:
 
     convert = convert or _soffice_convert
     with tempfile.TemporaryDirectory(prefix="soffice-out-") as tmp:
-        outdir = Path(tmp)
+        # Separate in/ and out/ so nothing LibreOffice drops beside its input
+        # can be mistaken for the conversion result.
+        staged_dir = Path(tmp) / "in"
+        outdir = Path(tmp) / "out"
+        staged_dir.mkdir()
+        outdir.mkdir()
         try:
-            convert(path, outdir)
+            staged = Path(shutil.copy2(path, staged_dir / path.name))
+        except OSError as e:
+            raise ConversionFailed(f"cannot stage {path.name}: {e}") from e
+        try:
+            convert(staged, outdir)
         except (ConversionFailed, RuntimeError):
             # RuntimeError passes through UNTOUCHED. It means LibreOffice is not
             # installed, which api/app.py maps to 503 — wrapping it as
@@ -195,7 +216,7 @@ def ensure_pdf(path: str | Path, *, convert: Converter | None = None) -> Path:
             # ConversionFailed to a 400 with a message the visitor can act on.
             raise ConversionFailed(f"cannot convert {path.name}: {e}") from e
 
-        produced = outdir / f"{path.stem}.pdf"
+        produced = outdir / f"{staged.stem}.pdf"
         if not produced.is_file() or produced.stat().st_size == 0:
             raise ConversionFailed(
                 f"LibreOffice produced no PDF for {path.name}. The deck may be "

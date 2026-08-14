@@ -132,6 +132,45 @@ def test_ensure_pdf_reconverts_when_the_cache_is_empty(deck):
     assert len(calls) == 1
 
 
+def test_ensure_pdf_stages_the_deck_outside_the_upload_directory(deck):
+    """LibreOffice writes beside its input (a .~lock.<name># at minimum), and
+    on Windows the upload directory routinely sits inside a folder Controlled
+    Folder Access protects, where Defender blocks soffice.bin from writing at
+    all. The converter must therefore never see the stored upload's path."""
+    calls = []
+    record = _fake_converter(calls)
+    seen = {}
+
+    def convert(src, outdir):
+        # Read while the temp tree still exists — ensure_pdf tears it down.
+        seen["bytes"] = src.read_bytes()
+        record(src, outdir)
+
+    out = slides.ensure_pdf(deck, convert=convert)
+
+    src, outdir = calls[0]
+    assert src != deck
+    assert src.name == deck.name  # stem drives the produced filename
+    assert deck.parent not in src.parents
+    assert seen["bytes"] == deck.read_bytes()
+    assert outdir != src.parent  # nothing dropped beside the input is output
+    assert out.read_bytes().startswith(b"%PDF")
+
+
+def test_ensure_pdf_cleans_up_the_staged_copy(deck):
+    """The temp tree goes away with the context manager; only converted.pdf
+    is left behind, inside the upload's own directory."""
+    calls = []
+
+    slides.ensure_pdf(deck, convert=_fake_converter(calls))
+
+    staged, _ = calls[0]
+    assert not staged.exists()
+    assert sorted(p.name for p in deck.parent.iterdir()) == sorted(
+        [deck.name, slides.CONVERTED_NAME]
+    )
+
+
 def test_ensure_pdf_raises_when_nothing_was_produced(deck):
     """soffice returns 0 on inputs it silently declined, so the exit code is
     never the check — the output file is."""

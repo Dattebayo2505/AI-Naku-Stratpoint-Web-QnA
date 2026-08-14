@@ -187,7 +187,7 @@ the NVIDIA docs.
   accepted since 2026-08-14, reversing the earlier "export it to PDF" rule.
   `slides.py` shells out to headless LibreOffice, caches `converted.pdf` inside
   the upload's own directory, and `slides.open_brief` is the single entry point
-  both `/upload`'s page count and `transcribe_document` use. Three things are
+  both `/upload`'s page count and `transcribe_document` use. Four things are
   load-bearing. `-env:UserInstallation` is **mandatory**: without a private
   profile per invocation, an already-running soffice makes the call exit 0
   having converted nothing, which is indistinguishable from success — so the
@@ -196,7 +196,16 @@ the NVIDIA docs.
   PDF carries a perfect text layer (real slide text, not OCR) and without that
   clause every slide takes the free text route and the feature does nothing. And
   provenance is split — `sha256`/`source_file` name the original `.pptx`, while
-  the pages come from the derived PDF the visitor never saw. The text layer is
+  the pages come from the derived PDF the visitor never saw. And **soffice is
+  pointed at a staged copy in a temp dir, never at the stored upload**:
+  LibreOffice writes beside its input (a `.~lock.<name>#` at minimum), and on a
+  Windows dev box the upload directory routinely sits under Desktop or
+  Documents, where Defender's *Controlled Folder Access* blocks `soffice.bin`
+  from writing at all — the symptom is a Defender "unauthorized changes
+  blocked" toast plus a `ConversionFailed`. Staging costs one copy of a file
+  already capped at `upload_max_bytes`. The alternative fixes, if you ever want
+  them, are allowing `soffice.exe` *and* `soffice.bin` through CFA, or pointing
+  `UPLOAD_DIR` outside a protected folder. The text layer is
   still read, but only as the figure pass's novelty baseline. `converted.pdf` is
   also in `store._RESERVED_NAMES`, since a deck uploaded under that name would
   otherwise be its own conversion cache. **LibreOffice is now a hard dependency**
