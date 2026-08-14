@@ -251,6 +251,52 @@ def _labelled_args(raw: str) -> dict[str, str]:
     }
 
 
+# The first `{...}` region anywhere in the argument, not only at its start.
+_EMBEDDED_JSON = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _embedded_mapping(raw: str) -> dict[str, Any]:
+    """The JSON object embedded in an Action argument, or {}."""
+    m = _EMBEDDED_JSON.search(raw)
+    if not m:
+        return {}
+    try:
+        d = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return {}
+    return {str(k).casefold(): v for k, v in d.items()} if isinstance(d, dict) else {}
+
+
+def _action_fields(raw: str) -> dict[str, Any]:
+    """Normalize an Action argument into the fields the brief tools understand.
+
+    **The model does not write the form its tool description asks for.** Measured
+    against `meta/llama-3.1-8b-instruct` on the truncation-retry turn — 12 live
+    calls, interleaved and spaced — it split the arguments positionally two
+    times out of three::
+
+        read_brief(<id>, {"query": "Submission Deadline"})   8/12
+        read_brief({"upload_id": "<id>", "query": "..."})    4/12
+
+    Only the second was understood. Reading the whole string as JSON, or not at
+    all, therefore discarded two thirds of correctly-reasoned searches and
+    handed back the head of the document instead — which the model reads as the
+    thing it asked for, and which the loop's repeat guard then correctly refuses
+    to run again. The stall blamed on the 8B model was this parser.
+
+    Precedence: an embedded object beats a `key=value` label, and a bare leading
+    token is taken as the id only when nothing named one.
+    """
+    fields: dict[str, Any] = dict(_labelled_args(raw))
+    fields.update(_embedded_mapping(raw))
+
+    if not (fields.get("upload_id") or fields.get("id")):
+        lead = raw.split("{", 1)[0].strip().strip(",").strip().strip("\"'").strip()
+        if lead:
+            fields["upload_id"] = lead
+    return fields
+
+
 def _strip_id_label(value: str) -> str:
     """Drop the `id=` / `upload_id=` label the model copied off the manifest.
 
@@ -286,8 +332,14 @@ def _resolve_upload_id(raw: Any, briefs: list[BriefRef]) -> BriefRef | None:
     elif isinstance(raw, dict):
         wanted = str(raw.get("upload_id") or raw.get("id") or "")
     else:
+        f = _action_fields(str(raw))
         d = _parse_input_dict_or_str(raw)
-        wanted = str(d.get("upload_id") or d.get("id") or raw or "")
+        wanted = str(
+            f.get("upload_id") or f.get("id")
+            or d.get("upload_id") or d.get("id")
+            or raw
+            or ""
+        )
 
     # After the dict branch too: the model that pastes `id=<value>` into a bare
     # Action argument pastes it into the JSON form as readily.
@@ -343,6 +395,11 @@ BRIEF_EXCERPT_CHARS = 6000
 BRIEF_MATCH_WINDOW_CHARS = 1400
 BRIEF_MAX_MATCHES = 4
 
+# Stamped on a partial excerpt. `react._repeat_nudge` matches on it to tell a
+# truncated read from a complete one, so the two must not drift apart — which is
+# why it is a shared constant and not a literal in each place.
+TRUNCATION_MARKER = "truncated here"
+
 _PAGE_HEADING = re.compile(r"^## Page (\d+)", re.MULTILINE)
 
 
@@ -354,27 +411,22 @@ def _brief_query(raw: Any) -> str:
     `Action Input: a3f9c2` would arrive here as a search for the literal id and
     match nothing. A query counts only when the model named the key.
 
-    **Both labelled forms count, not just the JSON one.** For a while only an
-    exact ``{"upload_id": ..., "query": ...}`` object reached the search path,
-    and the equally natural ``read_brief(upload_id="u1", query="2.10")`` fell
-    through to the head of the document — returned with nothing to say the query
-    had been dropped, which is the failure the no-match branch in `read_brief`
-    exists to prevent: the model reads whatever it is handed as the thing it
-    asked for. It also defeated the loop's repeat guard, which keys on the raw
-    string, so a bare-id read followed by a kwargs search re-executed and
-    re-appended the identical excerpt.
+    **Every labelled form counts, not just the whole-string JSON one.** For a
+    while only an exact ``{"upload_id": ..., "query": ...}`` object reached the
+    search path. The model writes the positional split
+    ``read_brief(<id>, {"query": "..."})`` two times out of three (see
+    `_action_fields`), and that — like the equally natural
+    ``read_brief(upload_id="u1", query="2.10")`` — fell through to the head of
+    the document, returned with nothing to say the query had been dropped. That
+    is the failure the no-match branch in `read_brief` exists to prevent: the
+    model reads whatever it is handed as the thing it asked for. It also
+    defeated the loop's repeat guard, which keys on the raw string, so a bare-id
+    read followed by a search re-executed and re-appended the identical excerpt.
     """
     if isinstance(raw, dict):
-        d = raw
-    elif isinstance(raw, str) and raw.strip().startswith("{"):
-        try:
-            d = json.loads(raw.strip())
-        except json.JSONDecodeError:
-            return ""
-        if not isinstance(d, dict):
-            return ""
+        d: dict[str, Any] = {str(k).casefold(): v for k, v in raw.items()}
     elif isinstance(raw, str):
-        d = _labelled_args(raw)
+        d = _action_fields(raw)
     else:
         return ""
     value = d.get("query") or d.get("search") or d.get("q") or ""
@@ -496,7 +548,7 @@ def read_brief(
     body = text[:BRIEF_EXCERPT_CHARS]
     if len(text) > BRIEF_EXCERPT_CHARS:
         body += (
-            f"\n\n[truncated here: this is the first {BRIEF_EXCERPT_CHARS} "
+            f"\n\n[{TRUNCATION_MARKER}: this is the first {BRIEF_EXCERPT_CHARS} "
             f"characters of {len(text)}. To read any other part, call "
             f"{READ_BRIEF_TOOL_NAME} again with "
             '{"upload_id": "' + brief.upload_id + '", "query": "<words to find>"}. '

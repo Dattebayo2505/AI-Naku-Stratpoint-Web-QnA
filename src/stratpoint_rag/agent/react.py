@@ -24,6 +24,7 @@ from stratpoint_rag.agent.models import AgentResult, Link, Step
 from stratpoint_rag.agent.tools import (
     BRIEF_TOOL_NAME,
     READ_BRIEF_TOOL_NAME,
+    TRUNCATION_MARKER,
     ToolSpec,
     begin_capture,
     build_tool_registry,
@@ -128,6 +129,42 @@ _REPEAT_OBSERVATION = (
     "Do not call it again. Answer the visitor now, using what it returned, "
     "beginning your reply with 'Answer:'."
 )
+
+# ...but "answer now" is the wrong instruction when what came back was only part
+# of the document. The plain nudge above says nothing about the truncation and
+# nothing about flagging it, so a repeat over a partial excerpt produced a
+# confident, unqualified summary of a document the loop had read a third of —
+# even though the excerpt itself ends with "Say so if you summarize from this
+# excerpt alone". Reported live against an 18-page deck summarized from its
+# first 8 pages, with the 2 unreadable pages unmentioned too.
+#
+# Offering the search back is safe precisely because the repeat guard stands: a
+# byte-identical retry lands here again rather than re-running the tool, so the
+# only way forward is a *different* query — which is the escape hatch
+# `read_brief`'s query parameter was added to provide.
+_REPEAT_TRUNCATED = (
+    "You already called {tool} with that exact input. What it returned, above, "
+    "is only the first part of the document — not all of it. Do not repeat that "
+    "call. Either search another part by calling {tool} once more with a "
+    'DIFFERENT search term, as {{"upload_id": "{upload_id}", "query": "<words '
+    'to find>"}}, or answer the visitor now, beginning your reply with '
+    "'Answer:'. If you answer from the part you have already seen, say in your "
+    "reply that you have seen only part of the document."
+)
+
+
+def _repeat_nudge(tool: str, prior: str, briefs: list[BriefRef] | None) -> str:
+    """Feedback for a byte-identical repeated call.
+
+    Tool-aware on purpose: telling the model to answer from what it has is right
+    when it has the whole thing and wrong when it has an excerpt. The truncation
+    is read off the prior observation rather than re-derived from the excerpt
+    cap, so the two cannot disagree.
+    """
+    if tool == READ_BRIEF_TOOL_NAME and TRUNCATION_MARKER in prior:
+        upload_id = briefs[0].upload_id if briefs and len(briefs) == 1 else "the id above"
+        return _REPEAT_TRUNCATED.format(tool=tool, upload_id=upload_id)
+    return _REPEAT_OBSERVATION.format(tool=tool)
 
 _TIMEOUT = 120
 
@@ -274,20 +311,40 @@ def render_system_prompt(
 
 
 def _default_chat(messages: list[dict], stop: list[str]) -> str:
+    """One completion. **An empty ``stop`` is omitted, never sent as ``[]``.**
+
+    NIM rejects an empty stop array outright::
+
+        400  Validation: Stop sequences array cannot be empty
+
+    and the one caller that passes no stop sequences is `_brief_fallback` — the
+    safety net that answers from the visitor's own document when the ReAct loop
+    stalls. So the fallback raised on every single invocation against this
+    endpoint and degraded to its "I wasn't able to summarize it just now"
+    string, which is indistinguishable from the model having nothing to say.
+    Measured live: a question answerable only past the excerpt cap stalled the
+    loop, reached the fallback, and returned that apology with the answer
+    sitting in the trace.
+
+    The whole test suite injects a fake ``chat``, so nothing offline could see
+    it — the payload is asserted directly in `test_react_loop.py` instead.
+    """
     key = config.nvidia_api_key()
     if not key:
         raise RuntimeError("NVIDIA_API_KEY is not set (see .envexample)")
+    payload: dict[str, Any] = {
+        "model": config.llm_model(),
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "stream": False,
+    }
+    if stop:
+        payload["stop"] = stop
     resp = httpx.post(
         f"{config.nvidia_base_url()}/chat/completions",
         headers={"Authorization": f"Bearer {key}"},
-        json={
-            "model": config.llm_model(),
-            "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": 2048,
-            "stop": stop,
-            "stream": False,
-        },
+        json=payload,
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()
@@ -527,8 +584,10 @@ def run_react(
         resources: list[Link] = []
         thoughts: list[str] = []
         reprompted = False
-        # (tool, input) already run this turn — see _REPEAT_OBSERVATION.
-        executed: set[tuple[str, str]] = set()
+        # (tool, input) already run this turn -> what it returned. The value is
+        # kept, not just the key, because `_repeat_nudge` decides what to say
+        # from whether that result was a truncated excerpt.
+        executed: dict[tuple[str, str], str] = {}
 
         for _ in range(MAX_TURNS):
             text = chat(messages, STOP)
@@ -562,12 +621,14 @@ def run_react(
                     )
                     tracer.on_error(step.tool or "unknown", observation)
                 elif (step.tool, step.tool_input or "") in executed:
-                    observation = _REPEAT_OBSERVATION.format(tool=step.tool)
+                    observation = _repeat_nudge(
+                        step.tool, executed[(step.tool, step.tool_input or "")], briefs
+                    )
                 else:
-                    executed.add((step.tool, step.tool_input or ""))
                     observation = _execute_tool_with_retry(
                         step.tool, fn, step.tool_input or "", tracer
                     )
+                    executed[(step.tool, step.tool_input or "")] = observation
                     if step.tool == "search_stratpoint":
                         citations.extend(_parse_link_lines(observation))
                     elif step.tool == "find_resource":

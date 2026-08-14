@@ -191,3 +191,50 @@ def test_tool_input_is_labelled_with_the_spec_arg_name():
     r = react.run_react("q", chat=chat)
     action = next(s for s in r.trace if s.type == "action")
     assert action.tool_input == {"topic": "cloud"}
+
+
+# ── the real chat payload ───────────────────────────────────────────────────
+#
+# Every test above injects `chat`, which is what made the defect below invisible
+# offline: the only caller that passes no stop sequences is the document
+# fallback, and it failed on every real invocation. `httpx.post` is captured
+# rather than called, so this file's "no HTTP" promise still holds.
+
+
+@pytest.fixture
+def payloads(monkeypatch):
+    sent = []
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+
+    monkeypatch.setattr(react.config, "nvidia_api_key", lambda: "k")
+    monkeypatch.setattr(
+        react.httpx, "post", lambda *a, **kw: sent.append(kw["json"]) or _Resp()
+    )
+    return sent
+
+
+def test_an_empty_stop_list_is_omitted_not_sent_as_an_empty_array(payloads):
+    """NIM answers `400 Validation: Stop sequences array cannot be empty`.
+
+    `_brief_fallback` is the only caller that passes none — the safety net that
+    answers from the visitor's own document when the loop stalls — so it raised
+    every time and degraded to its apology string, which reads exactly like the
+    model having nothing to say. Measured live before the fix.
+    """
+    react._default_chat([{"role": "user", "content": "hi"}], [])
+
+    assert "stop" not in payloads[0]
+
+
+def test_real_stop_sequences_are_still_sent(payloads):
+    """Omitting the empty list must not drop the loop's actual stop sequences —
+    without them the model writes its own Observation and answers from it."""
+    react._default_chat([{"role": "user", "content": "hi"}], react.STOP)
+
+    assert payloads[0]["stop"] == react.STOP

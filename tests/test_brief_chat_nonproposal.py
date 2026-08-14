@@ -365,6 +365,8 @@ def test_read_brief_labels_an_excerpt_by_the_page_of_the_match(long_brief):
     "typed",
     [
         '{"upload_id": "u1", "query": "2.10"}',   # the form the description teaches
+        'u1, {"query": "2.10"}',                  # what the model ACTUALLY writes
+        'u1, {"upload_id": "u1", "query": "2.10"}',
         'upload_id="u1", query="2.10"',           # kwargs, no braces
         "upload_id=u1, query=2.10",               # kwargs, unquoted
         "id=u1, query=2.10",                      # the manifest's own id label
@@ -373,12 +375,19 @@ def test_read_brief_labels_an_excerpt_by_the_page_of_the_match(long_brief):
 def test_a_query_survives_every_form_the_model_types(long_brief, typed):
     """Only the exact JSON object used to reach the search path.
 
-    The other three fell through to the head of the document and returned it
-    with no indication that the query had been dropped — the same failure the
-    no-match branch exists to prevent, since the model reads whatever it is
-    handed as the thing it asked for. Worse, the loop's repeat guard keys on the
-    raw string, so a bare-id read followed by a kwargs search looks like two
-    different calls, re-executes, and re-appends the identical head text.
+    The rest fell through to the head of the document and returned it with no
+    indication that the query had been dropped — the same failure the no-match
+    branch exists to prevent, since the model reads whatever it is handed as the
+    thing it asked for. Worse, the loop's repeat guard keys on the raw string,
+    so a bare-id read followed by a search looks like two different calls,
+    re-executes, and re-appends the identical head text.
+
+    The second case is not hypothetical: measured against
+    `meta/llama-3.1-8b-instruct` on the truncation-retry turn, 12 interleaved
+    live calls, the model split the arguments positionally — `read_brief(<id>,
+    {"query": ...})` — **8 times out of 12**, and wrote the documented
+    whole-object form only 4. Two thirds of correctly-reasoned searches were
+    being discarded by the parser.
     """
     out = agent_tools.read_brief(typed, long_brief)
 

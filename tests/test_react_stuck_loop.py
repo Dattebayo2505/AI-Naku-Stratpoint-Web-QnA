@@ -109,6 +109,61 @@ def test_the_repeat_is_told_to_answer_rather_than_handed_the_text_again(brief):
     assert "SCOPE OF WORK" not in second  # not the document a second time
 
 
+@pytest.fixture
+def truncated_brief(tmp_path):
+    """A document long enough that a bare read comes back partial."""
+    path = tmp_path / "long.md"
+    path.write_text(
+        "## Page 1\n" + "opening filler. " * 500
+        + "\n## Page 9\nThe submission deadline is September 15, 2026.\n",
+        encoding="utf-8",
+    )
+    return [
+        BriefRef("u1", "rfp.pdf", "sha", markdown_path=str(path),
+                 pages_total=9, pages_parsed=9)
+    ]
+
+
+def test_a_repeat_over_a_partial_excerpt_offers_the_search_back(truncated_brief):
+    """"Answer now" is the wrong instruction when only part of the document came
+    back. The plain nudge mentioned neither the truncation nor the search, so a
+    stalled loop produced a confident, unqualified summary of a document it had
+    read a third of — reported live against an 18-page deck summarized from its
+    first 8 pages."""
+    chat = ScriptedChat(READ_BRIEF_ACTION, READ_BRIEF_ACTION, "Answer: An RFP.")
+    r = react.run_react("what is this doc?", chat=chat, briefs=truncated_brief,
+                        proposal_mode=False)
+
+    second = [s for s in r.trace if s.type == "observation"][1].content
+    assert "only the first part" in second.lower()
+    assert "query" in second  # the escape hatch, named concretely
+    assert "u1" in second     # ...with the id it needs, not a placeholder
+    assert "only part of the document" in second.lower()  # caveat if it answers
+
+
+def test_a_repeat_over_a_complete_read_still_just_says_answer(brief):
+    """The tool-aware branch must not blunt the plain nudge where it was right:
+    with the whole document in hand there is nothing further to search for, and
+    inviting a search would reopen the stall the guard exists to close."""
+    chat = ScriptedChat(READ_BRIEF_ACTION, READ_BRIEF_ACTION, "Answer: An RFP.")
+    r = react.run_react("what is this doc?", chat=chat, briefs=brief)
+
+    second = [s for s in r.trace if s.type == "observation"][1].content
+    assert "only the first part" not in second.lower()
+    assert "answer" in second.lower()
+
+
+def test_the_truncated_nudge_is_keyed_to_the_marker_read_brief_writes(
+    truncated_brief,
+):
+    """Read off the prior observation, never re-derived from the excerpt cap —
+    so the stamp and the matcher cannot drift apart."""
+    head = tools.read_brief("u1", truncated_brief)
+
+    assert tools.TRUNCATION_MARKER in head
+    assert react.TRUNCATION_MARKER is tools.TRUNCATION_MARKER
+
+
 def test_a_repeat_with_a_different_input_still_runs(brief, website):
     """The guard keys on (tool, input). Two genuinely different searches are
     two searches, not a stall."""

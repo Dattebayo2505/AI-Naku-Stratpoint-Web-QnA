@@ -180,6 +180,8 @@ def test_json_input_is_accepted():
         "id = bbb",
         "id='bbb'",
         '{"upload_id": "id=bbb"}',   # the same copy, pasted into the JSON form
+        'bbb, {"query": "milestones"}',   # id positional, query in its own object
+        'id=bbb, {"query": "milestones"}',
     ],
 )
 def test_the_manifests_own_id_label_is_stripped(typed):
