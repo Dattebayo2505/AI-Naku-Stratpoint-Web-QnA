@@ -220,9 +220,9 @@ def _short_phase(name: str) -> str:
         return stripped
 
 
-    head = stripped[: max_chars - 1]
+    head = stripped[:max_chars]
     cut = head.rsplit(" ", 1)[0] if " " in head else head
-    return cut.rstrip(" ,;-&") + "…"
+    return cut.rstrip(" ,;-&.")
 
 
 
@@ -246,10 +246,10 @@ def _milestones(estimation: EstimationResult | None, start: date) -> list[Milest
             MilestoneItem(
                 phase_number=i,
                 phase_name=_short_phase(phase.phase_name),
-                title=title[:120],
+                title=title[:120].rstrip(" ,;-&."),
                 duration=f"{weeks:g} wks",
-                description="; ".join(phase.milestones)[:600] or "Scope per statement of work.",
-                deliverable=(phase.milestones[0] if phase.milestones else "Phase sign-off")[:300],
+                description="; ".join(phase.milestones)[:600].rstrip(" ,;-&.") or "Scope per statement of work.",
+                deliverable=(phase.milestones[0] if phase.milestones else "Phase sign-off")[:300].rstrip(" ,;-&."),
                 date_range=f"{cursor:%d %b} – {end:%d %b %Y}",
             )
         )

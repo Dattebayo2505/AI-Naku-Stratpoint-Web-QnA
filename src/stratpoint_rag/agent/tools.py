@@ -479,7 +479,7 @@ def _clean_feature_list(features: list[str]) -> list[str]:
             sub_clean = sub.strip(" .-\t\"'")
             if len(sub_clean) >= 3:
                 if len(sub_clean) > 50:
-                    sub_clean = sub_clean[:47].rstrip() + "..."
+                    sub_clean = sub_clean[:50].rsplit(" ", 1)[0].rstrip(" ,;-&.")
                 if sub_clean not in cleaned:
                     cleaned.append(sub_clean)
     return cleaned or ["Core Platform Features"]
@@ -533,10 +533,8 @@ def _build_dynamic_phases(features: list[str], weeks: float, complexity: str = "
 
     for idx, chunk in enumerate(feat_chunks, start=2):
         chunk_title = " & ".join(chunk[:2])
-        if len(chunk) > 2:
-            chunk_title += f" (+{len(chunk)-2} more)"
         if len(chunk_title) > 45:
-            chunk_title = chunk_title[:42].rstrip() + "..."
+            chunk_title = chunk_title[:45].rsplit(" ", 1)[0].rstrip(" ,;-&.")
         milestone_items = [f"Deliverable: {item}" for item in chunk[:4]]
         phases.append(
             PhaseTimelineItem(
