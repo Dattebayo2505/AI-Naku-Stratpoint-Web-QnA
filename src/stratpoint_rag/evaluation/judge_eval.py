@@ -105,16 +105,35 @@ def judge_proposal(proposal_text: str) -> dict:
         "max_tokens": 512,
         "temperature": 0.0,  # a judge should be as deterministic as the endpoint allows
         "stream": False,
+        # NO response_format={"type":"json_object"} here, deliberately. It was
+        # tried and reverted, measured: JUDGE_SYSTEM asks the model to reason
+        # step by step and THEN emit JSON, and json_object mode forbids the prose
+        # preamble — so the model turned its reasoning into the JSON *keys*
+        # ({"**Scope Clarity**": "5 - The proposal clearly..."}), valid JSON of
+        # the wrong shape. Failures went from ~30% to 100% across three runs.
+        # Same incompatibility that keeps json_object off v4_combined_reasoning.
     }
-    resp = httpx.post(
-        f"{config.nvidia_base_url()}/chat/completions",
-        headers={"Authorization": f"Bearer {config.nvidia_api_key()}"},
-        json=body,
-        timeout=config.llm_timeout(),
-    )
-    resp.raise_for_status()
-    raw = resp.json()["choices"][0]["message"].get("content") or ""
-    v = parse_verdict(raw)
+    # Two attempts, because the failure is non-deterministic: at temperature 0
+    # this model still drops the JSON about a third of the time, and the same
+    # proposal parses on a second ask. One retry takes an expected ~30% loss to
+    # ~9% for one extra call on the minority path. A second prose reply is a
+    # real failure and is raised — smoothing it over is how a layer starts
+    # reporting scores for work it never did.
+    for attempt in (1, 2):
+        resp = httpx.post(
+            f"{config.nvidia_base_url()}/chat/completions",
+            headers={"Authorization": f"Bearer {config.nvidia_api_key()}"},
+            json=body,
+            timeout=config.llm_timeout(),
+        )
+        resp.raise_for_status()
+        raw = resp.json()["choices"][0]["message"].get("content") or ""
+        try:
+            v = parse_verdict(raw)
+            break
+        except ValueError:
+            if attempt == 2:
+                raise
     v["length"] = len(proposal_text)  # keep the length signal visible (bias note)
     return v
 

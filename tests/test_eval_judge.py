@@ -84,3 +84,54 @@ def test_sample_proposals_reads_the_configured_proposal_dir(tmp_path, monkeypatc
     assert len(samples) == 1
     assert "Discovery phase" in samples[0]
     assert "color:red" not in samples[0]
+
+
+def test_a_judge_reply_without_json_is_retried_once(monkeypatch):
+    """The 8B model ignores the JSON instruction ~30% of the time.
+
+    Measured live on three real proposals: two returned parseable JSON, one
+    answered in prose and was counted as a failed call. The request itself
+    succeeded in 5.3s — this is prompt adherence, not the network, so a retry
+    is the cheap fix. json_object mode is NOT the fix here: the prompt asks for
+    step-by-step reasoning before the JSON, which that mode forbids (tried,
+    measured at 100% failure, reverted).
+    """
+    replies = iter(["I think this proposal is quite good, really.",
+                    '{"score": 4, "rationale": "solid"}'])
+    calls = {"n": 0}
+
+    class _Resp:
+        def __init__(self, text):
+            self._text = text
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._text}}]}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls["n"] += 1
+        return _Resp(next(replies))
+
+    monkeypatch.setattr(je.httpx, "post", fake_post)
+
+    verdict = je.judge_proposal("<h1>Quote</h1>")
+
+    assert verdict["score"] == 4
+    assert calls["n"] == 2, "the unparseable first reply should have been retried"
+
+
+def test_a_judge_that_never_returns_json_still_raises(monkeypatch):
+    """Two prose replies is a real failure — it must not be smoothed over."""
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": "no json here at all"}}]}
+
+    monkeypatch.setattr(je.httpx, "post", lambda *a, **k: _Resp())
+
+    with pytest.raises(ValueError):
+        je.judge_proposal("<h1>Quote</h1>")

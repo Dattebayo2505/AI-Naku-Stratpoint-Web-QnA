@@ -184,8 +184,23 @@ def main():
             else:
                 agg = data.get("aggregates", {})
                 st.metric("Requests", agg.get("count", 0))
-                st.metric("Latency p50 (ms)", agg.get("latency_p50_ms") or 0)
-                st.metric("Latency p95 (ms)", agg.get("latency_p95_ms") or 0)
+                # Named for what they mean, not for the statistic: "p50/p95" is
+                # jargon to the non-specialist audience the value proposition
+                # has to land with, and milliseconds read as a bigger number
+                # than they are (3861.0 vs 3.9s). Both are shown, because a
+                # median alone hides the slow tail and a p95 alone makes a
+                # healthy system look broken.
+                p50 = agg.get("latency_p50_ms") or 0
+                p95 = agg.get("latency_p95_ms") or 0
+                st.metric(
+                    "Typical response", f"{p50 / 1000:.1f}s",
+                    help="Median (p50) — half of all requests finish faster than this.",
+                )
+                st.metric(
+                    "Slowest 1 in 20", f"{p95 / 1000:.1f}s",
+                    help="95th percentile (p95) — the slow tail: brief transcription "
+                         "and proposal generation.",
+                )
                 st.metric("Total tokens", agg.get("total_tokens", 0))
                 cost = agg.get("total_cost_usd")
                 st.metric("Est. cost (USD)", f"{cost:.4f}" if cost is not None else "0")
