@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .chunker import chunk_page
 from .embeddings import Embedder, get_embedder
-from .loader import load_manifest, load_pages
+from .loader import MIN_PAGE_BODY_CHARS, load_manifest, load_pages
 from .store import VectorStore
 
 
@@ -22,14 +22,22 @@ def ingest(
     embedder: Embedder | None = None,
     store: VectorStore | None = None,
     force: bool = False,
+    min_body_chars: int = MIN_PAGE_BODY_CHARS,
 ) -> dict[str, int]:
     embedder = embedder or get_embedder()
     store = store or VectorStore()
-    pages = load_pages(data_dir)
-    # present = every slug in the manifest, NOT just the pages that loaded. A page whose
-    # .md is transiently missing is skipped from re-embedding but must not be evicted from
-    # the store; only slugs genuinely dropped from the manifest get removed below.
-    present = {r["slug"] for r in load_manifest(Path(data_dir) / "index.jsonl")}
+    pages = load_pages(data_dir, min_body_chars=min_body_chars)
+    pages_dir = Path(data_dir) / "pages"
+    # present = valid loaded pages + transiently missing pages.
+    # A page whose .md is transiently missing is skipped from re-embedding but must
+    # not be evicted from the store. Thin/stub pages (whose .md exists but body < min_body_chars)
+    # and pages genuinely dropped from the manifest get removed below.
+    missing_slugs = {
+        r["slug"]
+        for r in load_manifest(Path(data_dir) / "index.jsonl")
+        if not (pages_dir / f"{r['slug']}.md").exists()
+    }
+    present = {p.slug for p in pages} | missing_slugs
     added = updated = skipped = 0
 
     for p in pages:
@@ -48,7 +56,7 @@ def ingest(
             updated += 1
 
     removed = 0
-    for slug in store.slugs() - present:  # pages dropped from the corpus
+    for slug in store.slugs() - present:  # pages dropped from the corpus or filtered as stubs
         store.delete_slug(slug)
         removed += 1
 

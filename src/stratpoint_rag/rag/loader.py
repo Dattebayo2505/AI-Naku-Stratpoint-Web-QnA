@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = Path("data")
 PRESENT = {"ok", "skipped"}
+MIN_PAGE_BODY_CHARS: int = 100
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,10 @@ def load_manifest(index_path: Path) -> list[dict]:
     return [r for r in rows if r.get("status") in PRESENT]
 
 
-def load_pages(data_dir: str | Path = DEFAULT_DATA_DIR) -> list[Page]:
+def load_pages(
+    data_dir: str | Path = DEFAULT_DATA_DIR,
+    min_body_chars: int = MIN_PAGE_BODY_CHARS,
+) -> list[Page]:
     data_dir = Path(data_dir)
     pages_dir = data_dir / "pages"
     pages: list[Page] = []
@@ -55,13 +59,23 @@ def load_pages(data_dir: str | Path = DEFAULT_DATA_DIR) -> list[Page]:
             log.warning("skipping %s: page file missing (%s)", r["slug"], md)
             continue
         raw = md.read_text(encoding="utf-8")
+        body = strip_frontmatter(raw)
+        clean_body = body.strip()
+        if len(clean_body) < min_body_chars:
+            log.info(
+                "skipping %s: thin/stub page (%d chars < %d)",
+                r["slug"],
+                len(clean_body),
+                min_body_chars,
+            )
+            continue
         pages.append(
             Page(
                 slug=r["slug"],
                 url=r["url"],
                 title=r["title"],
                 content_hash=r["content_hash"],
-                body=strip_frontmatter(raw),
+                body=body,
             )
         )
     return pages

@@ -17,7 +17,7 @@ from stratpoint_rag.rag import config
 from stratpoint_rag.rag.models import Chunk
 from stratpoint_rag.rag.retrieve import retrieve
 from stratpoint_rag.prompts.builder import build_prompt
-from stratpoint_rag.prompts.schema import GroundedAnswer
+from stratpoint_rag.prompts.schema import Citation, GroundedAnswer
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +76,27 @@ def _split_reasoning(raw: str) -> tuple[str, str | None]:
     if body.endswith("```"):
         body = body[:-3].rstrip()
     return body, (reasoning or None)
+
+
+def _dedupe_citations(citations: list[Citation]) -> list[Citation]:
+    """Deduplicate citations by normalized URL (or title if URL is empty), preserving order.
+
+    Normalizes URLs by trimming whitespace and trailing slashes. If multiple citations
+    share the same normalized URL, only the first occurrence is kept.
+    """
+    seen: set[str] = set()
+    deduped: list[Citation] = []
+    for c in citations:
+        url = (c.url or "").strip().rstrip("/")
+        if url:
+            key = f"url:{url}"
+        else:
+            title = (c.title or "").strip()
+            key = f"title:{title}" if title else f"obj:{id(c)}"
+        if key not in seen:
+            seen.add(key)
+            deduped.append(c)
+    return deduped
 
 
 def answer(query: str, k: int = _DEFAULT_K) -> tuple[str, list[Chunk]]:
@@ -161,6 +182,7 @@ def answer_grounded(
     text = parsed.answer
 
     if parsed.citations:
+        parsed.citations = _dedupe_citations(parsed.citations)
         citations_list = []
         for c in parsed.citations:
             title = c.title if c.title else "Stratpoint"

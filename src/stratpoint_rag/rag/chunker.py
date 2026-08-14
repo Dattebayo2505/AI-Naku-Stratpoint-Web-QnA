@@ -88,6 +88,8 @@ def split_text(text: str, size: int = CHARS_PER_CHUNK, overlap: int = OVERLAP) -
 
 def chunk_page(page) -> list[Chunk]:
     """Page -> chunks, each stamped with its source url+title for citation."""
+    texts = split_text(page.body)
+    total = len(texts)
     return [
         Chunk(
             id=f"{page.slug}#{i}",
@@ -95,6 +97,8 @@ def chunk_page(page) -> list[Chunk]:
             url=page.url,
             title=page.title,
             text=t,
+            chunk_index=i,
+            total_chunks=total,
         )
-        for i, t in enumerate(split_text(page.body))
+        for i, t in enumerate(texts)
     ]

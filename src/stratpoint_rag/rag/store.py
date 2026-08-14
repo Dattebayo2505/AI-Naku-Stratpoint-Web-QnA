@@ -66,8 +66,10 @@ class VectorStore:
                     "url": c.url,
                     "title": c.title,
                     "content_hash": content_hash,
+                    "chunk_index": c.chunk_index if c.chunk_index is not None else i,
+                    "total_chunks": c.total_chunks if c.total_chunks is not None else len(chunks),
                 }
-                for c in chunks
+                for i, c in enumerate(chunks)
             ],
         )
 
@@ -77,17 +79,94 @@ class VectorStore:
             n_results=k,
             include=["documents", "metadatas", "distances"],
         )
-        docs = res["documents"][0]
-        metas = res["metadatas"][0]
-        dists = res["distances"][0]
-        return [
-            Chunk(
-                id="",
-                slug=(m or {}).get("slug") or "",
-                url=(m or {}).get("url") or "",
-                title=(m or {}).get("title") or "",
-                text=doc,
-                score=1.0 - dist,  # cosine distance -> similarity
+        docs = res.get("documents", [[]])[0] if res.get("documents") else []
+        metas = res.get("metadatas", [[]])[0] if res.get("metadatas") else []
+        dists = res.get("distances", [[]])[0] if res.get("distances") else []
+        ids = res.get("ids", [[]])[0] if res.get("ids") else []
+
+        chunks: list[Chunk] = []
+        for i, (doc, dist) in enumerate(zip(docs, dists)):
+            m = metas[i] if i < len(metas) and metas[i] else {}
+            chunk_id = ids[i] if i < len(ids) and ids[i] else ""
+            c_idx = m.get("chunk_index")
+            t_chunks = m.get("total_chunks")
+            if not chunk_id and m.get("slug") and c_idx is not None:
+                chunk_id = f"{m.get('slug')}#{c_idx}"
+            chunks.append(
+                Chunk(
+                    id=chunk_id,
+                    slug=m.get("slug") or "",
+                    url=m.get("url") or "",
+                    title=m.get("title") or "",
+                    text=doc,
+                    score=1.0 - dist,  # cosine distance -> similarity
+                    chunk_index=int(c_idx) if c_idx is not None else None,
+                    total_chunks=int(t_chunks) if t_chunks is not None else None,
+                )
             )
-            for doc, m, dist in zip(docs, metas, dists)
-        ]
+        return chunks
+
+    def get_chunks_by_ids(self, ids: list[str]) -> list[Chunk]:
+        """Fetch chunks by their explicit IDs (e.g. 'slug#0')."""
+        if not ids:
+            return []
+        got = self.col.get(ids=ids, include=["documents", "metadatas"]) or {}
+        res_ids = got.get("ids") or []
+        docs = got.get("documents") or []
+        metas = got.get("metadatas") or []
+
+        if not res_ids and (docs or metas):
+            res_ids = ids[:max(len(docs), len(metas))]
+
+        chunks: list[Chunk] = []
+        for i, cid in enumerate(res_ids):
+            doc = docs[i] if i < len(docs) else ""
+            m = metas[i] if i < len(metas) and metas[i] else {}
+            c_idx = m.get("chunk_index")
+            t_chunks = m.get("total_chunks")
+            chunks.append(
+                Chunk(
+                    id=cid,
+                    slug=m.get("slug") or "",
+                    url=m.get("url") or "",
+                    title=m.get("title") or "",
+                    text=doc,
+                    score=None,
+                    chunk_index=int(c_idx) if c_idx is not None else None,
+                    total_chunks=int(t_chunks) if t_chunks is not None else None,
+                )
+            )
+        return chunks
+
+    def expand_chunks(self, chunks: list[Chunk], window_size: int = 1) -> list[Chunk]:
+        """Expand retrieved chunks with adjacent neighbors (i - window_size .. i + window_size).
+
+        Fetches missing neighboring chunks from the store and returns the combined set.
+        """
+        if not chunks or window_size <= 0:
+            return list(chunks)
+
+        existing_ids = set()
+        for c in chunks:
+            if c.id:
+                existing_ids.add(c.id)
+            if c.slug and c.chunk_index is not None:
+                existing_ids.add(f"{c.slug}#{c.chunk_index}")
+
+        needed_ids: list[str] = []
+        for c in chunks:
+            if not c.slug or c.chunk_index is None:
+                continue
+            total = c.total_chunks if c.total_chunks is not None else c.chunk_index + window_size + 1
+            start = max(0, c.chunk_index - window_size)
+            end = min(total, c.chunk_index + window_size + 1)
+            for idx in range(start, end):
+                nid = f"{c.slug}#{idx}"
+                if nid not in existing_ids and nid not in needed_ids:
+                    needed_ids.append(nid)
+
+        if not needed_ids:
+            return list(chunks)
+
+        fetched = self.get_chunks_by_ids(needed_ids)
+        return list(chunks) + fetched

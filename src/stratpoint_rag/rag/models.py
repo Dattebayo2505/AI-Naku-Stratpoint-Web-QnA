@@ -15,3 +15,5 @@ class Chunk:
     title: str
     text: str
     score: float | None = None  # cosine similarity, set on retrieval
+    chunk_index: int | None = None
+    total_chunks: int | None = None
