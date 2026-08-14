@@ -484,3 +484,68 @@ def test_transcription_is_session_scoped(pdf_bytes):
         f"/upload/{up['upload_id']}/transcription", params={"session_id": "othersess"}
     )
     assert r.status_code == 404
+
+
+# ── decks ───────────────────────────────────────────────────────────────────
+
+
+def _pptx_bytes():
+    """A minimal deck. /upload only needs it to look like one to is_pptx."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("ppt/presentation.xml", "<presentation/>")
+        z.writestr("ppt/slides/slide1.xml", "<sld/>")
+    return buf.getvalue()
+
+
+def test_upload_accepts_a_deck_and_counts_slides(monkeypatch):
+    from stratpoint_rag.docparse import slides
+
+    def convert(src, outdir):
+        import pymupdf
+
+        doc = pymupdf.open()
+        for _ in range(3):
+            doc.new_page(width=720, height=405)
+        doc.save(outdir / f"{src.stem}.pdf")
+        doc.close()
+
+    monkeypatch.setattr(slides, "_soffice_convert", convert)
+
+    r = _upload(_pptx_bytes(), name="brief.pptx")
+
+    assert r.status_code == 200
+    assert r.json()["pages"] == 3
+
+
+def test_upload_rejects_a_deck_libreoffice_cannot_convert(monkeypatch):
+    from stratpoint_rag.docparse import slides
+
+    def convert(src, outdir):
+        return None  # exits cleanly, produces nothing
+
+    monkeypatch.setattr(slides, "_soffice_convert", convert)
+
+    r = _upload(_pptx_bytes(), name="corrupt.pptx")
+
+    assert r.status_code == 400
+    assert "corrupt.pptx" in r.json()["detail"]
+
+
+def test_upload_reports_503_when_libreoffice_is_missing(monkeypatch):
+    """The file is fine; the server is misconfigured. 400 would tell the
+    visitor to fix their deck, which is the wrong instruction."""
+    from stratpoint_rag.docparse import slides
+
+    def missing():
+        raise RuntimeError("LibreOffice was not found.")
+
+    monkeypatch.setattr(slides, "find_soffice", missing)
+
+    r = _upload(_pptx_bytes(), name="brief.pptx")
+
+    assert r.status_code == 503
+    assert "LibreOffice" in r.json()["detail"]

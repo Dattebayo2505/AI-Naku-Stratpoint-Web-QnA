@@ -34,7 +34,7 @@ from stratpoint_rag.agent import AgentResult, run_with_guardrails
 from stratpoint_rag.docparse import (
     EncryptedDocument,
     UnsupportedDocument,
-    render,
+    slides,
     store,
     transcribe_document,
 )
@@ -187,6 +187,13 @@ def upload(session_id: str = Form(...), file: UploadFile = ...) -> UploadRespons
     except (UnsupportedDocument, EncryptedDocument) as ex:
         store.delete_upload(session_id, upload_id)  # never keep what we rejected
         raise HTTPException(status_code=400, detail=str(ex))
+    except RuntimeError as ex:
+        # Setup problems, not file problems — today that means LibreOffice is
+        # not installed. 400 would tell the visitor to fix a deck that is
+        # perfectly fine. Matches how /chat and /upload/{id}/parse already
+        # signal a missing API key.
+        store.delete_upload(session_id, upload_id)
+        raise HTTPException(status_code=503, detail=str(ex))
 
     return UploadResponse(
         upload_id=upload_id,
@@ -396,8 +403,15 @@ def _sha256(data: bytes) -> str:
 
 def _page_count(path) -> int:
     """Open just far enough to count pages, rejecting encrypted files here
-    rather than letting them fail confusingly deep in the page loop."""
-    with render.open_document(path) as doc:
+    rather than letting them fail confusingly deep in the page loop.
+
+    Goes through ``slides.open_brief``, so a .pptx is converted to PDF on this
+    call and the derived file is cached inside the upload's own directory. The
+    confirmation dialog needs a real slide count, and you cannot have one
+    without opening the deck — which is the whole reason conversion happens at
+    upload rather than at parse.
+    """
+    with slides.open_brief(path) as doc:
         return doc.page_count
 
 
