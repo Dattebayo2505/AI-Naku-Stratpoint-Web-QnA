@@ -52,3 +52,7 @@ class AgentResult(BaseModel):
     reasoning: str | None = None
     # Assembled project proposal data (timeline, cost, PDF, requirements)
     proposal_data: ProposalData | dict[str, Any] | None = None
+
+
+ProposalData.model_rebuild()
+AgentResult.model_rebuild()

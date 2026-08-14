@@ -220,7 +220,7 @@ def render_system_prompt(
     if proposal_mode:
         steps = [f"{BRIEF_TOOL_NAME}(upload_id)"] if briefs else []
         steps += [
-            "estimate_cost_and_timeline(scope_input)",
+            'estimate_cost_and_timeline({"features": ["Feature 1", "Feature 2", "Feature 3", "Feature 4"], "timeline_weeks": 6.0})',
             "generate_proposal_pdf(proposal_details)",
             "Answer: Summarize the proposal findings (cost, timeline, PDF link).",
         ]
@@ -237,8 +237,9 @@ def render_system_prompt(
         )
 
     closing = (
-        "- Summarize cost, timeline in weeks, and download links in your final "
-        "Answer.\n"
+        "- Execution phases and roadmaps are dynamic (not restricted to 3 phases). You can pass custom_phases or timeline_weeks to estimate_cost_and_timeline to tailor the roadmap.\n"
+        "- If target launch date or timeline info is missing from the brief and user query, ask the visitor if they have a target launch date or project duration in mind to gauge the timeline accurately.\n"
+        "- Summarize cost, timeline in weeks, and download links in your final Answer.\n"
         if proposal_mode
         else "- Do NOT produce a cost, a timeline, a role breakdown, or a "
         "proposal PDF. The visitor did not ask for one; offer to build one only "

@@ -209,3 +209,14 @@ class ProposalQuoteContext(BaseModel):
         rate = self.tax_rate_percent.normalize()
         text = format(rate, "f")
         return f"{text.rstrip('0').rstrip('.') if '.' in text else text}%"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def milestones_rows(self) -> list[list[MilestoneItem]]:
+        """Chunk milestones into rows of at most 4 items per row for clean, un-squeezed rendering."""
+        chunk_size = 4
+        return [
+            self.milestones[i : i + chunk_size]
+            for i in range(0, len(self.milestones), chunk_size)
+        ]
+

@@ -35,6 +35,12 @@ INTENT_SLOTS: dict[IntentCategory, list[SlotDef]] = {
             required=False,
             llm_hint="Only if the visitor states it. Never infer it.",
         ),
+        SlotDef(
+            name="target_timeline",
+            description="The visitor's target launch date or desired project duration (e.g. 3 months, Q4 2026)",
+            required=False,
+            llm_hint="Only if the visitor states it. Never infer it.",
+        ),
     ],
     IntentCategory.GREETING: [],
     IntentCategory.OFF_TOPIC: [],

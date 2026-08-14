@@ -217,13 +217,16 @@ def _parse_input_dict_or_str(input_data: Any) -> dict[str, Any]:
         return input_data
     if isinstance(input_data, str):
         s = input_data.strip()
-        if s.startswith("{") and s.endswith("}"):
+        # Clean scope_input="...", features="..." wrappers if the LLM typed assignments
+        clean_s = re.sub(r'^(?:scope_input|features|input_data)\s*=\s*["\']?', '', s, flags=re.IGNORECASE).strip('"\' ')
+        if clean_s.startswith("{") and clean_s.endswith("}"):
             try:
-                return json.loads(s)
+                return json.loads(clean_s)
             except json.JSONDecodeError:
                 pass
-        return {"file_path": s, "query": s, "features": [s]}
+        return {"file_path": clean_s, "query": clean_s, "features": [clean_s]}
     return {}
+
 
 
 def _resolve_upload_id(raw: Any, briefs: list[BriefRef]) -> BriefRef | None:
@@ -490,6 +493,9 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
             features=features,
             target_platform=d.get("target_platform", ["Web", "Mobile"]),
             complexity=d.get("complexity", "medium"),
+            timeline_weeks=d.get("timeline_weeks"),
+            target_launch_date=d.get("target_launch_date"),
+            custom_phases=d.get("custom_phases") or d.get("phases") or d.get("phase_timeline"),
         )
 
     # Detect target currency and tech stack hints from captured session requirements / input payload
@@ -500,9 +506,12 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
 
     tech_hints = list(payload.features) + list(payload.target_platform)
 
-    num_features = max(1, len(payload.features))
-    complexity_mult = 1.2 if payload.complexity in ("high", "complex") else (0.8 if payload.complexity in ("low", "simple") else 1.0)
-    weeks = round((4.0 + num_features * 1.3) * complexity_mult, 1)
+    if payload.timeline_weeks and float(payload.timeline_weeks) > 0:
+        weeks = round(float(payload.timeline_weeks), 1)
+    else:
+        num_features = max(1, len(payload.features))
+        complexity_mult = 1.2 if payload.complexity in ("high", "complex") else (0.8 if payload.complexity in ("low", "simple") else 1.0)
+        weeks = round((4.0 + num_features * 1.3) * complexity_mult, 1)
 
     # Handbook.md rate lookup per role adjusted by tech stack and target currency
     tech_lead_rate, _ = calculate_role_rate("Tech Lead / Solutions Architect", target_currency=target_currency, tech_stack_hints=tech_hints)
@@ -561,24 +570,217 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
 
     total_cost = round(sum(r.total_cost for r in roles), 2)
 
-    feature_str = ", ".join(payload.features[:3]) if payload.features else "Core System Features"
-    phases = [
+def _clean_feature_list(features: list[str]) -> list[str]:
+    """Clean raw feature strings into concise, readable feature names."""
+    cleaned: list[str] = []
+    for item in features:
+        if not item or not isinstance(item, str):
+            continue
+        text = item.strip()
+        # Strip scope_input="...", quotes, etc.
+        text = re.sub(r'^(?:scope_input|features|input_data)\s*=\s*["\']?', '', text, flags=re.IGNORECASE)
+        text = text.strip('"\' ')
+        # Split comma/semicolon/newline separated items
+        sub_items = re.split(r'[,;\n\r]+|\band\b', text, flags=re.IGNORECASE)
+        for sub in sub_items:
+            sub_clean = sub.strip(" .-\t\"'")
+            if len(sub_clean) >= 3:
+                if len(sub_clean) > 50:
+                    sub_clean = sub_clean[:47].rstrip() + "..."
+                if sub_clean not in cleaned:
+                    cleaned.append(sub_clean)
+    return cleaned or ["Core Platform Features"]
+
+
+def _build_dynamic_phases(features: list[str], weeks: float) -> list[PhaseTimelineItem]:
+    """Build dynamic, un-capped domain-specific roadmap phases based on feature list and timeline."""
+    cleaned_feats = _clean_feature_list(features)
+    n = len(cleaned_feats)
+
+    # For rapid/short projects with <= 2 features
+    if n <= 2 and weeks <= 3.5:
+        feat_summary = ", ".join(cleaned_feats[:2])
+        return [
+            PhaseTimelineItem(
+                phase_name="Phase 1: Discovery & Rapid Implementation",
+                duration_weeks=round(weeks * 0.60, 1),
+                milestones=["Architecture & Specs", f"Core Deliverables: {feat_summary}"],
+            ),
+            PhaseTimelineItem(
+                phase_name="Phase 2: QA, Acceptance & Deployment",
+                duration_weeks=round(weeks * 0.40, 1),
+                milestones=["End-to-End Testing", "Production Launch & Handoff"],
+            ),
+        ]
+
+    # Generate Phase 1 (Discovery), a dedicated Phase for each feature, and Final Phase (QA & Launch)
+    # Completely un-capped: scales to any number of features in the uploaded document!
+    phases: list[PhaseTimelineItem] = []
+
+    p1_duration = round(max(0.5, weeks * 0.15), 1)
+    phases.append(
         PhaseTimelineItem(
-            phase_name="Phase 1: Discovery & System Architecture",
-            duration_weeks=round(weeks * 0.2, 1),
-            milestones=["Technical Architecture Document", "UI/UX Wireframes & Component Specs"],
+            phase_name="Phase 1: Discovery, Strategy & System Architecture",
+            duration_weeks=p1_duration,
+            milestones=["Technical Architecture Specification", "UI/UX Wireframes & Project Roadmap"],
+        )
+    )
+
+    dev_budget_weeks = max(1.0, weeks * 0.70)
+    if n > 6:
+        chunk_size = 2
+        feat_chunks = [cleaned_feats[i:i + chunk_size] for i in range(0, n, chunk_size)]
+    else:
+        feat_chunks = [[f] for f in cleaned_feats]
+
+    num_mid_phases = len(feat_chunks)
+    per_phase_weeks = round(max(0.5, dev_budget_weeks / num_mid_phases), 1)
+
+    for idx, chunk in enumerate(feat_chunks, start=2):
+        chunk_title = " & ".join(chunk)
+        if len(chunk_title) > 40:
+            chunk_title = chunk_title[:37].rstrip() + "..."
+        milestone_items = [f"Deliverable: {item}" for item in chunk]
+        phases.append(
+            PhaseTimelineItem(
+                phase_name=f"Phase {idx}: Development — {chunk_title}",
+                duration_weeks=per_phase_weeks,
+                milestones=milestone_items,
+            )
+        )
+
+    p_final_num = len(phases) + 1
+    p_final_duration = round(max(0.5, weeks * 0.15), 1)
+    phases.append(
+        PhaseTimelineItem(
+            phase_name=f"Phase {p_final_num}: QA, Security Audit & Production Launch",
+            duration_weeks=p_final_duration,
+            milestones=["End-to-End QA Regression Testing", "Security Audit & Performance Optimization", "Production Deployment & Handoff"],
+        )
+    )
+
+    return phases
+
+
+
+def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any]) -> EstimationResult:
+    """Compute estimated project cost (USD), timeline in weeks, role breakdown, and phase roadmap from extracted requirements.
+
+    Accepts structured JSON:
+    {"features": ["Feature A", "Feature B"], "timeline_weeks": 6.0, "custom_phases": [{"phase_name": "Phase 1: Setup", "duration_weeks": 1.5, "milestones": ["Specs"]}]}
+
+    Args:
+        input_data: Scope details or EstimationInput model/dict.
+
+    Returns:
+        EstimationResult Pydantic model containing total cost, timeline in weeks, role breakdown, and phase roadmap.
+    """
+    if isinstance(input_data, EstimationInput):
+        payload = input_data
+    elif isinstance(input_data, dict):
+        payload = EstimationInput.model_validate(input_data)
+    else:
+        d = _parse_input_dict_or_str(input_data)
+        features = d.get("features", ["User Authentication", "Product Catalog", "Payment Gateway"])
+        if isinstance(features, str):
+            features = [features]
+        payload = EstimationInput(
+            features=features,
+            target_platform=d.get("target_platform", ["Web", "Mobile"]),
+            complexity=d.get("complexity", "medium"),
+            timeline_weeks=d.get("timeline_weeks"),
+            target_launch_date=d.get("target_launch_date"),
+            custom_phases=d.get("custom_phases") or d.get("phases") or d.get("phase_timeline"),
+        )
+
+    # Detect target currency and tech stack hints from captured session requirements / input payload
+    captured = _proposal_sink.get()
+    target_currency = "USD"
+    if captured and captured.requirements and captured.requirements.currency_code:
+        target_currency = captured.requirements.currency_code
+
+    tech_hints = list(payload.features) + list(payload.target_platform)
+
+    if payload.timeline_weeks and float(payload.timeline_weeks) > 0:
+        weeks = round(float(payload.timeline_weeks), 1)
+    else:
+        num_features = max(1, len(payload.features))
+        complexity_mult = 1.2 if payload.complexity in ("high", "complex") else (0.8 if payload.complexity in ("low", "simple") else 1.0)
+        weeks = round((4.0 + num_features * 1.3) * complexity_mult, 1)
+
+    # Handbook.md rate lookup per role adjusted by tech stack and target currency
+    tech_lead_rate, _ = calculate_role_rate("Tech Lead / Solutions Architect", target_currency=target_currency, tech_stack_hints=tech_hints)
+    engineer_rate, _ = calculate_role_rate("Senior Fullstack Engineer", target_currency=target_currency, tech_stack_hints=tech_hints)
+    qa_rate, _ = calculate_role_rate("QA Automation Manager", target_currency=target_currency, tech_stack_hints=tech_hints)
+    designer_rate, _ = calculate_role_rate("UI/UX Designer", target_currency=target_currency, tech_stack_hints=tech_hints)
+
+    r1_rate = float(tech_lead_rate)
+    r2_rate = float(engineer_rate)
+    r3_rate = float(qa_rate)
+    r4_rate = float(designer_rate)
+
+    roles = [
+        RoleBreakdownItem(
+            role="Tech Lead / Solutions Architect",
+            estimated_hours=weeks * 15,
+            hourly_rate=r1_rate,
+            total_cost=round(weeks * 15 * r1_rate, 2),
         ),
-        PhaseTimelineItem(
-            phase_name="Phase 2: Core Development & Integration",
-            duration_weeks=round(weeks * 0.5, 1),
-            milestones=[f"Sprint Deliverables ({feature_str})", "API Integrations & Database Schema"],
+        RoleBreakdownItem(
+            role="Senior Fullstack Engineer",
+            estimated_hours=weeks * 30,
+            hourly_rate=r2_rate,
+            total_cost=round(weeks * 30 * r2_rate, 2),
         ),
-        PhaseTimelineItem(
-            phase_name="Phase 3: QA, Security & Production Deployment",
-            duration_weeks=round(weeks * 0.3, 1),
-            milestones=["End-to-End QA Testing", "Security Audit & Performance Optimization", "Production Launch & Handoff"],
+        RoleBreakdownItem(
+            role="QA Automation Manager",
+            estimated_hours=weeks * 15,
+            hourly_rate=r3_rate,
+            total_cost=round(weeks * 15 * r3_rate, 2),
+        ),
+        RoleBreakdownItem(
+            role="UI/UX Designer",
+            estimated_hours=weeks * 10,
+            hourly_rate=r4_rate,
+            total_cost=round(weeks * 10 * r4_rate, 2),
         ),
     ]
+
+    # Category-specific handbook costing additions (Cloud, AI/ML, Data, Security, Licenses)
+    extra_costings = get_category_costings(
+        features=payload.features,
+        target_platform=payload.target_platform,
+        weeks=weeks,
+        target_currency=target_currency,
+    )
+    for c_item in extra_costings:
+        roles.append(
+            RoleBreakdownItem(
+                role=c_item["role"],
+                estimated_hours=c_item["estimated_hours"],
+                hourly_rate=c_item["hourly_rate"],
+                total_cost=c_item["total_cost"],
+            )
+        )
+
+    total_cost = round(sum(r.total_cost for r in roles), 2)
+
+    # Build dynamic phase roadmap or use custom LLM-supplied phases
+    phases: list[PhaseTimelineItem] = []
+    if payload.custom_phases:
+        for p in payload.custom_phases:
+            if isinstance(p, PhaseTimelineItem):
+                phases.append(p)
+            elif isinstance(p, dict):
+                p_name = str(p.get("phase_name") or p.get("title") or f"Phase {len(phases)+1}")
+                p_dur = float(p.get("duration_weeks") or p.get("duration") or 1.0)
+                p_m = list(p.get("milestones") or p.get("deliverables") or [])
+                phases.append(PhaseTimelineItem(phase_name=p_name, duration_weeks=p_dur, milestones=p_m))
+
+    if not phases:
+        phases = _build_dynamic_phases(payload.features, weeks)
+
+
 
     result = EstimationResult(
         total_cost_usd=total_cost,

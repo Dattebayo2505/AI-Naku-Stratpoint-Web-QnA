@@ -30,7 +30,7 @@ keep resolving. The dependency runs agent -> docparse and must not be inverted.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +74,10 @@ class ExtractedRequirements(BaseModel):
 
     currency_symbol: str = Field("$", description="Detected currency symbol ('$' or '₱').")
     currency_code: str = Field("USD", description="Detected currency code ('USD' or 'PHP').")
+    phase_timeline: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Explicit project phases or milestones stated in the document.",
+    )
 
     # ── provenance: copied from hop 1, never model-supplied ──────────────
     source_markdown_path: str | None = Field(
@@ -88,3 +92,7 @@ class ExtractedRequirements(BaseModel):
         default_factory=list,
         description="Honest gaps, e.g. 'no timeline stated'. Length-capped.",
     )
+
+
+ExtractedRequirements.model_rebuild()
+

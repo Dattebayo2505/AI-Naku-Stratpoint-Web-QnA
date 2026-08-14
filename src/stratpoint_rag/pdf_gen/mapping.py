@@ -200,19 +200,30 @@ def _line_items(
 
 
 def _short_phase(name: str) -> str:
-    """Chevron label: 'Phase 2: Core Development' -> 'Core Development'.
+    """Chevron ribbon badge label.
 
-    Truncation is at a word boundary. Cutting mid-word produced
-    'Discovery & System Architec…' on the first live render — a label that
-    reads as a rendering bug rather than as an abbreviation.
+    Extracts a punchy summary for the ribbon badge so text fits cleanly
+    without vertical word-breaking or mid-word truncation.
     """
     stripped = _PHASE_PREFIX.sub("", name).strip() or name.strip()
-    if len(stripped) <= _CHEVRON_LABEL_CHARS:
+    if "—" in stripped:
+        parts = stripped.split("—")
+        title = parts[1].strip() if len(parts[1].strip()) >= 3 else parts[0].strip()
+        stripped = title
+    elif ":" in stripped:
+        parts = stripped.split(":")
+        title = parts[1].strip() if len(parts[1].strip()) >= 3 else parts[0].strip()
+        stripped = title
+
+    max_chars = 35
+    if len(stripped) <= max_chars:
         return stripped
 
-    head = stripped[: _CHEVRON_LABEL_CHARS - 1]
+
+    head = stripped[: max_chars - 1]
     cut = head.rsplit(" ", 1)[0] if " " in head else head
     return cut.rstrip(" ,;-&") + "…"
+
 
 
 def _milestones(estimation: EstimationResult | None, start: date) -> list[MilestoneItem]:
