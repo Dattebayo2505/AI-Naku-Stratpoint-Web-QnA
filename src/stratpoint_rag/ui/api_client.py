@@ -41,8 +41,11 @@ def get_evals(include_judge: bool = True) -> Dict[str, Any] | None:
     """Eval table rows, or None if the API is unreachable.
 
     The timeout is generous because this actually runs the suite: ~4s without
-    the judge, ~20s with it (live LLM calls). The `/metrics` 5s timeout would
-    abort every judged run.
+    the judge, and with it however long the judge's own wall-clock budget
+    allows (EVAL_JUDGE_BUDGET_SECONDS, default 120s) plus that ~4s. The
+    `/metrics` 5s timeout would abort every judged run. Keep this above the
+    judge budget: the judge yields and reports a partial row, but only if this
+    caller is still waiting to receive it.
     """
     try:
         response = requests.get(

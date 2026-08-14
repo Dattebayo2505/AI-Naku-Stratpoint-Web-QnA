@@ -367,3 +367,95 @@ def test_confirmation_response_declination():
     assert engagement.get("s1").settled
 
 
+# ── an unparsed reply re-asks; it is not a declination ──────────────────────
+#
+# The confirmation question is "are these right or do you want to change them?".
+# Three replies a visitor plainly means as a correction were all landing in the
+# catch-all that recorded a declination and wiped both names, so the quote
+# printed the placeholder immediately after they supplied the real name.
+
+
+def test_a_bare_name_at_confirmation_reasks_instead_of_declining():
+    """"Northwind Retail" alone carries no slot label, so nothing extracts.
+
+    That is ambiguous, not a refusal — ask again rather than settling on a
+    silent wipe of names the visitor never withdrew.
+    """
+    engagement.start_confirmation("s1", "give me a quote", "Clive", "Project Avisala")
+    resumption, prompt = engagement.record_confirmation_response("s1", "Northwind Retail")
+
+    assert prompt is not None, "an unparsed reply must re-ask"
+    assert not resumption.declined
+    assert engagement.get("s1").names == ("Clive", "Project Avisala")
+    assert engagement.get("s1").awaiting_confirmation
+    assert not engagement.get("s1").settled
+
+
+def test_no_at_confirmation_reasks_instead_of_wiping_names():
+    """"No" answers "are these right?" — it does not mean "use no names"."""
+    engagement.start_confirmation("s1", "give me a quote", "Clive", "Project Avisala")
+    resumption, prompt = engagement.record_confirmation_response("s1", "no")
+
+    assert prompt is not None
+    assert not resumption.declined
+    assert engagement.get("s1").names == ("Clive", "Project Avisala")
+    assert engagement.get("s1").awaiting_confirmation
+
+
+def test_an_actually_prefixed_correction_is_applied():
+    """`_NOT_A_NAME` rejects a leading "actually" before the slot regexes run.
+
+    The regexes carry an explicit ``actually\\s+`` prefix for exactly this
+    phrasing, so a labelled correction must reach them.
+    """
+    engagement.start_confirmation("s1", "give me a quote", "Clive", "Project Avisala")
+    resumption, prompt = engagement.record_confirmation_response(
+        "s1", "actually the client is Monica"
+    )
+
+    assert prompt is not None
+    assert "Client Name: Monica" in prompt
+    assert engagement.get("s1").client_name == "Monica"
+    assert not resumption.declined
+
+
+# ── a declination actually withdraws the names ──────────────────────────────
+
+
+def test_a_declination_clears_the_stored_names():
+    """`record_answer` returned (None, None) but left the names in the session.
+
+    The caller reads ``engagement.get(sid).names``, not the Resumption's, so a
+    name supplied earlier printed on the quote after an explicit skip.
+    """
+    engagement.adopt_stated("s1", {"brief_client_name": "Acme"})
+    engagement.start_ask("s1", "give me a quote")
+
+    resumption, prompt = engagement.record_answer("s1", "skip")
+
+    assert prompt is None
+    assert resumption.declined
+    assert resumption.names == (None, None)
+    assert engagement.get("s1").names == (None, None), (
+        "the stored names are what reaches the quote"
+    )
+
+
+def test_restating_one_name_keeps_the_other():
+    """`start_confirmation` wrote `None` over an already-confirmed name.
+
+    Reached whenever a follow-up request mentions only one of the two names —
+    `route_result.slots` then carries a single key and the other arrives None.
+    """
+    engagement.start_confirmation("s1", "give me a quote", "Acme", "Loyalty App")
+    engagement.record_confirmation_response("s1", "yes")
+
+    prompt = engagement.start_confirmation(
+        "s1", "actually call the project Rewards App", None, "Rewards App"
+    )
+
+    assert "Project Name: Rewards App" in prompt
+    assert "Client Name: Acme" in prompt
+    assert engagement.get("s1").client_name == "Acme"
+
+

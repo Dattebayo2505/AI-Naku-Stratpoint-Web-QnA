@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import html as html_mod
 import json
+import os
 import re
+import time
 from typing import TYPE_CHECKING
 
 import httpx
@@ -169,6 +171,22 @@ def _proposal_root():
     return Path(pdf_config.proposal_dir())
 
 
+def _budget_seconds() -> float:
+    """Wall-clock ceiling on the whole judge layer.
+
+    120s, sized against the 180s that `ui/api_client.get_evals` allows for the
+    entire suite: the other five layers are offline and finish in ~4s, so this
+    leaves headroom rather than racing the caller. Without it the worst case is
+    10 proposals x 2 attempts x LLM_TIMEOUT — and blowing the caller's timeout
+    does not degrade the judge row, it discards the whole table.
+    """
+    val = os.getenv("EVAL_JUDGE_BUDGET_SECONDS")
+    try:
+        return float(val) if val else 120.0
+    except ValueError:
+        return 120.0
+
+
 def _sample_proposals() -> list[str]:
     root = _proposal_root()
     if not root.exists():
@@ -202,12 +220,18 @@ def layer() -> LayerResult:
     # failure (e.g. 9 of 10 timing out) read as a perfect 1/1 run.
     scores = []
     failed = 0
-    for text in samples:
+    budget = _budget_seconds()
+    started = time.monotonic()
+    abandoned = 0
+    for i, text in enumerate(samples):
         try:
             scores.append(judge_proposal(text)["score"])
         except (httpx.HTTPError, ValueError):
             failed += 1
-            continue
+        # Checked after the call, so at least one proposal is always scored.
+        if time.monotonic() - started >= budget:
+            abandoned = len(samples) - (i + 1)
+            break
     if not scores:
         return LayerResult("judge", "judge/proposal-quality", 0, 0, detail="all judge calls failed", skipped=True)
     passed = sum(1 for s in scores if s >= 3)
@@ -215,5 +239,7 @@ def layer() -> LayerResult:
     detail = f"mean {mean:.2f}/5"
     if failed:
         detail += f", {failed} of {len(samples)} calls failed"
+    if abandoned:
+        detail += f", {abandoned} unscored — {budget:g}s budget spent"
     return LayerResult("judge", "judge/proposal-quality", len(scores), passed,
                        detail=detail)

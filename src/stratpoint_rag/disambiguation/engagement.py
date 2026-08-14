@@ -166,12 +166,19 @@ def start_confirmation(
     project_name: str | None = None,
 ) -> str:
     engagement = get(session_id)
-    engagement.client_name = client_name
-    engagement.project_name = project_name
+    # Only overwrite what was actually supplied — the same guard `adopt_stated`
+    # carries. A follow-up naming just one of the two arrives with the other as
+    # None, and assigning it would silently drop a name already confirmed.
+    if client_name:
+        engagement.client_name = client_name
+    if project_name:
+        engagement.project_name = project_name
     engagement.awaiting_confirmation = True
     engagement.pending_request = request
     engagement.loop = None
-    return format_confirmation(client_name, project_name)
+    # Render the merged state, not the arguments — otherwise the prompt shows
+    # "(Not specified)" for a name this call deliberately left standing.
+    return format_confirmation(engagement.client_name, engagement.project_name)
 
 
 def _question(suggestion: tuple[str | None, str | None]) -> str:
@@ -236,6 +243,17 @@ _NOT_A_NAME = re.compile(
 
 _MAX_NAME_CHARS = 80
 
+# The subset of `is_declination` that means "these are wrong" rather than
+# "leave the names off". Only meaningful facing the confirmation question;
+# the naming *ask* asks something else, where a bare "no" is a real refusal.
+_PLAIN_NO = re.compile(r"^\s*(?:no|nope|nah)[\s.!]*$", re.IGNORECASE)
+
+_RECONFIRM_NUDGE = (
+    "Sorry — I didn't catch which name that was. You can say "
+    "\"client is X\" or \"project is Y\", 'yes' to use the details below, "
+    "or 'skip' to leave them blank.\n\n"
+)
+
 
 def _is_an_answer(reply: str) -> bool:
     """True when the reply could plausibly be settling the naming question."""
@@ -271,26 +289,10 @@ def record_confirmation_response(
     engagement = get(session_id)
     request = engagement.pending_request or answer
 
-    if not _is_an_answer(answer):
-        abandon(session_id)
-        return Resumption(
-            request=answer, names=engagement.names, declined=False, consumed=False
-        ), None
-
-    if is_declination(answer):
-        engagement.declined = True
-        engagement.client_name = None
-        engagement.project_name = None
-        engagement.awaiting_confirmation = False
-        engagement.asked = True
-        return Resumption(request=request, names=(None, None), declined=True), None
-
-    if _AFFIRM.match(answer or ""):
-        engagement.awaiting_confirmation = False
-        engagement.asked = True
-        return Resumption(request=request, names=engagement.names, declined=False), None
-
-    # Check for corrections/new names
+    # Extraction runs FIRST, ahead of the _is_an_answer heuristic. A labelled
+    # correction is unambiguous, and _NOT_A_NAME rejects a leading "actually" —
+    # the exact opener the slot regexes carry an `actually\s+` prefix for, which
+    # made that prefix unreachable from this path.
     from .schemas import IntentCategory
     from .slots import extract_slots
 
@@ -304,13 +306,38 @@ def record_confirmation_response(
             request=request, names=engagement.names, declined=False
         ), format_confirmation(engagement.client_name, engagement.project_name)
 
-    # If answer did not match affirmation, declination, or extractable names
-    engagement.declined = True
-    engagement.client_name = None
-    engagement.project_name = None
-    engagement.awaiting_confirmation = False
-    engagement.asked = True
-    return Resumption(request=request, names=(None, None), declined=True), None
+    if _AFFIRM.match(answer or ""):
+        engagement.awaiting_confirmation = False
+        engagement.asked = True
+        return Resumption(request=request, names=engagement.names, declined=False), None
+
+    # "skip"/"blank"/"none" withdraw the names; a bare "no" answers the question
+    # that was actually asked ("are these right?") and means the opposite of a
+    # withdrawal, so it falls through to the re-ask below.
+    if is_declination(answer) and not _PLAIN_NO.match(answer or ""):
+        engagement.declined = True
+        engagement.client_name = None
+        engagement.project_name = None
+        engagement.awaiting_confirmation = False
+        engagement.asked = True
+        return Resumption(request=request, names=(None, None), declined=True), None
+
+    if not _is_an_answer(answer):
+        abandon(session_id)
+        return Resumption(
+            request=answer, names=engagement.names, declined=False, consumed=False
+        ), None
+
+    # Nothing parsed. Ask again rather than recording a declination: the visitor
+    # is mid-correction and has withdrawn nothing, so wiping both names here
+    # printed the placeholder on a quote the moment they supplied a real name.
+    # The nudge differs from the plain confirmation so a repeated reply cannot
+    # loop on the identical prompt.
+    return Resumption(
+        request=request, names=engagement.names, declined=False
+    ), _RECONFIRM_NUDGE + format_confirmation(
+        engagement.client_name, engagement.project_name
+    )
 
 
 def record_answer(session_id: str | None, answer: str) -> tuple[Resumption, str | None]:
@@ -339,6 +366,11 @@ def record_answer(session_id: str | None, answer: str) -> tuple[Resumption, str 
     elif is_declination(answer):
         engagement.declined = True
         engagement.asked = True
+        # Clear the stored names too, not just the returned pair: the caller
+        # reads `engagement.get(sid).names`, so a name adopted earlier in the
+        # session otherwise reached the quote after an explicit skip.
+        engagement.client_name = None
+        engagement.project_name = None
         return Resumption(
             request=request, names=(None, None), declined=True
         ), None

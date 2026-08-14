@@ -122,6 +122,40 @@ def test_a_judge_reply_without_json_is_retried_once(monkeypatch):
     assert calls["n"] == 2, "the unparseable first reply should have been retried"
 
 
+def test_the_judge_stops_scoring_once_its_time_budget_is_spent(monkeypatch):
+    """A slow judge must not take the whole eval table down with it.
+
+    `layer()` judged up to 10 proposals, each up to 2 attempts, each bounded
+    only by LLM_TIMEOUT (300s by default) — a worst case of ~6000s against the
+    caller's fixed `timeout=180` in `ui/api_client.get_evals`. On trip that
+    caller returns None and discards *every* layer's results, including the
+    five that already succeeded. The judge is the one layer that makes live
+    calls, so it is the one that has to yield.
+    """
+    import time as _time
+
+    monkeypatch.setattr(je, "live_available", lambda: True)
+    monkeypatch.setattr(je, "_sample_proposals", lambda: ["a", "b", "c", "d", "e"])
+    monkeypatch.setenv("EVAL_JUDGE_BUDGET_SECONDS", "0.05")
+
+    judged = {"n": 0}
+
+    def slow_judge(text):
+        judged["n"] += 1
+        _time.sleep(0.04)
+        return {"score": 4, "rationale": "ok", "length": len(text)}
+
+    monkeypatch.setattr(je, "judge_proposal", slow_judge)
+
+    res = je.layer()
+
+    assert judged["n"] < 5, "the judge must stop once its budget is spent"
+    assert judged["n"] >= 1, "it must still score what it had time for"
+    assert res.total == judged["n"], "the denominator counts only what was judged"
+    assert not res.skipped
+    assert "budget" in res.detail, "an abandoned run must say so, never silently"
+
+
 def test_a_judge_that_never_returns_json_still_raises(monkeypatch):
     """Two prose replies is a real failure — it must not be smoothed over."""
     class _Resp:
