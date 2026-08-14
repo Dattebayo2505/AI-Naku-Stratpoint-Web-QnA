@@ -361,6 +361,42 @@ def test_read_brief_labels_an_excerpt_by_the_page_of_the_match(long_brief):
     assert "Page 3" not in out
 
 
+@pytest.mark.parametrize(
+    "typed",
+    [
+        '{"upload_id": "u1", "query": "2.10"}',   # the form the description teaches
+        'upload_id="u1", query="2.10"',           # kwargs, no braces
+        "upload_id=u1, query=2.10",               # kwargs, unquoted
+        "id=u1, query=2.10",                      # the manifest's own id label
+    ],
+)
+def test_a_query_survives_every_form_the_model_types(long_brief, typed):
+    """Only the exact JSON object used to reach the search path.
+
+    The other three fell through to the head of the document and returned it
+    with no indication that the query had been dropped — the same failure the
+    no-match branch exists to prevent, since the model reads whatever it is
+    handed as the thing it asked for. Worse, the loop's repeat guard keys on the
+    raw string, so a bare-id read followed by a kwargs search looks like two
+    different calls, re-executes, and re-appends the identical head text.
+    """
+    out = agent_tools.read_brief(typed, long_brief)
+
+    assert "2.10 The City reserves the right to negotiate" in out
+    assert "matching" in out.lower()
+
+
+def test_a_bare_id_is_still_not_read_as_a_search(long_brief):
+    """The rule the kwargs support must not break: a query counts only when the
+    model *names* the key. Mapping a bare string onto `query` too would turn the
+    ordinary `read_brief(u1)` into a search for the literal id, matching
+    nothing."""
+    out = agent_tools.read_brief("u1", long_brief)
+
+    assert "matching" not in out.lower()
+    assert "2.0 Broad description" in out
+
+
 def test_read_brief_says_when_a_query_matches_nothing(long_brief):
     """A no-match must not silently fall back to the head of the document: the
     model would read it as "here is what you asked for" and answer from

@@ -172,6 +172,33 @@ def test_json_input_is_accepted():
     assert got.upload_id == "a3f9c2"
 
 
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "id=bbb",           # copied straight off the manifest line
+        "upload_id=bbb",
+        "id = bbb",
+        "id='bbb'",
+        '{"upload_id": "id=bbb"}',   # the same copy, pasted into the JSON form
+    ],
+)
+def test_the_manifests_own_id_label_is_stripped(typed):
+    """The manifest renders the id as ``| id=<value> |`` and the model copies the
+    whole token — ``Action: read_brief(id=d5812cb3...)`` is a live transcript,
+    not a hypothetical.
+
+    With one brief attached this looked like it worked, because
+    ``test_a_lone_attachment_is_assumed_when_the_id_is_wrong`` caught it: the
+    right document came back for the wrong reason, and a bogus id would have
+    reached it just as well. With two attached there is nothing to fall back to
+    and the tool raises, so the loop spends a turn on an error Observation
+    about a document the visitor did attach.
+    """
+    briefs = [brief("aaa"), brief("bbb", "second.pdf")]
+
+    assert tools._resolve_upload_id(typed, briefs).upload_id == "bbb"
+
+
 def test_no_attachments_resolves_to_nothing():
     assert tools._resolve_upload_id("anything", []) is None
 

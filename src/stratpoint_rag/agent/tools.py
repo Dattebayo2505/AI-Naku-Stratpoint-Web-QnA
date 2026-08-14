@@ -230,6 +230,44 @@ def _parse_input_dict_or_str(input_data: Any) -> dict[str, Any]:
 
 
 
+# `key=value` pairs, comma- or space-separated, values optionally quoted. The
+# lookahead is what stops an unquoted value from swallowing the pair after it:
+# without it `id=u1 query=2.10` reads as one id of `u1 query=2.10`.
+_LABELLED_ARG = re.compile(
+    r"""(?P<key>\w+)\s*=\s*(?P<val>"[^"]*"|'[^']*'|[^,]+?)(?=\s*(?:,|$)|\s+\w+\s*=)"""
+)
+
+
+def _labelled_args(raw: str) -> dict[str, str]:
+    """Parse an Action argument written as `key=value` pairs, or return {}.
+
+    Deliberately narrow. It reports **only** what the model explicitly labelled,
+    so a bare `read_brief(a3f9c2)` yields nothing and cannot be mistaken for a
+    named argument — the same rule `_brief_query` was already built on.
+    """
+    return {
+        m.group("key").casefold(): m.group("val").strip().strip("\"'").strip()
+        for m in _LABELLED_ARG.finditer(raw)
+    }
+
+
+def _strip_id_label(value: str) -> str:
+    """Drop the `id=` / `upload_id=` label the model copied off the manifest.
+
+    `render_attachment_manifest` renders each upload as
+    ``- brief.pdf | id=a3f9c2 | 12 pages, transcribed``, and a ReAct loop copies
+    the token it was shown: ``Action: read_brief(id=d5812cb3...)`` is a live
+    transcript. The label then travelled into the id itself and matched nothing.
+
+    It survived review because with a single attachment the lone-brief fallback
+    below returned the right document anyway — for the wrong reason, and only
+    because a bogus id would have returned it too. With two attached there is
+    nothing to fall back to, so the same turn raises instead.
+    """
+    labelled = _labelled_args(value)
+    return labelled.get("upload_id") or labelled.get("id") or value
+
+
 def _resolve_upload_id(raw: Any, briefs: list[BriefRef]) -> BriefRef | None:
     """Match whatever the model typed against the attached uploads.
 
@@ -251,7 +289,9 @@ def _resolve_upload_id(raw: Any, briefs: list[BriefRef]) -> BriefRef | None:
         d = _parse_input_dict_or_str(raw)
         wanted = str(d.get("upload_id") or d.get("id") or raw or "")
 
-    wanted = wanted.strip().strip("'\"").strip()
+    # After the dict branch too: the model that pastes `id=<value>` into a bare
+    # Action argument pastes it into the JSON form as readily.
+    wanted = _strip_id_label(wanted).strip().strip("'\"").strip()
     if wanted:
         for brief in briefs:
             if brief.upload_id == wanted:
@@ -313,6 +353,16 @@ def _brief_query(raw: Any) -> str:
     a bare string onto *every* key it knows, including `query`, so the ordinary
     `Action Input: a3f9c2` would arrive here as a search for the literal id and
     match nothing. A query counts only when the model named the key.
+
+    **Both labelled forms count, not just the JSON one.** For a while only an
+    exact ``{"upload_id": ..., "query": ...}`` object reached the search path,
+    and the equally natural ``read_brief(upload_id="u1", query="2.10")`` fell
+    through to the head of the document — returned with nothing to say the query
+    had been dropped, which is the failure the no-match branch in `read_brief`
+    exists to prevent: the model reads whatever it is handed as the thing it
+    asked for. It also defeated the loop's repeat guard, which keys on the raw
+    string, so a bare-id read followed by a kwargs search re-executed and
+    re-appended the identical excerpt.
     """
     if isinstance(raw, dict):
         d = raw
@@ -323,6 +373,8 @@ def _brief_query(raw: Any) -> str:
             return ""
         if not isinstance(d, dict):
             return ""
+    elif isinstance(raw, str):
+        d = _labelled_args(raw)
     else:
         return ""
     value = d.get("query") or d.get("search") or d.get("q") or ""
