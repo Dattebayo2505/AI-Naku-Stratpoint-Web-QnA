@@ -266,3 +266,37 @@ def test_open_brief_leaves_a_pdf_alone(tmp_path):
 
     with slides.open_brief(path) as opened:
         assert opened.kind == "pdf"
+
+
+# ── live conversion ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.integration
+def test_real_libreoffice_converts_a_real_deck(tmp_path):
+    """The only test here that spawns LibreOffice. Deselected by default via
+    pyproject's addopts, like the crawler's live test.
+
+    Guards what the fake converter structurally cannot: that the command line
+    is one LibreOffice actually accepts, and that a real deck yields one PDF
+    page per slide.
+    """
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    for n in (1, 2, 3):
+        slide = prs.slides.add_slide(prs.slide_layouts[5])
+        slide.shapes.title.text = f"Slide {n}"
+        slide.shapes.add_textbox(
+            Inches(1), Inches(2), Inches(6), Inches(1)
+        ).text_frame.text = "Migrate to Kubernetes on AWS."
+    path = tmp_path / "live.pptx"
+    prs.save(path)
+
+    with slides.open_brief(path) as doc:
+        assert doc.kind == "slides"
+        assert doc.page_count == 3
+        image = doc.rasterize(0)
+
+    assert image.startswith(b"\xff\xd8\xff")  # JPEG
+    assert len(image) > 1000

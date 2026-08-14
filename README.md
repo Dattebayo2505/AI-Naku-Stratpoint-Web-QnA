@@ -22,7 +22,7 @@ src/
 └── stratpoint_rag/      #  the chatbot
     ├── rag/             #  chunking, embeddings, vector store, retrieval, grounded answers
     ├── prompts/         #  prompt engineering: system prompts, few-shot, CoT
-    ├── docparse/        #  uploaded client briefs (PDF/image) → Markdown transcription
+    ├── docparse/        #  uploaded client briefs (PDF/deck/image) → Markdown transcription
     ├── disambiguation/  #  ambiguous-input detection, clarify intent before tool calls
     ├── guardrails/      #  input/output guardrails (built-in + optional NeMo)
     ├── agent/           #  ReAct agent orchestrating retrieval + tools
@@ -50,6 +50,8 @@ uv sync                              # install deps from uv.lock
 uv run playwright install chromium   # one-time browser download (required)
 ```
 
+Then install **LibreOffice** — see [System packages](#system-packages) below.
+
 ### Without uv (plain pip + venv)
 
 ```bash
@@ -58,9 +60,11 @@ python -m venv .venv
 #           .venv\Scripts\Activate.ps1   (Windows PowerShell)
 
 pip install -e .                          # deps + the stratpoint-crawler console script
-pip install pytest pytest-asyncio respx   # dev deps (or: pip install --group dev  on pip >= 25.1)
+pip install pytest pytest-asyncio respx python-pptx   # dev deps (or: pip install --group dev  on pip >= 25.1)
 playwright install chromium               # one-time browser download (required)
 ```
+
+Then install **LibreOffice** — see [System packages](#system-packages) below.
 
 ### With conda / mamba
 
@@ -72,9 +76,11 @@ conda create -n stratpoint-rag python=3.13   # or: mamba create ...
 conda activate stratpoint-rag
 
 pip install -e .                          # deps + the stratpoint-crawler console script
-pip install pytest pytest-asyncio respx   # dev deps
+pip install pytest pytest-asyncio respx python-pptx   # dev deps
 playwright install chromium               # one-time browser download (required)
 ```
+
+Then install **LibreOffice** — see [System packages](#system-packages) below.
 
 If you later add a package with a heavyweight binary dependency (PyTorch being
 the usual one), install *that* through conda first — picking the CUDA/CPU build
@@ -83,6 +89,32 @@ of pulling a second copy.
 
 With pip or conda, drop the `uv run` prefix from the commands below (e.g. just
 `stratpoint-crawler --limit 5` or `python -m stratpoint_crawl --limit 5`).
+
+### System packages
+
+**LibreOffice (required for `.pptx` uploads).** Not a Python package, so none of
+the three toolchains above installs it — install it with your system package
+manager:
+
+```bash
+# Debian/Ubuntu (including the LXC target)
+sudo apt-get install -y libreoffice-impress
+
+# macOS
+brew install --cask libreoffice
+
+# Windows: install from libreoffice.org (or `winget install
+# TheDocumentFoundation.LibreOffice`). It is not put on PATH, but the default
+# C:\Program Files\LibreOffice\program\soffice.exe is auto-discovered; set
+# SOFFICE_BINARY only if you installed it elsewhere.
+```
+
+`libreoffice-impress` rather than the full `libreoffice` metapackage: it pulls
+the presentation filters and the headless core without Writer, Calc and Base.
+
+Decks are the only path that needs it. A PDF or image upload never spawns
+LibreOffice, so a deployment that will not accept `.pptx` can skip it — the API
+answers 503 with an actionable message rather than failing obscurely.
 
 ## Configuration
 
@@ -227,10 +259,15 @@ process trees on stop.
 
 ## Usage — client-brief upload (document parsing)
 
-Drop a PDF or image into the sidebar's **Client brief** section and confirm; a
-complete Markdown transcription is produced and shown in an expander. Accepted:
-`pdf`, `png`, `jpg`, `jpeg`, `webp`, `tiff`. Export decks and Word documents to
-PDF first — `.pptx`/`.docx` are rejected on purpose (see `CLAUDE.md`).
+Drop a PDF, a PowerPoint deck, or an image into the sidebar's **Client brief**
+section and confirm; a complete Markdown transcription is produced and shown in
+an expander. Accepted: `pdf`, `pptx`, `png`, `jpg`, `jpeg`, `webp`, `tiff`.
+
+A `.pptx` is converted to PDF with headless LibreOffice at upload, then **every
+slide is transcribed as an image** — a deck is mostly picture, and the
+architecture diagram on a slide carries constraints its words do not. That makes
+decks the most expensive input: one vision call per slide, where a digital PDF
+costs zero. `.docx` and legacy binary `.ppt` stay rejected — export those to PDF.
 
 The same thing over HTTP:
 

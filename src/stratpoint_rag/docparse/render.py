@@ -1,5 +1,9 @@
 """PDF/image handling: validate, count pages, read the text layer, rasterize.
 
+Decks arrive here already converted to PDF — ``slides.py`` owns LibreOffice and
+nothing about that reaches this module beyond the ``slides=`` flag on
+:func:`open_document`, which only changes ``Document.kind``.
+
 Every PyMuPDF call in the project lives here. PyMuPDF is AGPL unless
 commercially licensed; keeping rendering behind this one module is what makes a
 swap to pypdfium2 (BSD/Apache, also renders + extracts text) a contained

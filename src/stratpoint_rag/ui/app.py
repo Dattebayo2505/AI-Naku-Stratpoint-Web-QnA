@@ -12,7 +12,9 @@ from stratpoint_rag.ui.components import resource_downloads
 # Page config must be the first Streamlit command
 st.set_page_config(page_title="A.I. Naku: Stratpoint Chatbot", layout="centered")
 
-ACCEPTED_TYPES = ["pdf", "png", "jpg", "jpeg", "webp", "tiff"]
+# A client-side convenience only. /upload is a real HTTP endpoint reachable
+# without Streamlit, so the authoritative check is content-based, at the API.
+ACCEPTED_TYPES = ["pdf", "pptx", "png", "jpg", "jpeg", "webp", "tiff"]
 
 @st.dialog("Transcribe this document?", dismissible=False)
 def _confirm_dialog(pending: dict):
@@ -49,7 +51,9 @@ def _render_brief_uploader():
     """
     st.subheader("Client brief")
     uploaded = st.file_uploader(
-        "Drop a PDF or image", type=ACCEPTED_TYPES, label_visibility="collapsed"
+        "Drop a PDF, a PowerPoint deck, or an image",
+        type=ACCEPTED_TYPES,
+        label_visibility="collapsed",
     )
 
     if uploaded is None:

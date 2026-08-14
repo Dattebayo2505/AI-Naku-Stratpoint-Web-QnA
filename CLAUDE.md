@@ -18,7 +18,7 @@ src/
 └── stratpoint_rag/      # the chatbot (one subpackage per component)
     ├── rag/             # BUILT — chunking, embeddings, Chroma store, retrieve() seam, ingest CLI
     ├── prompts/         # BUILT — system-prompt variants (v0–v4), few-shot examples, build_prompt() seam, GroundedAnswer schema
-    ├── docparse/        # BUILT (hops 1+2) — uploaded brief → Markdown → ExtractedRequirements
+    ├── docparse/        # BUILT (hops 1+2) — uploaded brief (PDF/.pptx/image) → Markdown → ExtractedRequirements
     ├── disambiguation/  # planned — ambiguous-input detection; clarify intent before tool calls
     ├── guardrails/      # planned — input/output guardrails
     ├── agent/           # planned — ReAct agent orchestrating retrieval + tools
@@ -133,7 +133,9 @@ hop 2  chat   → extract_brief(brief_ref, *, text=None)    → ExtractedRequire
 ```
 
 `render.py` is the only PyMuPDF call site (PyMuPDF is AGPL unless licensed;
-keeping it there makes a swap to `pypdfium2` a contained change).
+keeping it there makes a swap to `pypdfium2` a contained change). `slides.py` is
+the only LibreOffice call site, for the same reason — a `.pptx` is converted to
+PDF before hop 1 ever opens it.
 
 ### Key design decisions (read before editing)
 
@@ -180,6 +182,27 @@ the NVIDIA docs.
 - **Rasterize on the calling thread, fan out only the model calls.** PyMuPDF
   pages are not thread-safe and rendering is milliseconds against a ~5s network
   call.
+
+- **A deck is converted, then rasterized — never text-extracted.** `.pptx` is
+  accepted since 2026-08-14, reversing the earlier "export it to PDF" rule.
+  `slides.py` shells out to headless LibreOffice, caches `converted.pdf` inside
+  the upload's own directory, and `slides.open_brief` is the single entry point
+  both `/upload`'s page count and `transcribe_document` use. Three things are
+  load-bearing. `-env:UserInstallation` is **mandatory**: without a private
+  profile per invocation, an already-running soffice makes the call exit 0
+  having converted nothing, which is indistinguishable from success — so the
+  output *file*, never the return code, is the verdict. `Document.kind` is
+  `"slides"`, which forces `_needs_vision` to True for every page: the converted
+  PDF carries a perfect text layer (real slide text, not OCR) and without that
+  clause every slide takes the free text route and the feature does nothing. And
+  provenance is split — `sha256`/`source_file` name the original `.pptx`, while
+  the pages come from the derived PDF the visitor never saw. The text layer is
+  still read, but only as the figure pass's novelty baseline. `converted.pdf` is
+  also in `store._RESERVED_NAMES`, since a deck uploaded under that name would
+  otherwise be its own conversion cache. **LibreOffice is now a hard dependency**
+  (a ~400 MB install on the 6 GB LXC); that cost, and the fact that every deck is
+  100% vision calls where a digital PDF is 0%, are the price of the reversal. See
+  `docs/superpowers/specs/2026-08-14-pptx-slide-rasterization-design.md`.
 
 - **The text layer is the cost saver.** A page is rasterized only when its
   embedded text is under `DOCPARSE_TEXT_LAYER_MIN_CHARS` (default 100) or it
@@ -368,6 +391,13 @@ on the name — the schema is the defence that works; the "untrusted document"
 line in the extraction prompt is hygiene, not a mitigation. The other structural
 mitigation is that a document-derived name is never adopted without the visitor
 affirming it.
+
+**Second accepted risk: LibreOffice parses attacker-controlled input.** Since
+`.pptx` support landed, every deck upload runs a large C++ office suite with a
+long history of parser CVEs over a file a stranger chose. Bounded by
+`upload_max_bytes` (25 MB), `SOFFICE_TIMEOUT`, a throwaway user profile, and the
+non-root API user — but it is a materially larger attack surface than PyMuPDF
+alone, and it was accepted knowingly rather than overlooked.
 
 ## Proposal PDF (`stratpoint_rag.pdf_gen`)
 
