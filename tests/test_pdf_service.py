@@ -217,3 +217,37 @@ async def test_the_async_renderer_produces_the_same_document(tmp_path):
     with _read(out) as doc:
         assert doc.page_count == 2
         assert re.search(r"SP-20260809-ABC123", doc[0].get_text())
+
+
+def test_proposal_pdf_render_with_capped_phases():
+    from stratpoint_rag.agent.contracts import EstimationResult, PhaseTimelineItem, RoleBreakdownItem
+    from stratpoint_rag.pdf_gen import build_quote_context, render_quote_html, generate_pdf_from_html
+    import tempfile
+    from pathlib import Path
+
+    phases = [
+        PhaseTimelineItem(phase_name=f"Phase {i}: Core Milestone Implementation", duration_weeks=2.0, milestones=["Deliverable A", "Deliverable B"])
+        for i in range(1, 10)  # 9 phases (Hard limit)
+    ]
+    est = EstimationResult(
+        total_cost_usd=15000.0,
+        currency_code="USD",
+        estimated_weeks=18.0,
+        role_breakdown=[RoleBreakdownItem(role="Tech Lead", estimated_hours=100, hourly_rate=70, total_cost=7000)],
+        phase_timeline=phases,
+        summary="Capped phase test proposal"
+    )
+    context = build_quote_context(
+        proposal_id="test001",
+        estimation=est,
+        client_name="Acme Corp",
+        project_name="Enterprise Platform"
+    )
+    html = render_quote_html(context)
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        out_path = Path(tmp.name)
+    generate_pdf_from_html(html, out_path)
+    assert out_path.exists()
+    assert out_path.stat().st_size > 5000
+    out_path.unlink()
+
