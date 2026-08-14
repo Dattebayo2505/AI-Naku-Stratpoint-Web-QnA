@@ -21,8 +21,11 @@ import time
 import uuid
 
 import requests
+from dotenv import load_dotenv
 
 import pymupdf as fitz
+
+load_dotenv()  # every other entry point gets the key via rag.config; this one imports neither
 
 API = os.getenv("STRATPOINT_API_URL", "http://localhost:8000").rstrip("/")
 
@@ -41,13 +44,26 @@ def _make_brief_pdf() -> bytes:
     page.insert_text((72, 72), BRIEF_TEXT, fontsize=11)
     return doc.tobytes()
 
-def _one_run(pdf: bytes) -> None:
+def _generated_pdf(result: dict) -> bool:
+    """True only when the PDF tool actually produced something.
+
+    Not `bool(result["proposal_data"])`: that field is the turn's capture sink
+    and `extract_brief_requirements` fills its `requirements` slot on the way
+    past, so a run that read the brief and then wandered off into
+    `search_stratpoint` without ever rendering a quote still reported success.
+    Measured: two of thirteen real-RFP runs printed `proposal=yes` with no
+    `generate_proposal_pdf` in their trace at all.
+    """
+    return bool((result.get("proposal_data") or {}).get("pdf"))
+
+
+def _one_run(pdf: bytes, name: str = "brief.pdf") -> None:
     session_id = f"seed_{uuid.uuid4().hex[:12]}"
     # upload
     r = requests.post(
         f"{API}/upload",
         data={"session_id": session_id},
-        files={"file": ("brief.pdf", pdf, "application/pdf")},
+        files={"file": (name, pdf, "application/pdf")},
         timeout=60,
     )
     r.raise_for_status()
@@ -66,28 +82,52 @@ def _one_run(pdf: bytes) -> None:
         timeout=300,
     )
     r.raise_for_status()
-    print(f"  {session_id}: chat ok")
+    # The naming ask (disambiguation/engagement.py) intercepts the first proposal
+    # request and returns a question, so the chain never reaches the PDF on one
+    # turn. Answer it — a real visitor does the same. `proposal_data` is the tell.
+    if not _generated_pdf(r.json()):
+        r = requests.post(
+            f"{API}/chat",
+            json={
+                "session_id": session_id,
+                "message": "ACME Retail",
+                "attachments": [upload_id],
+            },
+            timeout=300,
+        )
+        r.raise_for_status()
+    got_pdf = bool(r.json().get("proposal_data"))
+    print(f"  {session_id}: {name} — chat ok, proposal={'yes' if got_pdf else 'NO'}")
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=5)
+    # Real briefs beat N copies of the synthetic one: the generated brief is one
+    # page with no tables, so it exercises neither map-reduced extraction nor the
+    # table rebuild, and five identical runs measure variance, not coverage.
+    ap.add_argument("--briefs", nargs="+", metavar="PDF",
+                    help="real brief PDFs, one run each (--runs is ignored)")
     args = ap.parse_args(argv)
 
     if not os.getenv("NVIDIA_API_KEY"):
         print("NVIDIA_API_KEY not set — parse and chat will fail. Aborting.", file=sys.stderr)
         return 2
 
-    pdf = _make_brief_pdf()
-    print(f"Seeding {args.runs} run(s) against {API} ...")
+    if args.briefs:
+        jobs = [(os.path.basename(p), open(p, "rb").read()) for p in args.briefs]
+    else:
+        jobs = [("brief.pdf", _make_brief_pdf())] * args.runs
+
+    print(f"Seeding {len(jobs)} run(s) against {API} ...")
     ok = 0
-    for i in range(args.runs):
+    for i, (name, pdf) in enumerate(jobs):
         try:
-            _one_run(pdf)
+            _one_run(pdf, name)
             ok += 1
         except requests.RequestException as e:
-            print(f"  run {i}: FAILED — {e}", file=sys.stderr)
+            print(f"  run {i} ({name}): FAILED — {e}", file=sys.stderr)
         time.sleep(1)  # be polite to the throttled endpoint
-    print(f"Done: {ok}/{args.runs} runs traced.")
+    print(f"Done: {ok}/{len(jobs)} runs traced.")
     return 0 if ok else 1
 
 if __name__ == "__main__":

@@ -34,25 +34,23 @@ def record(
     guardrail_reason: str | None = None,
 ) -> None:
     """Persist one request's telemetry. Query text is deliberately omitted (PII)."""
-    cost_usd = estimate_cost(prompt_tokens, completion_tokens)
-    append(
-        {
-            "ts": _now(),
-            "session_id": session_id,
-            "path": path,
-            "model": model,
-            "latency_ms": round(latency_ms),
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "tool_calls": tool_calls or [],
-            "error": error,
-            "is_grounded": is_grounded,
-            "confidence": confidence,
-            "guardrail_reason": guardrail_reason,
-            "cost_usd": cost_usd,
-        }
-    )
+    rec = {
+        "ts": _now(),
+        "session_id": session_id,
+        "path": path,
+        "model": model,
+        "latency_ms": round(latency_ms),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "tool_calls": tool_calls or [],
+        "error": error,
+        "is_grounded": is_grounded,
+        "confidence": confidence,
+        "guardrail_reason": guardrail_reason,
+        "cost_usd": estimate_cost(prompt_tokens, completion_tokens),
+    }
+    append(rec)
 
 
 __all__ = [

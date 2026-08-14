@@ -32,13 +32,17 @@ def test_format_table_contains_layer_names():
     assert "18" in out and "20" in out
 
 
-def test_end_to_end_layer_skips_when_nemo_unavailable(monkeypatch):
-    # live_available() gates on NVIDIA_API_KEY *and* nemoguardrails being
-    # importable (guardrail_agent swallows the ImportError otherwise, which
-    # would silently report deterministic numbers under a NeMo label). When
-    # it's False for any reason, the layer must skip rather than run and
-    # must never be able to fail the command.
-    monkeypatch.setattr(h.ge, "live_available", lambda: False)
-    result = h._guardrail_end_to_end()
-    assert result.skipped is True
-    assert h.below_floor(result) is False
+def test_the_nemo_end_to_end_layer_is_not_registered():
+    """Deregistered 2026-08-14.
+
+    NeMo has never executed in this repo. `LLMRails.check()` hardcodes
+    `options["log"] = {"activated_rails": True}`, which Colang 2.0 rejects, and
+    both the 2.x config and the check() call landed together in the original
+    integration (2026-07-05). The layer could therefore only ever report SKIP,
+    and a permanently skipped row invites the reader to assume the comparison
+    was made. Removing it is the honest table; the capability itself is
+    unaffected — `run_guardrail_eval(use_nemo=True)` still exists for whoever
+    resolves the Colang incompatibility.
+    """
+    assert not any(fn.__name__ == "_guardrail_end_to_end" for fn in h.REGISTRY)
+    assert "guardrails/end-to-end" not in h.FLOORS

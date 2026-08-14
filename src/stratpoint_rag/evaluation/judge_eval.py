@@ -133,9 +133,25 @@ def _html_to_text(html: str) -> str:
 # ponytail: sample proposals for the judge come from generated HTML twins under
 # data/proposals/. The layer() below scores those if present; wiring a curated
 # proposal set is a follow-up, not needed for the layer to exist.
-def _sample_proposals() -> list[str]:
+def _proposal_root():
+    """Where the app actually writes proposals.
+
+    Resolved through pdf_gen's own config rather than reconstructed from
+    __file__: the container sets PROPOSAL_DIR=/app/proposals, so a path built
+    from the source tree pointed at /app/data/proposals — a directory nothing
+    writes to. The judge reported SKIP there while a stale copy under the
+    read-only ./data mount could make it score proposals the running app never
+    produced. One source of truth for the path is the fix.
+    """
     from pathlib import Path
-    root = Path(__file__).resolve().parents[3] / "data" / "proposals"
+
+    from stratpoint_rag.pdf_gen import config as pdf_config
+
+    return Path(pdf_config.proposal_dir())
+
+
+def _sample_proposals() -> list[str]:
+    root = _proposal_root()
     if not root.exists():
         return []
     samples: list[str] = []
@@ -159,7 +175,8 @@ def layer() -> LayerResult:
     samples = _sample_proposals()
     if not samples:
         return LayerResult("judge", "judge/proposal-quality", 0, 0,
-                           detail="no proposals in data/proposals — seed first", skipped=True)
+                           detail=f"no proposals in {_proposal_root()} — seed first",
+                           skipped=True)
     # "passed" = score >= 3 (client-acceptable). Report count; the mean score is
     # the headline number for the slide. Failed calls are tracked, not just
     # dropped: a shrinking denominator can make a near-total measurement

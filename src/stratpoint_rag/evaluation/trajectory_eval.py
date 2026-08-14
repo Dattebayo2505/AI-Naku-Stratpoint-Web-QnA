@@ -70,7 +70,31 @@ def run_trajectory_eval(records: list[dict] | None = None) -> dict:
         "passed": passed,
         "pass_rate": (passed / total) if total else 0.0,
         "failures": failures,
+        "stalled": stalled_sessions(sessions),
     }
+
+
+def stalled_sessions(sessions: dict[str, list[dict]]) -> list[str]:
+    """Sessions that opened the brief and never reached the PDF.
+
+    `attempted_proposal` defines "attempted" as *the proposal tool appears*, so a
+    turn that read the brief and then wandered into search_stratpoint without
+    ever rendering a quote is filtered out before scoring — not counted as a
+    failed proposal but as no proposal at all. Measured on 13 real RFPs: 2 runs
+    stalled exactly that way while the layer reported 20/20 = 1.00.
+
+    Reported alongside the rate rather than folded into it: grounding in a brief
+    is not proof a proposal was wanted ("what's the timeline in this?" reads the
+    brief too), so failing these would punish legitimate Q&A. Visible, not
+    silent, is the property that matters — see the module docstring's sibling
+    note in guardrail_eval about layers that can report a number for work that
+    never ran.
+    """
+    return sorted(
+        sid for sid, recs in sessions.items()
+        if not attempted_proposal(recs)
+        and any(b in traces.session_tool_calls(recs) for b in BRIEF_TOOLS)
+    )
 
 
 def layer() -> LayerResult:
@@ -84,8 +108,11 @@ def layer() -> LayerResult:
     if res["total"] == 0:
         return LayerResult("trajectory", "trajectory/proposal-path", 0, 0,
                            detail="no proposal sessions traced", skipped=True)
+    detail = f"{len(res['failures'])} off-path"
+    if res["stalled"]:
+        detail += f", {len(res['stalled'])} stalled before the PDF (unscored)"
     return LayerResult("trajectory", "trajectory/proposal-path", res["total"], res["passed"],
-                       detail=f"{len(res['failures'])} off-path")
+                       detail=detail)
 
 
 def render_walkthrough(session_records: list[dict]) -> str:

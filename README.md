@@ -27,7 +27,7 @@ src/
     ├── guardrails/      #  input/output guardrails (built-in + optional NeMo)
     ├── agent/           #  ReAct agent orchestrating retrieval + tools
     ├── pdf_gen/         #  proposal quote: Pydantic context → Jinja template → Chromium PDF
-    ├── llmops/          #  request telemetry: JSONL traces, latency/token/error metrics
+    ├── llmops/          #  request telemetry: MLflow traces, latency/token/error metrics
     ├── api/             #  FastAPI endpoint
     ├── ui/              #  Streamlit chat UI
     └── evaluation/      #  prompt-ablation results and findings
@@ -97,7 +97,7 @@ it); blank means "use the default in code".
 | `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL` | Retrieval embedder (default: local sentence-transformers `bge-small-en-v1.5`). |
 | `CHROMA_DIR`, `CHROMA_COLLECTION` | Where the vector store lives (default `./chroma_db`). |
 | `STRATPOINT_API_URL` | UI → API base URL (default `http://localhost:8000`; Compose sets `http://api:8000`). |
-| `LLMOPS_ENABLED`, `LLMOPS_LOG_PATH` | Telemetry toggle and JSONL trace path (default on, `llmops_traces.jsonl`). |
+| `LLMOPS_ENABLED`, `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT` | Telemetry toggle and MLflow trace store (default on, `sqlite:///mlflow.db`, experiment `stratpoint-rag`). |
 | `PROPOSAL_DIR`, `PROPOSAL_TTL_SECONDS` | Where generated quotes live and how long they survive (default `data/proposals`, 24h). |
 | `PDF_TIMEOUT_MS`, `PDF_MAX_CONCURRENCY`, `PDF_BROWSER_ARGS`, `PDF_CHROMIUM_PATH` | Headless-Chromium render ceiling, concurrent browsers, extra launch flags, explicit browser path. |
 | `PROPOSAL_COMPANY_NAME`, `PROPOSAL_COMPANY_EMAIL`, `PROPOSAL_COMPANY_WEBSITE`, `PROPOSAL_LOGO_PATH` | Branding printed on the quote. The logo is a **local path**, inlined as a data URI — the renderer blocks the network. |
@@ -321,16 +321,40 @@ Branding, tax rate, validity window and payment terms come from the environment
 
 ## Usage — LLMOps metrics
 
-Every `/chat` request appends one JSONL trace line (latency, model, token usage, tool calls,
+Every `/chat` request is recorded as one **MLflow run** (latency, model, token usage, tool calls,
 grounding, error) — on success *and* on failure. Query text is deliberately never written.
+MLflow is the source of truth: `/metrics`, the UI panel, and the trajectory/e2e eval layers all
+read back through it.
 
 ```bash
 curl -s http://localhost:8000/metrics | jq .aggregates
 # { "count", "latency_p50_ms", "latency_p95_ms", "total_tokens", "avg_tokens", "error_rate" }
 ```
 
-`GET /metrics` also returns the 50 most recent records, newest first. Set `LLMOPS_ENABLED=0` to
-turn the sink off, or `LLMOPS_LOG_PATH` to move the file (default `llmops_traces.jsonl`).
+`GET /metrics` also returns the 50 most recent records, newest first.
+
+### Browsing the traces
+
+```bash
+pip install mlflow                                          # full mlflow, for the UI only
+mlflow ui --backend-store-uri sqlite:///mlflow.db           # -> http://localhost:5000
+```
+
+Numeric fields (latency, tokens, cost) are MLflow **metrics**, so they plot over time; the rest
+(path, model, session, error, tool calls, grounding) are **params**, JSON-encoded so they come back
+as real `bool`/`list` values rather than strings.
+
+Backend is sqlite, not `file:./mlruns` — MLflow 3.x puts the filesystem store in maintenance mode,
+and it writes ~15 files per request. `LLMOPS_ENABLED=0` turns telemetry off entirely;
+`MLFLOW_TRACKING_URI` moves the store (default `sqlite:///mlflow.db`); `MLFLOW_EXPERIMENT` renames
+the experiment (default `stratpoint-rag`). Under compose the store lives on the `llmops` volume.
+
+Upgrading from the old JSONL sink? Import the history once — the trajectory and e2e eval layers
+score recorded traces, so losing the file would take both layers to `SKIP`:
+
+```bash
+uv run python -m stratpoint_rag.llmops.migrate   # llmops_traces.jsonl -> MLflow
+```
 
 ## Usage — cost calculator (standalone)
 
@@ -410,11 +434,41 @@ Run the whole eval suite (prints a per-layer pass-rate table, exits non-zero if 
 uv run python -m stratpoint_rag.evaluation
 ```
 
-Registered layers: `guardrails/deterministic` (unit, offline), `guardrails/end-to-end` (live, needs NeMo), `trajectory/proposal-path`, `e2e/proposal-chain`, `judge/proposal-quality` (live). The trajectory/e2e/judge layers score recorded traces and show `SKIP` until traces exist. Populate them with real app usage, or:
+Registered layers:
+
+| Layer | Scores | Offline? |
+|---|---|---|
+| `guardrails/deterministic` | 20 labelled inputs vs the regex/PII pipeline | yes |
+| `extraction/brief-grounding` | is every extracted requirement traceable to the brief? | yes, once seeded |
+| `cost/quote-arithmetic` | do the quote's totals add up, in the currency the estimate declared? | yes, once seeded |
+| `trajectory/proposal-path` | recorded tool order vs the golden path | yes, once seeded |
+| `e2e/proposal-chain` | did the task complete (PDF produced, no error)? | yes, once seeded |
+| `judge/proposal-quality` | LLM-as-judge over real proposal text | no — live |
+
+**A NeMo end-to-end layer was deliberately removed** (2026-08-14). NeMo has never executed in this repo: `LLMRails.check()` hardcodes `options["log"] = {"activated_rails": True}`, which Colang 2.0 rejects, and both the `colang_version: "2.x"` config and the `check()` call arrived together in the original integration. The layer could only ever print SKIP, and a permanently skipped row invites the reader to assume the comparison was made. `run_guardrail_eval(use_nemo=True)` still exists for whoever resolves the incompatibility — only the registration is gone.
+
+Every layer but the guardrail one scores *recorded artifacts* rather than re-running the agent, so each shows `SKIP` until something has been seeded. Two generators populate them — real app usage does the same job:
 
 ```bash
-uv run python -m stratpoint_rag.evaluation.seed_traces --runs 5   # needs a running API + NVIDIA_API_KEY
+# traces -> trajectory, e2e            (needs a running API + NVIDIA_API_KEY)
+uv run python -m stratpoint_rag.evaluation.seed_traces --runs 5
+uv run python -m stratpoint_rag.evaluation.seed_traces --briefs a.pdf b.pdf   # real briefs
+
+# cases  -> extraction, cost           (needs a running API + NVIDIA_API_KEY)
+uv run python -m stratpoint_rag.evaluation.seed_cases --briefs a.pdf b.pdf
 ```
+
+Inside the container, where the API writes its traces and proposals to named volumes the host cannot see:
+
+```bash
+docker compose exec api uv run python -m stratpoint_rag.evaluation
+```
+
+Run it there rather than on the host when the API is containerised — otherwise `trajectory`/`e2e` score the host's store while the proposals the judge wants sit in the `proposals:` volume, and the table silently mixes two sources.
+
+`seed_cases` writes `evaluation/cases/pipeline_runs.jsonl`, which is **self-contained** — it stores the brief's content-word set, not a path to the PDF — so both layers run anywhere, including in the container and on the LXC where the briefs do not exist. A run that captures nothing leaves any existing cases untouched rather than overwriting them.
+
+Note what `extraction/brief-grounding` does and does not measure: it catches a requirement the model *invented*, and by construction cannot catch one it *dropped* (that needs a labelled golden set this corpus does not have). It is named for grounding rather than accuracy so the number is not read as something it isn't.
 
 Metrics are also visible live in the Streamlit UI's "Observability (LLMOps)" sidebar panel and at `GET /metrics`.
 
@@ -434,7 +488,7 @@ Metrics are also visible live in the Streamlit UI's "Observability (LLMOps)" sid
 | 10 | SQL Agent / Planning-Critique | Member 2 |
 | 11 | Multi-Agent Orchestration | TBC |
 | 12 | Advanced RAG | Member 3 |
-| 13 | Evals (unit/trajectory/e2e/judge) | Vienn |
+| 13 | Evals (unit/extraction/cost/trajectory/e2e/judge) | Vienn |
 | 14 | CV or DS Domain Integration | Member 1 |
 | — | Dockerization & LXC deploy | Vienn |
 
@@ -442,6 +496,7 @@ Metrics are also visible live in the Streamlit UI's "Observability (LLMOps)" sid
 
 | Document | What it covers |
 |---|---|
+| `docs/final-capstone-spec.md` | **The governing requirements.** Where a design choice and the spec disagree, the spec wins. Transcribed from the official PDF, which stays authoritative |
 | `docs/ARCHITECTURE.md` | File-by-file map of `stratpoint_rag`, dependency graph, data artifacts, invariants |
 | `docs/architecture-flow.md` | The same system as a runtime request flow, with guardrail and disambiguation policy |
 | `src/stratpoint_rag/agent/README.md` | Why a hand-rolled ReAct loop; the proposal tool contracts |

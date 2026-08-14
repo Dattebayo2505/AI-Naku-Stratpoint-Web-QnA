@@ -37,6 +37,25 @@ def get_metrics() -> Dict[str, Any] | None:
         return None
 
 
+def get_evals(include_judge: bool = True) -> Dict[str, Any] | None:
+    """Eval table rows, or None if the API is unreachable.
+
+    The timeout is generous because this actually runs the suite: ~4s without
+    the judge, ~20s with it (live LLM calls). The `/metrics` 5s timeout would
+    abort every judged run.
+    """
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/evals",
+            params={"judge": str(include_judge).lower()},
+            timeout=180,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException:
+        return None
+
+
 def _handle(exc: Exception, *, what: str) -> APIError:
     """Turn a requests exception into a user-facing APIError."""
     if isinstance(exc, requests.exceptions.ConnectionError):

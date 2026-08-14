@@ -1,0 +1,26 @@
+# Shell scripts MUST keep LF endings, even when checked out on Windows.
+#
+# Without this, git's autocrlf rewrites docker/entrypoint.sh to CRLF on a
+# Windows clone, the shebang becomes `#!/bin/sh\r`, and the kernel looks for an
+# interpreter literally named "/bin/sh\r". The container then dies with
+#
+#   exec /entrypoint.sh: no such file or directory
+#
+# which names the script, not the interpreter, and sends you looking for a
+# missing file that is right there. It works on Linux, so it only ever breaks
+# for whoever built the image on Windows.
+*.sh text eol=lf
+
+# Same reasoning for the files a Linux container reads verbatim.
+Dockerfile text eol=lf
+docker/** text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# ...and the mirror image: the Windows launchers must KEEP CRLF. cmd.exe is
+# unreliable with LF-only batch files (labels and goto in particular), so a
+# teammate on Linux normalizing run.bat to LF would break it for everyone on
+# Windows — the same bug as above, pointing the other way.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf

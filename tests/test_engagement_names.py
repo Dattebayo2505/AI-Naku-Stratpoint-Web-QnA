@@ -71,10 +71,15 @@ def test_the_router_lets_a_proposal_request_through_without_clarifying():
 
 def test_both_slots_are_optional():
     """A required slot loops until a value arrives, which is exactly the
-    coercion this design set out to remove."""
+    coercion this design set out to remove.
+
+    Asserted as a property of every slot rather than of an exact count: the
+    intent gained `target_timeline` later, and a count made an unrelated
+    addition look like a regression in the naming design.
+    """
     slots = INTENT_SLOTS[IntentCategory.REQUEST_PROPOSAL]
 
-    assert len(slots) == 2
+    assert {"brief_client_name", "brief_project_name"} <= {s.name for s in slots}
     assert all(not s.required for s in slots)
 
 
@@ -83,7 +88,7 @@ def test_the_slot_names_do_not_collide_with_the_stratpoint_ones():
     a Stratpoint case study — not the visitor's own project."""
     names = {s.name for s in INTENT_SLOTS[IntentCategory.REQUEST_PROPOSAL]}
 
-    assert names == {"brief_client_name", "brief_project_name"}
+    assert {"brief_client_name", "brief_project_name"} <= names
     assert "project_name" not in names
 
 

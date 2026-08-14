@@ -201,7 +201,7 @@ alone. Only the last needs a browser.
 | File | What it does | Depends on |
 |---|---|---|
 | `llmops/__init__.py` | `record()` — stamps a UTC timestamp and writes one telemetry row (latency, model, tokens, tool calls, grounding, error) through the sink; re-exports the package's public surface | `llmops/sink.py`, `llmops/metrics.py`, `llmops/usage.py` |
-| `llmops/sink.py` | The JSONL trace sink: append-under-a-lock and read-back, path from `LLMOPS_LOG_PATH`, disabled by `LLMOPS_ENABLED=0`. No new dependency, no port, no account — it works offline on the LXC | — |
+| `llmops/sink.py` | The MLflow trace store: one run per request, written under a process-wide write lock (sqlite allows one writer) and read back as record dicts. Store from `MLFLOW_TRACKING_URI` (default `sqlite:///mlflow.db`), disabled by `LLMOPS_ENABLED=0`. Params are JSON-encoded so `is_grounded`/`tool_calls` survive as `bool`/`list` — MLflow params are strings, and the string `"False"` is truthy | `mlflow-skinny` |
 | `llmops/usage.py` | A thread-local token accumulator. One turn makes several NIM calls (the ReAct loop, plus a nested RAG call inside `search_stratpoint`), so usage can't be read off a single response — every call site adds, the request boundary resets and pops | — |
 | `llmops/metrics.py` | `aggregate()` — count, latency p50/p95 (linear-interpolated percentile), total/avg tokens, and error rate over a list of records. Pure stdlib, no numpy | — |
 
@@ -384,7 +384,7 @@ graph TD
     OPS -.->|record| TRANSCRIBE
     OPS -.->|record| TOOLS
     OPS --> APIAPP
-    SINK -.->|writes| TRACES[(llmops_traces.jsonl)]
+    SINK -.->|writes| TRACES[(mlflow.db)]
 ```
 
 ## Data artifacts
@@ -398,7 +398,7 @@ graph TD
 | `handbook.md` (repo root, committed) | hand-written — Stratpoint's pricing handbook: PHP rates by role, tech stack and service category, and annual licence prices | **Not read at runtime.** Its numbers are transcribed by hand into the constant tables in `currency_calculator.py`, with the handbook section noted beside each. Editing the handbook does not change a quote until those constants are updated to match |
 | `rag/eval/gold.jsonl` | hand-written | `rag/eval/run.py` |
 | `evaluation/prompt_ablation_results.jsonl` | `prompts/run_ablation.py` | `evaluation/PROMPT_ENGINEERING_FINDINGS.md` |
-| `llmops_traces.jsonl` (gitignored; path via `LLMOPS_LOG_PATH`) | `llmops/sink.py`, written at the `api/app.py` request boundary | `GET /metrics` via `llmops/metrics.py` |
+| `mlflow.db` (gitignored; store via `MLFLOW_TRACKING_URI`) | `llmops/sink.py`, written at the `api/app.py` request boundary | `GET /metrics` via `llmops/metrics.py`; the trajectory/e2e eval layers via `evaluation/traces.py`; `mlflow ui` |
 
 ## Invariants worth preserving
 

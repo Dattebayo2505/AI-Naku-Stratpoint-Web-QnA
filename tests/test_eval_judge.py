@@ -60,3 +60,27 @@ def test_judge_live_scores_a_proposal():
         pytest.skip("no NVIDIA_API_KEY")
     v = je.judge_proposal("Proposal: build a mobile app. 4 roles. PHP 1,200,000. 16 weeks. Line items included.")
     assert 1 <= v["score"] <= 5
+
+
+def test_sample_proposals_reads_the_configured_proposal_dir(tmp_path, monkeypatch):
+    """The judge must look where the app actually writes.
+
+    It hardcoded `<repo>/data/proposals`, ignoring PROPOSAL_DIR. In the
+    container the API writes to /app/proposals, so the judge looked at a
+    directory nothing ever wrote to and reported SKIP — while a stale copy in
+    the read-only ./data mount could make it report a score for proposals the
+    running app had not produced.
+    """
+    root = tmp_path / "proposals" / "sess1"
+    root.mkdir(parents=True)
+    (root / "q.html").write_text(
+        "<style>.x{color:red}</style><h1>Quote</h1><p>Discovery phase</p>",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PROPOSAL_DIR", str(tmp_path / "proposals"))
+
+    samples = je._sample_proposals()
+
+    assert len(samples) == 1
+    assert "Discovery phase" in samples[0]
+    assert "color:red" not in samples[0]

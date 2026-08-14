@@ -191,6 +191,45 @@ def main():
                 st.metric("Guardrail/routing intercepts", f"{agg.get('guardrail_fire_rate', 0):.0%}")
                 st.caption("Includes greetings and clarification prompts, not only safety blocks.")
 
+        with st.expander("🧪 Evals"):
+            include_judge = st.checkbox(
+                "Include LLM-as-judge (live, ~20s)", value=True,
+                help="Scores real generated proposals with the LLM. Uncheck for a "
+                     "~4s run with no model calls.",
+            )
+            if st.button("Run evals"):
+                with st.spinner("Running eval layers…"):
+                    st.session_state["_evals"] = api_client.get_evals(include_judge)
+            evals = st.session_state.get("_evals")
+            if not evals:
+                st.caption("Press Run — or the API is unreachable.")
+            else:
+                st.caption(f"Measured {evals['ran_at']}")
+                st.dataframe(
+                    [
+                        {
+                            "Eval": r["name"],
+                            "Pass": f"{r['passed']}/{r['total']}",
+                            "Rate": f"{r['rate']:.2f}",
+                            "Floor": f"{r['floor']:.2f}" if r["floor"] is not None else "—",
+                            "Status": r["status"],
+                        }
+                        for r in evals["rows"]
+                    ],
+                    hide_index=True,
+                    use_container_width=True,
+                )
+                # The detail column carries WHY a row reads as it does ("8
+                # ungrounded", "2 of 10 calls failed"). Dropping it would turn a
+                # partially-failed judge run into a clean-looking score.
+                for r in evals["rows"]:
+                    if r["detail"]:
+                        st.caption(f"**{r['name']}** — {r['detail']}")
+                if evals["ok"]:
+                    st.success("All layers at or above their committed floor.")
+                else:
+                    st.error("A layer is below its floor.")
+
         if st.button("Reset conversation"):
             state.reset_conversation()
             st.rerun()

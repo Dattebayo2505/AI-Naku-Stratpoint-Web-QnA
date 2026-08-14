@@ -1,5 +1,8 @@
 # One image, run twice (api + ui) — see docker-compose.yml.
-# Cloud LLM (NVIDIA NIM) => no model container, no GPU. Embeddings are local => torch ships here.
+# Cloud LLM (NVIDIA NIM) => no model container, no GPU. Embeddings are local => torch ships
+# here, pinned CPU-only via [[tool.uv.index]] in pyproject.toml. On Linux the PyPI torch pulls
+# the full CUDA runtime (~2.1GB compressed, ~6GB installed) that nothing in this image loads —
+# and which does not fit the 6GB LXC. Do not "fix" a torch resolution error by dropping the pin.
 
 # ---- deps stage: cache the heavy deps (torch via sentence-transformers) ----
 FROM python:3.13-slim AS deps

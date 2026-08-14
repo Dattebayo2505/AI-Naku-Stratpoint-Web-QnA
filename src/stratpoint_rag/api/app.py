@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -323,6 +324,65 @@ def metrics() -> dict:
     """LLMOps view: aggregate metrics + most-recent records (newest first)."""
     recs = llmops.read_records()
     return {"aggregates": llmops.aggregate(recs), "recent": recs[-50:][::-1]}
+
+
+def _run_eval_layers(judge: bool):
+    """Run the registered eval layers, optionally without the live judge.
+
+    Selected by identity, not by name: every layer callable is imported into
+    REGISTRY as `layer`, so `fn.__name__` is the string "layer" for five of the
+    six and filtering by it would silently drop the wrong one.
+    """
+    from stratpoint_rag.evaluation import harness
+    from stratpoint_rag.evaluation.judge_eval import layer as judge_layer
+
+    layers = harness.REGISTRY if judge else [f for f in harness.REGISTRY if f is not judge_layer]
+    return [fn() for fn in layers]
+
+
+@app.get("/evals")
+def evals(judge: bool = True) -> dict:
+    """The eval table, for the UI panel (Component #13).
+
+    Served from the API rather than computed in the UI process because the ui
+    container mounts none of the volumes the evals read — no trace store, no
+    proposals, no corpus — so running the suite there would report empty
+    trajectory, e2e and judge layers on every deployment that matters.
+
+    `judge` defaults to True: the LLM-as-a-judge layer is the one the spec names
+    explicitly, and it degrades gracefully (failed calls are counted in `detail`
+    and the surviving calls still score). It costs ~18s and live LLM calls, so
+    it can be turned off for a fast run.
+    """
+    from stratpoint_rag.evaluation import harness
+
+    results = _run_eval_layers(judge)
+    rows = []
+    for r in results:
+        rows.append({
+            "layer": r.layer,
+            "name": r.name,
+            "passed": r.passed,
+            "total": r.total,
+            "rate": r.pass_rate,
+            "floor": harness.FLOORS.get(r.name),
+            "status": "SKIP" if r.skipped else ("FAIL" if harness.below_floor(r) else "ok"),
+            "detail": r.detail,
+        })
+    if not judge:
+        # Present but plainly not run, never omitted: a missing row reads as
+        # "this project has no judge layer", which is the opposite of true.
+        rows.append({
+            "layer": "judge", "name": "judge/proposal-quality",
+            "passed": 0, "total": 0, "rate": 0.0,
+            "floor": harness.FLOORS.get("judge/proposal-quality"),
+            "status": "SKIP", "detail": 'not run — tick "include LLM judge"',
+        })
+    return {
+        "rows": rows,
+        "ok": not any(harness.below_floor(r) for r in results),
+        "ran_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

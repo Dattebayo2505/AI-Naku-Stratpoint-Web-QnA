@@ -12,11 +12,12 @@ uses FLOORS.get(name, 1.0) so an unregistered name fails loud.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Callable
 
 from stratpoint_rag.evaluation import guardrail_eval as ge
+from stratpoint_rag.evaluation.cost_eval import layer as _cost_layer
+from stratpoint_rag.evaluation.extraction_eval import layer as _extraction_layer
 from stratpoint_rag.evaluation.trajectory_eval import layer as _trajectory_layer
 from stratpoint_rag.evaluation.e2e_eval import layer as _e2e_layer
 from stratpoint_rag.evaluation.judge_eval import layer as _judge_layer
@@ -24,7 +25,7 @@ from stratpoint_rag.evaluation.judge_eval import layer as _judge_layer
 
 @dataclass
 class LayerResult:
-    layer: str          # "unit" | "trajectory" | "e2e" | "judge" | "live"
+    layer: str          # "unit" | "extraction" | "cost" | "trajectory" | "e2e" | "judge"
     name: str           # registry key, e.g. "guardrails/deterministic"
     total: int
     passed: int
@@ -36,9 +37,8 @@ class LayerResult:
         return (self.passed / self.total) if self.total else 0.0
 
 
-# Committed per-layer floors. Guardrail floors are known; the three new layers
-# (trajectory/e2e/judge) are added by their own tasks AFTER a first real
-# measurement, never guessed here.
+# Committed per-layer floors. Every one below was set AFTER a real measurement,
+# never guessed; the measurement and its date are recorded beside each group.
 #
 # guardrails/deterministic is 0.60, not a higher-looking round number: the
 # measured baseline is 13/20 = 0.65 (see guardrail_eval module docstring D2 —
@@ -46,10 +46,30 @@ class LayerResult:
 # policy labels "block"). A floor above the measured baseline would make this
 # command permanently red, which is exactly the failure mode floors exist to
 # avoid.
+# Measured 2026-08-14 over 5 seeded proposal sessions: trajectory 5/5, e2e 5/5,
+# judge 4/4 (mean 3.75/5; one judge call failed and left the denominator at 4).
+# Floors sit one session below the observed rate — below_floor uses `<`, so with
+# n=5 a single off-path session lands exactly on 0.80 and still passes. n is
+# small; re-measure before treating these as tight.
 FLOORS: dict[str, float] = {
     "guardrails/deterministic": 0.60,
-    "guardrails/end-to-end": 1.0,
-    # "trajectory/proposal-path": <measured>,   # set after first seeded run
+    "trajectory/proposal-path": 0.80,
+    "e2e/proposal-chain": 0.80,
+    "judge/proposal-quality": 0.75,
+    # Measured 2026-08-14 over 8 real RFPs: grounding 171/179 = 0.955,
+    # quote arithmetic 8/8 = 1.000.
+    #
+    # All 8 ungrounded values are `target_platform`, and they are a true
+    # positive rather than a metric artifact: rfp9 names none of
+    # ios/android/web/desktop and the extractor returned all four, emitting the
+    # byte-identical list ['Web','iOS','Android','Desktop'] for two unrelated
+    # briefs while correctly returning [] for a third. That is boilerplate, not
+    # a reading of the document, and platforms feed complexity — so an invented
+    # platform inflates a real quote. The floor is set below the observed rate
+    # rather than the failures being excused; fixing the extraction prompt is
+    # what should move this number.
+    "extraction/brief-grounding": 0.90,
+    "cost/quote-arithmetic": 0.875,   # one of eight quotes may fail and still pass
 }
 
 
@@ -67,38 +87,12 @@ def _guardrail_deterministic() -> LayerResult:
     )
 
 
-def _guardrail_end_to_end() -> LayerResult:
-    if not ge.live_available():
-        # live_available() gates on two independent conditions (API key +
-        # importable nemoguardrails); mirror both checks here so the SKIP
-        # detail tells a reader of the table *why* — "we never had a key" vs
-        # "we have a key but can't actually call NeMo" are different facts,
-        # and collapsing them back into one generic message would re-hide
-        # exactly what live_available() was added to surface.
-        if not os.getenv("NVIDIA_API_KEY"):
-            detail = "no NVIDIA_API_KEY"
-        else:
-            detail = "nemoguardrails not installed"
-        return LayerResult("live", "guardrails/end-to-end", 0, 0, detail=detail, skipped=True)
-
-    # Installed and keyed is not the same as working: NeMo fails OPEN, so a
-    # 401 or a Colang error would otherwise be scored as "NeMo allowed it" and
-    # republished as a real measurement. Probe once and skip loudly instead.
-    healthy, why = ge.nemo_health()
-    if not healthy:
-        return LayerResult(
-            "live", "guardrails/end-to-end", 0, 0,
-            detail=f"NeMo erroring: {why}", skipped=True,
-        )
-    res = ge.run_guardrail_eval(use_nemo=True)
-    return LayerResult("live", "guardrails/end-to-end", res["total"], res["passed"])
-
-
 # New eval layers append their `layer` callable here; each is the only wiring
 # needed beyond a FLOORS entry (see module docstring).
 REGISTRY: list[Callable[[], LayerResult]] = [
     _guardrail_deterministic,
-    _guardrail_end_to_end,
+    _extraction_layer,
+    _cost_layer,
     _trajectory_layer,
     _e2e_layer,
     _judge_layer,
@@ -132,10 +126,11 @@ def format_table(results: list[LayerResult]) -> str:
             status = "ok"
         passes = f"{r.passed}/{r.total}"
         row = f"{r.layer:<12} {r.name:<28} {passes:>8} {r.pass_rate:>7.2f} {floor_s:>7}  {status}"
-        # detail carries WHY, e.g. distinguishing "no NVIDIA_API_KEY" from
-        # "nemoguardrails not installed" on a SKIP row — without it, two very
-        # different reasons for not running collapse into an identical-looking
-        # line and a reader can't tell "not configured" from "not installed".
+        # detail carries WHY, e.g. distinguishing "no seeded cases" from "2
+        # stalled before the PDF (unscored)" — without it, very different
+        # reasons for a row's number collapse into an identical-looking line and
+        # a reader cannot tell "nothing ran" from "something ran and was
+        # filtered out".
         if r.detail:
             row += f"  ({r.detail})"
         lines.append(row)

@@ -9,18 +9,24 @@ services:
     command: uv run uvicorn stratpoint_rag.api.app:app --host 0.0.0.0 --port 8000
     env_file: .env
     environment:
-      LLMOPS_LOG_PATH: /app/llmops/traces.jsonl
+      MLFLOW_TRACKING_URI: sqlite:////app/llmops/mlflow.db   # the trace store (Component #8)
+      # Writable runtime artifacts move OUT of /app/data. Their defaults
+      # (data/uploads, data/proposals) sit under the read-only corpus mount, and
+      # a nested volume needs its mountpoint DIRECTORY created inside the parent
+      # first — which is read-only, so runc fails the container at start:
+      #   mkdirat .../app/data/uploads: read-only file system
+      # Mount precedence does not help; the mkdir happens before any of it.
+      # Creating data/uploads on the host would fix one machine and break the
+      # next: git does not track empty directories and .gitignore excludes both.
+      UPLOAD_DIR: /app/uploads
+      PROPOSAL_DIR: /app/proposals
     volumes:
       - ./data:/app/data:ro                  # corpus, read-only (produced offline by the crawler)
-      # ...but docparse writes uploads and pdf_gen writes proposals UNDER data/,
-      # so those two subpaths need writable mounts layered over the :ro parent
-      # (the more specific mount wins). Without them an upload fails with a
-      # read-only filesystem error and no proposal can ever be rendered.
-      - uploads:/app/data/uploads            # client briefs (UPLOAD_DIR default)
-      - proposals:/app/data/proposals        # rendered PDFs + HTML twins (PROPOSAL_DIR default)
+      - uploads:/app/uploads                 # client briefs (UPLOAD_DIR above)
+      - proposals:/app/proposals             # rendered PDFs + HTML twins (PROPOSAL_DIR above)
       - chroma:/app/chroma_db                # persisted vectors — entrypoint auto-ingest writes here
       - hf-cache:/root/.cache/huggingface    # embedding model cache (avoid re-download every boot)
-      - llmops:/app/llmops                   # persist LLMOps traces across restarts
+      - llmops:/app/llmops                   # persist the MLflow trace store across restarts
     ports:
       - "8000:8000"
     healthcheck:                             # observability only — the UI is NOT gated on it (it polls /health itself)
@@ -39,6 +45,17 @@ services:
     env_file: .env
     ports:
       - "8501:8501"
+    # Override the image-level HEALTHCHECK, which probes localhost:8000/health.
+    # That is correct for the api service and wrong here — this container runs
+    # Streamlit on 8501 and reaches the API over the network, so the inherited
+    # probe can never pass and the service sits permanently "unhealthy" while
+    # working perfectly. Streamlit serves its own liveness endpoint.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       api:
         condition: service_started           # start once api's container is up; the UI's own health polling
