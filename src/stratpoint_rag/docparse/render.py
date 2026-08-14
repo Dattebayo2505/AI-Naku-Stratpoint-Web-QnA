@@ -79,6 +79,7 @@ _IMAGE_MAGICS = (
     b"II*\x00",  # tiff, little-endian
     b"MM\x00*",  # tiff, big-endian
 )
+_ZIP_MAGIC = b"PK\x03\x04"
 
 
 class UnsupportedDocument(Exception):
@@ -90,17 +91,22 @@ class EncryptedDocument(Exception):
 
 
 def sniff_kind(head: bytes) -> str | None:
-    """Classify a file by magic bytes: 'pdf', 'image', or None.
+    """Classify a file by magic bytes: 'pdf', 'image', 'zip', or None.
 
     Content decides, never the extension. ``st.file_uploader``'s ``type=`` is a
     client-side filter, and ``/upload`` is a real HTTP endpoint reachable
     without Streamlit.
 
-    .pptx/.docx are deliberately unsupported: PyMuPDF cannot open them,
-    LibreOffice headless is a ~400 MB root install on a 6 GB LXC, and
-    python-pptx is text-only — it misses every diagram and architecture slide,
-    which is exactly where requirements live. "Export your deck to PDF" is a
-    five-second ask.
+    ``'zip'`` is deliberately not a verdict. A ``.pptx`` and a ``.docx`` are
+    byte-identical here — both are ``PK\\x03\\x04`` — and this function's
+    contract is 16 bytes in, so it cannot open the container to tell them
+    apart. It reports what it saw and leaves the resolution to
+    :func:`open_document`, which has the path.
+
+    Legacy binary ``.ppt``/``.doc``/``.xls`` (OLE2) stay unsupported: one
+    header covers all three, so accepting them means either trusting the
+    extension at a public endpoint or parsing a compound-file format. Not worth
+    it for formats this rare. "Export it to PDF" remains the answer there.
     """
     if head.startswith(_PDF_MAGIC):
         return "pdf"
@@ -109,6 +115,8 @@ def sniff_kind(head: bytes) -> str | None:
     # WEBP is RIFF-framed: "RIFF" <4-byte size> "WEBP".
     if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
         return "image"
+    if head.startswith(_ZIP_MAGIC):
+        return "zip"
     return None
 
 
@@ -296,6 +304,11 @@ class Document:
         vector, so a higher zoom is genuinely more detail at identical token
         cost. Bare raster images are only ever scaled down; upscaling a raster
         adds no information the model can use.
+
+        ``kind == "slides"`` takes the vector path deliberately: LibreOffice
+        emits vector PDF, so scaling a slide up is genuine detail at identical
+        token cost. 16:9 slides are landscape and so take ``max_h = MAX_WIDTH``,
+        rendering about 1120x630. No new raster constants.
         """
         if not 0 <= index < self.page_count:
             raise IndexError(f"page {index} out of range (0..{self.page_count - 1})")
@@ -331,8 +344,18 @@ class Document:
         self.close()
 
 
-def open_document(path: str | Path) -> Document:
+def open_document(path: str | Path, *, slides: bool = False) -> Document:
     """Validate and open a brief.
+
+    ``slides=True`` marks a PDF that was produced by converting a deck, so the
+    page loop can force every page down the vision route. The caller sets it;
+    nothing about the converted PDF's own bytes distinguishes it from any other
+    PDF, and by design it carries a full text layer.
+
+    Never converts anything. A zip arriving here is a file we cannot use —
+    ``slides.open_brief`` is the entry point that turns a deck into a PDF
+    first — so it is rejected with the same message as any other unsupported
+    format.
 
     Raises :class:`UnsupportedDocument` when the magic bytes are not a PDF or a
     supported image, and :class:`EncryptedDocument` for a password-protected
@@ -345,10 +368,11 @@ def open_document(path: str | Path) -> Document:
         raise UnsupportedDocument(f"cannot read {path.name}: {e}") from e
 
     kind = sniff_kind(head)
-    if kind is None:
+    if kind is None or kind == "zip":
         raise UnsupportedDocument(
-            f"{path.name} is not a PDF or a supported image "
-            "(png, jpg, jpeg, webp, tiff). Export decks and documents to PDF."
+            f"{path.name} is not a PDF, a PowerPoint deck (.pptx), or a "
+            "supported image (png, jpg, jpeg, webp, tiff). Export other "
+            "documents and legacy .ppt decks to PDF."
         )
 
     try:
@@ -361,4 +385,4 @@ def open_document(path: str | Path) -> Document:
         raise EncryptedDocument(
             f"{path.name} is password-protected. Remove the password and re-upload."
         )
-    return Document(doc, kind)
+    return Document(doc, "slides" if slides else kind)

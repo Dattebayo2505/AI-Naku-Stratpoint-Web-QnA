@@ -130,8 +130,7 @@ def test_sniff_kind_recognises_supported_formats(head, expected):
 @pytest.mark.parametrize(
     "head",
     [
-        b"PK\x03\x04",  # .pptx / .docx — a zip container
-        b"\xd0\xcf\x11\xe0",  # legacy .doc / .ppt
+        b"\xd0\xcf\x11\xe0",  # legacy .doc / .ppt — OLE2, deliberately unsupported
         b"GIF89a",
         b"",
         b"%PD",  # truncated
@@ -141,12 +140,27 @@ def test_sniff_kind_rejects_unsupported_formats(head):
     assert render.sniff_kind(head) is None
 
 
-def test_pptx_is_rejected_despite_its_extension(tmp_path):
-    """Content decides, not the filename."""
+def test_sniff_kind_reports_a_zip_container():
+    """Head-only classification cannot tell a .pptx from a .docx — both are
+    zips. open_document resolves it; sniff_kind keeps its pure-bytes contract."""
+    assert render.sniff_kind(b"PK\x03\x04") == "zip"
+
+
+def test_a_zip_is_rejected_by_open_document(tmp_path):
+    """Content decides, not the filename. open_document never converts, so any
+    zip reaching it is a file we cannot use."""
     path = tmp_path / "deck.pdf"
     path.write_bytes(b"PK\x03\x04" + b"\x00" * 100)
-    with pytest.raises(render.UnsupportedDocument):
+    with pytest.raises(render.UnsupportedDocument) as ex:
         render.open_document(path)
+    assert "pptx" in str(ex.value)
+
+
+def test_slides_flag_stamps_the_slides_kind(text_pdf):
+    """A converted deck is a PDF on disk; the flag is how the pipeline knows
+    it came from slides and must take the vision route regardless."""
+    with render.open_document(text_pdf, slides=True) as doc:
+        assert doc.kind == "slides"
 
 
 # ── opening ─────────────────────────────────────────────────────────────────

@@ -75,9 +75,10 @@ def test_upload_rejects_an_unsafe_session_id(pdf_bytes):
     assert r.status_code == 400
 
 
-def test_upload_rejects_a_disguised_pptx(pdf_bytes):
+def test_upload_rejects_a_malformed_zip(pdf_bytes):
     """st.file_uploader's type= is a client-side filter; /upload is reachable
-    without Streamlit, so content decides."""
+    without Streamlit, so content decides. A zip that is not a real deck is
+    rejected at the boundary like any other unsupported file."""
     r = _upload(b"PK\x03\x04" + b"\x00" * 128, name="deck.pdf")
 
     assert r.status_code == 400
