@@ -108,3 +108,27 @@ def test_extracted_requirements_category_schema():
     assert req_custom.complexity == "hard"
 
 
+def test_complexity_and_category_mapping():
+    """Verify _clean_complexity maps easy/low/simple to easy, hard/high/complex to hard, and medium/standard/unknown to standard."""
+    from stratpoint_rag.docparse.extract import _clean_complexity
+
+    # easy mappings
+    assert _clean_complexity("easy") == "easy"
+    assert _clean_complexity("low") == "easy"
+    assert _clean_complexity("simple") == "easy"
+    assert _clean_complexity(" EASY ") == "easy"
+
+    # hard mappings
+    assert _clean_complexity("hard") == "hard"
+    assert _clean_complexity("high") == "hard"
+    assert _clean_complexity("complex") == "hard"
+    assert _clean_complexity("HIGH") == "hard"
+
+    # standard mappings (medium, standard, or unknown)
+    assert _clean_complexity("medium") == "standard"
+    assert _clean_complexity("standard") == "standard"
+    assert _clean_complexity("moderate") == "standard"
+    assert _clean_complexity("") == "standard"
+    assert _clean_complexity(None) == "standard"
+
+

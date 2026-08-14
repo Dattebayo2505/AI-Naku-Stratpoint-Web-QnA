@@ -56,6 +56,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -74,12 +75,23 @@ from stratpoint_rag.docparse.schema import (
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "_clean_complexity",
     "clear_cache",
     "declared_currency",
     "detect_currency",
     "extract_brief",
     "extract_requirements",
 ]
+
+
+def _clean_complexity(raw: str | None) -> str:
+    """Map raw complexity string into 'easy', 'standard', or 'hard'."""
+    s = (raw or "").strip().lower()
+    if s in ("easy", "low", "simple"):
+        return "easy"
+    if s in ("hard", "high", "complex"):
+        return "hard"
+    return "standard"
 
 # An amount, not just any number: either thousands-separated (100,000) or four
 # digits and up (100000). This is what tells "PHP 100,000" (a price) apart from
@@ -219,6 +231,8 @@ class _ExtractionPayload(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     tech_stack: list[str] = Field(default_factory=list)
     complexity: str = "medium"
+    project_category: str = "standard"
+    category_attributes: dict[str, Any] = Field(default_factory=dict)
     extraction_notes: list[str] = Field(default_factory=list)
 
 
@@ -355,12 +369,22 @@ def _cap_notes(notes: list[str]) -> list[str]:
 
 
 def _merge(payloads: list[_ExtractionPayload], notes: list[str]) -> dict:
+    categories = [_clean_complexity(p.project_category) for p in payloads if p.project_category]
+    category_rank = {"easy": 0, "standard": 1, "hard": 2}
+    max_cat = max(categories, key=lambda c: category_rank.get(c, 1)) if categories else "standard"
+    merged_attrs: dict[str, Any] = {}
+    for p in payloads:
+        if isinstance(p.category_attributes, dict):
+            merged_attrs.update(p.category_attributes)
+
     return {
         "target_platform": _union([_clean_list(p.target_platform) for p in payloads]),
         "features": _union([_clean_list(p.features) for p in payloads]),
         "constraints": _union([_clean_list(p.constraints) for p in payloads]),
         "tech_stack": _union([_clean_list(p.tech_stack) for p in payloads]),
         "complexity": _max_complexity([p.complexity for p in payloads]),
+        "project_category": max_cat,
+        "category_attributes": merged_attrs,
         # Our own failure notes come first so the MAX_NOTES cap can never drop
         # "page 7 could not be extracted" in favour of the model's eighth
         # observation about the budget section.
@@ -423,6 +447,8 @@ def _salvage(raw: str) -> _ExtractionPayload | None:
         constraints=_clean_list(data.get("constraints")),
         tech_stack=_clean_list(data.get("tech_stack")),
         complexity=_max_complexity([data.get("complexity") or ""]),
+        project_category=_clean_complexity(data.get("project_category") or data.get("complexity") or ""),
+        category_attributes=data.get("category_attributes") if isinstance(data.get("category_attributes"), dict) else {},
         extraction_notes=_clean_list(data.get("extraction_notes")),
     )
 

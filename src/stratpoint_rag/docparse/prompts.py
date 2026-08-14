@@ -231,7 +231,9 @@ Reply with a single JSON object and nothing else. Exactly these keys:
   "features": [],
   "constraints": [],
   "tech_stack": [],
-  "complexity": "low" | "medium" | "high",
+  "complexity": "easy" | "standard" | "hard" | "low" | "medium" | "high",
+  "project_category": "easy" | "standard" | "hard",
+  "category_attributes": {},
   "extraction_notes": []
 }
 
@@ -244,7 +246,12 @@ own words where possible. Be exhaustive — a missed feature is a missed cost.
 regimes, integrations that are mandatory, performance targets.
 - tech_stack: technologies the brief names as required or preferred. Leave it \
 empty if the brief names none. Do not suggest technologies of your own.
-- complexity: exactly one of "low", "medium", or "high". Nothing else.
+- complexity: project difficulty level ("easy", "standard", "hard" or "low", "medium", "high").
+- project_category: classify the brief into exactly one category based on scope:
+  * "easy": <= 5 features, single platform, basic CRUD/UI, timeline <= 6 weeks. Max 4 execution phases.
+  * "standard": 6-15 features, multi-platform, standard API/DB integrations, timeline 6-12 weeks. Max 6 execution phases.
+  * "hard": > 15 features, complex integrations (AI/ML, Cloud infra, legacy ERP), timeline > 12 weeks. Max 9 execution phases.
+- category_attributes: key-value dictionary recording detected classification factors, e.g. {"estimated_feature_count": N, "platform_count": N, "has_complex_integrations": bool}.
 - extraction_notes: short, honest statements about what the brief does NOT say, \
 e.g. "no timeline stated", "budget not given". Keep each note under 200 \
 characters and write at most 8 of them.
