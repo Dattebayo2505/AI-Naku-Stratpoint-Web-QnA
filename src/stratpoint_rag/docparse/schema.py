@@ -68,8 +68,15 @@ class ExtractedRequirements(BaseModel):
         default_factory=list,
         description="Technologies the brief names as required or preferred.",
     )
-    complexity: Literal["low", "medium", "high"] = Field(
-        "medium", description="Overall complexity assessment."
+    complexity: Literal["easy", "standard", "hard", "low", "medium", "high"] = Field(
+        "standard", description="Overall complexity assessment."
+    )
+    project_category: Literal["easy", "standard", "hard"] = Field(
+        "standard", description="Detected project category / size class."
+    )
+    category_attributes: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Category-specific metrics and attributes extracted from document.",
     )
 
     currency_symbol: str = Field("$", description="Detected currency symbol ('$' or '₱').")
