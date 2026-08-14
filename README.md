@@ -397,6 +397,47 @@ renderer:
 uv run pytest tests/test_pdf_service.py -v   # must not report SKIPPED
 ```
 
+`uv run pytest` covers `tests/`. The older `RAG-UnitTests/` suite is no longer
+on `testpaths` (a duplicate `test_chunker.py` basename broke collection); run
+it separately with `uv run pytest RAG-UnitTests` — it currently has 3 known
+pre-existing failures.
+
+## Evals
+
+Run the whole eval suite (prints a per-layer pass-rate table, exits non-zero if any layer is below its committed floor):
+
+```bash
+uv run python -m stratpoint_rag.evaluation
+```
+
+Registered layers: `guardrails/deterministic` (unit, offline), `guardrails/end-to-end` (live, needs NeMo), `trajectory/proposal-path`, `e2e/proposal-chain`, `judge/proposal-quality` (live). The trajectory/e2e/judge layers score recorded traces and show `SKIP` until traces exist. Populate them with real app usage, or:
+
+```bash
+uv run python -m stratpoint_rag.evaluation.seed_traces --runs 5   # needs a running API + NVIDIA_API_KEY
+```
+
+Metrics are also visible live in the Streamlit UI's "Observability (LLMOps)" sidebar panel and at `GET /metrics`.
+
+## Component Ownership
+
+| # | Component | Owner |
+|---|---|---|
+| 1 | Prompt Engineering | TBC |
+| 2 | Disambiguation | Member 3 |
+| 3 | RAG | Member 3 |
+| 4 | Memory | TBC |
+| 5 | Guardrails | Member 3 |
+| 6 | Simple Chat UI | Member 1 |
+| 7 | API Endpoint Deployment | Vienn |
+| 8 | LLMOps (monitoring/tracing) | Vienn |
+| 9 | ReAct / Tool Use | Member 2 |
+| 10 | SQL Agent / Planning-Critique | Member 2 |
+| 11 | Multi-Agent Orchestration | TBC |
+| 12 | Advanced RAG | Member 3 |
+| 13 | Evals (unit/trajectory/e2e/judge) | Vienn |
+| 14 | CV or DS Domain Integration | Member 1 |
+| — | Dockerization & LXC deploy | Vienn |
+
 ## Design
 
 | Document | What it covers |

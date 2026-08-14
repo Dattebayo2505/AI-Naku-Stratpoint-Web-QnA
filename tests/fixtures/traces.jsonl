@@ -1,0 +1,8 @@
+{"ts": "2026-08-14T10:00:00Z", "session_id": "good_1", "path": "/chat", "tool_calls": ["read_brief"], "error": null, "is_grounded": true, "confidence": 0.9, "guardrail_reason": null}
+{"ts": "2026-08-14T10:00:20Z", "session_id": "good_1", "path": "/chat", "tool_calls": ["extract_brief_requirements", "estimate_cost_and_timeline"], "error": null, "is_grounded": true, "confidence": 0.88, "guardrail_reason": null}
+{"ts": "2026-08-14T10:00:45Z", "session_id": "good_1", "path": "/chat", "tool_calls": ["generate_proposal_pdf"], "error": null, "is_grounded": true, "confidence": 0.9, "guardrail_reason": null}
+{"ts": "2026-08-14T11:00:00Z", "session_id": "no_estimate_2", "path": "/chat", "tool_calls": ["read_brief"], "error": null, "is_grounded": true, "confidence": 0.7, "guardrail_reason": null}
+{"ts": "2026-08-14T11:00:30Z", "session_id": "no_estimate_2", "path": "/chat", "tool_calls": ["generate_proposal_pdf"], "error": null, "is_grounded": true, "confidence": 0.7, "guardrail_reason": null}
+{"ts": "2026-08-14T12:00:00Z", "session_id": "errored_3", "path": "/chat", "tool_calls": ["read_brief", "estimate_cost_and_timeline"], "error": null, "is_grounded": true, "confidence": 0.8, "guardrail_reason": null}
+{"ts": "2026-08-14T12:00:30Z", "session_id": "errored_3", "path": "/chat", "tool_calls": ["generate_proposal_pdf"], "error": "PDFRenderError: chromium timeout", "is_grounded": true, "confidence": 0.8, "guardrail_reason": null}
+{"ts": "2026-08-14T13:00:00Z", "session_id": "chat_only_4", "path": "/chat", "tool_calls": ["search_stratpoint"], "error": null, "is_grounded": true, "confidence": 0.95, "guardrail_reason": null}

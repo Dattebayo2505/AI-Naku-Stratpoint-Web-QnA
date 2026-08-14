@@ -69,3 +69,7 @@ STRATPOINT_API_URL=
 # LLMOps — JSONL trace sink (Component #8); blank = defaults in stratpoint_rag/llmops
 LLMOPS_ENABLED=
 LLMOPS_LOG_PATH=
+# LLMOps — cost estimate rates (USD per 1k tokens). Blank = published median for
+# llama-3.1-8b-instruct (see stratpoint_rag/llmops/cost.py).
+LLMOPS_PRICE_PER_1K_PROMPT=
+LLMOPS_PRICE_PER_1K_COMPLETION=

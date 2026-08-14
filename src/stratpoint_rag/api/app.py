@@ -395,6 +395,7 @@ def _record(
         tool_calls=[s.tool for s in result.trace if s.type == "action" and s.tool] if result else None,
         is_grounded=result.is_grounded if result else None,
         confidence=result.confidence if result else None,
+        guardrail_reason=result.guardrail_reason if result else None,
     )
 
 

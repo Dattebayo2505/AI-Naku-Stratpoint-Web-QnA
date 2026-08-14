@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from stratpoint_rag.llmops.cost import estimate_cost
 from stratpoint_rag.llmops.metrics import aggregate
 from stratpoint_rag.llmops.sink import append, enabled, read_records
 from stratpoint_rag.llmops.usage import add_usage, pop_usage, reset_usage
@@ -30,8 +31,10 @@ def record(
     tool_calls: list[str] | None = None,
     is_grounded: bool | None = None,
     confidence: float | None = None,
+    guardrail_reason: str | None = None,
 ) -> None:
     """Persist one request's telemetry. Query text is deliberately omitted (PII)."""
+    cost_usd = estimate_cost(prompt_tokens, completion_tokens)
     append(
         {
             "ts": _now(),
@@ -46,6 +49,8 @@ def record(
             "error": error,
             "is_grounded": is_grounded,
             "confidence": confidence,
+            "guardrail_reason": guardrail_reason,
+            "cost_usd": cost_usd,
         }
     )
 
@@ -59,4 +64,5 @@ __all__ = [
     "add_usage",
     "pop_usage",
     "reset_usage",
+    "estimate_cost",
 ]

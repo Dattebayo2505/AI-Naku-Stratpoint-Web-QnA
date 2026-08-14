@@ -119,7 +119,7 @@ def test_main_cli_success(tmp_path, monkeypatch, capsys):
 
     from util.count_tokens import main
 
-    with patch("count_tokens.fetch_token_count", return_value=12):
+    with patch("util.count_tokens.fetch_token_count", return_value=12):
         ret = main(["-i", str(f1), str(f2), "--api-key", "test-key"])
         assert ret == 0
         captured = capsys.readouterr().out
@@ -135,7 +135,7 @@ def test_main_cli_json_output(tmp_path, capsys):
 
     from util.count_tokens import main
 
-    with patch("count_tokens.fetch_token_count", return_value=5):
+    with patch("util.count_tokens.fetch_token_count", return_value=5):
         ret = main(["-i", str(f1), "--api-key", "test-key", "--json"])
         assert ret == 0
         captured = capsys.readouterr().out

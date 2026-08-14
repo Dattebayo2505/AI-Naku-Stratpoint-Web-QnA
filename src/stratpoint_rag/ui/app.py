@@ -171,6 +171,26 @@ def main():
         _render_brief_uploader()
         st.markdown("---")
 
+        with st.expander("📊 Observability (LLMOps)"):
+            if st.button("Refresh metrics"):
+                st.session_state["_metrics"] = api_client.get_metrics()
+            data = st.session_state.get("_metrics")
+            if not data:
+                st.caption("Press refresh — or the API is unreachable.")
+            else:
+                agg = data.get("aggregates", {})
+                st.metric("Requests", agg.get("count", 0))
+                st.metric("Latency p50 (ms)", agg.get("latency_p50_ms") or 0)
+                st.metric("Latency p95 (ms)", agg.get("latency_p95_ms") or 0)
+                st.metric("Total tokens", agg.get("total_tokens", 0))
+                cost = agg.get("total_cost_usd")
+                st.metric("Est. cost (USD)", f"{cost:.4f}" if cost is not None else "0")
+                gr = agg.get("grounded_rate")
+                st.metric("Grounded rate", f"{gr:.0%}" if gr is not None else "n/a")
+                st.metric("Error rate", f"{agg.get('error_rate', 0):.0%}")
+                st.metric("Guardrail/routing intercepts", f"{agg.get('guardrail_fire_rate', 0):.0%}")
+                st.caption("Includes greetings and clarification prompts, not only safety blocks.")
+
         if st.button("Reset conversation"):
             state.reset_conversation()
             st.rerun()

@@ -19,6 +19,16 @@ COPY src/ ./src/
 RUN uv sync --no-dev --extra nemo
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+# pdf_gen/pdf_service.py drives headless Chromium to render the proposal PDF —
+# the product's headline output. Without this the browser is absent from the
+# image and `generate_proposal_pdf` fails at runtime while everything else looks
+# healthy. (The comment this replaces predated pdf_gen and said the browser was
+# never needed; that stopped being true when the proposal renderer landed.)
+# --with-deps pulls the OS libraries headless Chromium needs on slim.
+RUN uv run playwright install --with-deps chromium
+# Image-level healthcheck so `docker run` (not just compose) reports health on the LXC.
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=120s \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 ENTRYPOINT ["/entrypoint.sh"]
-# ponytail: playwright ships as a transitive dep but its browser is never installed and the
-# crawler never runs in-image — the corpus is produced offline and bind-mounted read-only.
+# ponytail: the crawler never runs in-image — the corpus is produced offline and
+# bind-mounted read-only; only the PDF renderer needs a browser.

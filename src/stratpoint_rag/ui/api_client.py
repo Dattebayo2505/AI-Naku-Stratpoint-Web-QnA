@@ -27,6 +27,16 @@ def health_check() -> bool:
         return False
 
 
+def get_metrics() -> Dict[str, Any] | None:
+    """LLMOps aggregates + recent traces, or None if the API is unreachable."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/metrics", timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException:
+        return None
+
+
 def _handle(exc: Exception, *, what: str) -> APIError:
     """Turn a requests exception into a user-facing APIError."""
     if isinstance(exc, requests.exceptions.ConnectionError):

@@ -36,6 +36,20 @@ class NeMoGuardrailPipeline:
         for m in cfg.models:
             if m.type == "main":
                 m.model = rag_config.llm_model()
+            # NeMo does NOT expand ${VAR} in model parameters — it hands the
+            # literal string "${NVIDIA_API_KEY}" to the OpenAI client, so every
+            # call returned 401 and `run_input` swallowed it into an empty
+            # result list. The rails then silently passed everything through,
+            # which reads identically to "NeMo found nothing to block": the
+            # deterministic and NeMo guardrail evals both scored 13/20 with a
+            # zero delta, and the zero was the auth failure, not a finding.
+            # expandvars is stdlib and leaves a literal through unchanged when
+            # the variable is unset.
+            if m.parameters:
+                m.parameters = {
+                    k: os.path.expandvars(v) if isinstance(v, str) else v
+                    for k, v in m.parameters.items()
+                }
         return LLMRails(cfg)
 
     @property
