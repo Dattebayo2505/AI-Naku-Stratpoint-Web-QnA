@@ -226,9 +226,14 @@ def test_a_genuine_answer_is_still_consumed_and_the_request_replayed(
         "put together a proposal", session_id=SESSION, use_nemo=False,
         briefs=transcribed,
     )
-    ga.run_with_guardrails(
+    r2 = ga.run_with_guardrails(
         answer, session_id=SESSION, use_nemo=False, briefs=transcribed
     )
+    if answer != "skip":
+        assert "Confirming the following details:" in r2.answer
+        ga.run_with_guardrails(
+            "yes", session_id=SESSION, use_nemo=False, briefs=transcribed
+        )
 
     assert seen["message"] == "put together a proposal"
     assert seen["names"] == expected

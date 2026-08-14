@@ -344,6 +344,19 @@ are named `brief_client_name`/`brief_project_name` because
 `INTENT_SLOTS[ASK_STRATPOINT]` already has a `project_name` meaning *a
 Stratpoint case study*.
 
+**Confirmation step:** Before generating a proposal, all names (whether stated
+upfront in the prompt or selected from a suggestion/loop response) are presented
+to the user in a deterministic confirmation format:
+```
+Confirming the following details:
+Client Name: <client>
+Project Name: <project>
+
+Are these the right details or do you want to change them?
+```
+The user may affirm (proceeds with confirmed details), change/correct (re-prompts
+with updated details), or skip (clears names and generates proposal without names).
+
 ### Agent wiring
 
 `TOOL_SPECS` is a per-request build (`tools.build_tool_specs(briefs, names)`),

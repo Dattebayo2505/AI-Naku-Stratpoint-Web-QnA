@@ -238,46 +238,67 @@ def run_with_guardrails(
         memory.add_turn("assistant", _user_facing_block(block_reason))
         return AgentResult(answer=_user_facing_block(block_reason), guardrail_reason=block_reason)
 
-    # ── The naming answer, if we asked last turn ──────────────────────
-    # Consumed BEFORE routing: "Northwind Retail" classified on its own is a
-    # vague fragment that the router would bounce straight back to
-    # clarification. It is an answer to a question we asked, not a new request.
-    #
-    # But only when it IS one. Consuming unconditionally meant any follow-up —
-    # "what document did I just give you?" — was swallowed as the name and the
-    # original request replayed, so the visitor's question came back as a
-    # finished quote. A non-answer abandons the ask and falls through to be
-    # routed on its own terms.
-    if engagement.get(session_id).loop is not None:
-        resumed = engagement.record_answer(session_id, processed_input)
-        if resumed.consumed:
+    # ── The naming answer / confirmation response ─────────────────────
+    resumed_consumed = False
+    if engagement.get(session_id).awaiting_confirmation:
+        resumed, next_prompt = engagement.record_confirmation_response(
+            session_id, processed_input
+        )
+        if next_prompt is not None:
             memory.add_turn("user", message)
-            # Replay what they actually wanted; they should not have to retype it.
+            memory.add_turn("assistant", next_prompt)
+            return AgentResult(
+                answer=next_prompt,
+                guardrail_reason="Awaiting proposal details confirmation",
+            )
+        if resumed.consumed:
+            resumed_consumed = True
+            memory.add_turn("user", message)
+            message = processed_input = resumed.request
+    elif engagement.get(session_id).loop is not None:
+        resumed, next_prompt = engagement.record_answer(session_id, processed_input)
+        if next_prompt is not None:
+            memory.add_turn("user", message)
+            memory.add_turn("assistant", next_prompt)
+            return AgentResult(
+                answer=next_prompt,
+                guardrail_reason="Awaiting proposal details confirmation",
+            )
+        if resumed.consumed:
+            resumed_consumed = True
+            memory.add_turn("user", message)
             message = processed_input = resumed.request
 
     # ── Disambiguation ────────────────────────────────────────────────
     route_result = route(processed_input, session_memory=memory)
 
-    # ── The naming ask, once per session, at the moment it is needed ──
-    #
-    # ...but only when it is still a question. The router already pulled the
-    # labelled slots out of the request, and asking for what the visitor typed
-    # in the same sentence reads as not having listened.
-    if route_result.intent == IntentCategory.REQUEST_PROPOSAL:
-        engagement.adopt_stated(session_id, route_result.slots)
-    if route_result.intent == IntentCategory.REQUEST_PROPOSAL and engagement.needs_ask(
-        session_id
-    ):
-        question = engagement.start_ask(
-            session_id, processed_input, _name_suggestion(briefs)
-        )
-        memory.add_turn("user", message)
-        memory.add_turn("assistant", question)
-        # Deliberately does NOT touch clarify_streak: this is a productive
-        # question we chose to ask, not the bot failing to understand.
-        return AgentResult(
-            answer=question, guardrail_reason="Asked how to name the proposal"
-        )
+    # ── The naming ask / confirmation ─────────────────────────────────
+    if route_result.intent == IntentCategory.REQUEST_PROPOSAL and not resumed_consumed:
+        client = (route_result.slots or {}).get("brief_client_name")
+        project = (route_result.slots or {}).get("brief_project_name")
+        if client or project:
+            # Stated names override any previous declination and trigger confirmation
+            engagement.get(session_id).declined = False
+            prompt = engagement.start_confirmation(
+                session_id, processed_input, client, project
+            )
+            memory.add_turn("user", message)
+            memory.add_turn("assistant", prompt)
+            return AgentResult(
+                answer=prompt,
+                guardrail_reason="Awaiting proposal details confirmation",
+            )
+        elif not engagement.get(session_id).settled and engagement.needs_ask(
+            session_id
+        ):
+            question = engagement.start_ask(
+                session_id, processed_input, _name_suggestion(briefs)
+            )
+            memory.add_turn("user", message)
+            memory.add_turn("assistant", question)
+            return AgentResult(
+                answer=question, guardrail_reason="Asked how to name the proposal"
+            )
 
     if route_result.intent in (IntentCategory.HARMFUL, IntentCategory.OFF_TOPIC):
         reason = route_result.rejection_reason or "I can't process that request."

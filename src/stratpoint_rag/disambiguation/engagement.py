@@ -64,17 +64,21 @@ __all__ = [
     "abandon",
     "adopt_stated",
     "clear",
+    "format_confirmation",
     "get",
     "needs_ask",
     "record_answer",
+    "record_confirmation_response",
     "start_ask",
+    "start_confirmation",
 ]
 
 _SLOTS = ["brief_client_name", "brief_project_name"]
 
 _AFFIRM = re.compile(
-    r"^\s*(yes|yep|yeah|yup|sure|ok|okay|correct|right|that'?s right|"
-    r"use (?:it|that|them)|go ahead|please do|sounds good)[\s.!]*$",
+    r"^\s*(?:yes|yep|yeah|yup|sure|ok|okay|correct|right|that'?s right|"
+    r"use (?:it|that|them)|go ahead|please do|sounds good|proceed|looks good|"
+    r"looks great|all good|confirm|confirmed)(?:[\s,]+(?:and\s+)?(?:yes|yep|yeah|yup|sure|ok|okay|correct|right|that'?s right|use (?:it|that|them)|go ahead|please do|sounds good|proceed|looks good|looks great|all good|confirm|confirmed))*[\s.!]*$",
     re.IGNORECASE,
 )
 
@@ -88,6 +92,7 @@ class Engagement:
     # An explicit "leave them blank" — stored so it is never asked again.
     declined: bool = False
     asked: bool = False
+    awaiting_confirmation: bool = False
     # The in-flight question, if the last turn was the ask.
     loop: ClarificationLoop | None = None
     # The request that triggered the ask, replayed once the ask is answered so
@@ -103,7 +108,7 @@ class Engagement:
     @property
     def settled(self) -> bool:
         """True once the visitor has answered — with a name or with a refusal."""
-        return self.declined or self.asked or any(self.names)
+        return self.declined or (self.asked and not self.awaiting_confirmation)
 
 
 _sessions: dict[str, Engagement] = {}
@@ -122,24 +127,7 @@ def clear(session_id: str | None = None) -> None:
 
 
 def adopt_stated(session_id: str | None, slots: dict[str, str] | None) -> bool:
-    """Record names the visitor already stated in the request itself.
-
-    Rule 1 above says *ask late*; it does not say *ask regardless*. "Generate a
-    proposal, project name is Savannah-OohLala, client name is Monica" arrives
-    with both slots already filled by ``extract_slots`` — and the ask fired on
-    the intent alone, discarded them, and put the question the visitor had just
-    answered back to them. Correct behaviour, wrong precondition.
-
-    This is still row 2 of the trust table, not row 1: the value came from the
-    visitor's own message, which is the same channel their answer to the
-    question would have arrived on. Only the *labelled* forms reach here —
-    ``extract_slots`` is called with no ``target_slot``, so an unlabelled
-    request stays unlabelled rather than becoming the client name wholesale, and
-    the ask still fires for it.
-
-    Returns True when something was recorded, which also settles the naming: a
-    visitor who typed a name is not asked for one.
-    """
+    """Record names the visitor already stated in the request itself."""
     client = (slots or {}).get("brief_client_name")
     project = (slots or {}).get("brief_project_name")
     if not (client or project):
@@ -150,9 +138,6 @@ def adopt_stated(session_id: str | None, slots: dict[str, str] | None) -> bool:
         engagement.client_name = client
     if project:
         engagement.project_name = project
-    # An explicit name supersedes an earlier "leave them blank": the visitor is
-    # allowed to change their mind, and `declined` left set would keep the
-    # declination alongside a name that is now on the quote.
     engagement.declined = False
     return True
 
@@ -160,19 +145,37 @@ def adopt_stated(session_id: str | None, slots: dict[str, str] | None) -> bool:
 def needs_ask(session_id: str | None) -> bool:
     """True when a proposal is wanted and naming has not been settled."""
     engagement = get(session_id)
-    return engagement.loop is None and not engagement.settled
+    return engagement.loop is None and not engagement.awaiting_confirmation and not engagement.settled
+
+
+def format_confirmation(client_name: str | None, project_name: str | None) -> str:
+    c = client_name or "(Not specified)"
+    p = project_name or "(Not specified)"
+    return (
+        "Confirming the following details:\n"
+        f"Client Name: {c}\n"
+        f"Project Name: {p}\n\n"
+        "Are these the right details or do you want to change them?"
+    )
+
+
+def start_confirmation(
+    session_id: str | None,
+    request: str,
+    client_name: str | None = None,
+    project_name: str | None = None,
+) -> str:
+    engagement = get(session_id)
+    engagement.client_name = client_name
+    engagement.project_name = project_name
+    engagement.awaiting_confirmation = True
+    engagement.pending_request = request
+    engagement.loop = None
+    return format_confirmation(client_name, project_name)
 
 
 def _question(suggestion: tuple[str | None, str | None]) -> str:
-    """One question covering both slots.
-
-    Combined rather than two sequential turns: this is a courtesy question in
-    the middle of someone asking for a quote, and two round-trips to collect two
-    optional fields would cost more goodwill than the fields are worth.
-
-    A document-derived name is offered **attributed to the document**, so the
-    visitor can see where it came from before agreeing to put it on a proposal.
-    """
+    """One question covering both slots."""
     client, project = suggestion
     if client and project:
         seen = f'The document mentions "{client}" and "{project}". '
@@ -224,15 +227,6 @@ class Resumption:
     consumed: bool = True
 
 
-# A reply that is plainly not a name: a question, or an instruction to do
-# something else. Asked "is there a client name for the proposal?", a visitor
-# may reasonably say "wait, what document did I give you?" — and the old code
-# stored that sentence as the client name and printed it on the proposal.
-#
-# Deliberately a *rejection* test, not a name recogniser: real client names are
-# unconstrained text and any positive pattern would reject the legitimate ones.
-# The bar is only "could this plausibly be a name", so an unrecognised reply
-# still counts as an answer, as it did before.
 _NOT_A_NAME = re.compile(
     r"^\s*(?:what|which|who|where|when|why|how|whats|what'?s|can|could|would|"
     r"should|do|does|did|is|are|tell|give|show|list|explain|describe|"
@@ -240,8 +234,6 @@ _NOT_A_NAME = re.compile(
     re.IGNORECASE,
 )
 
-# Names are short. A sentence this long is a request, not a company name;
-# `_clean_name` in slots.py caps at 80 for the same reason.
 _MAX_NAME_CHARS = 80
 
 
@@ -260,26 +252,74 @@ def _is_an_answer(reply: str) -> bool:
 
 
 def abandon(session_id: str | None) -> None:
-    """Drop an unanswered ask without recording an answer.
-
-    Not the same as a declination: the visitor never addressed the question, so
-    `settled` stays False and a later proposal request may ask again. Recording
-    silence as "leave it blank" would put words in their mouth.
-    """
+    """Drop an unanswered ask without recording an answer."""
     engagement = get(session_id)
     engagement.loop = None
     engagement.pending_request = None
+    engagement.awaiting_confirmation = False
 
 
-def record_answer(session_id: str | None, answer: str) -> Resumption:
+def record_confirmation_response(
+    session_id: str | None,
+    answer: str,
+) -> tuple[Resumption, str | None]:
+    """Process user response when awaiting confirmation.
+
+    Returns (Resumption, next_prompt).
+    If next_prompt is not None, the bot should immediately display next_prompt.
+    """
+    engagement = get(session_id)
+    request = engagement.pending_request or answer
+
+    if not _is_an_answer(answer):
+        abandon(session_id)
+        return Resumption(
+            request=answer, names=engagement.names, declined=False, consumed=False
+        ), None
+
+    if is_declination(answer):
+        engagement.declined = True
+        engagement.client_name = None
+        engagement.project_name = None
+        engagement.awaiting_confirmation = False
+        engagement.asked = True
+        return Resumption(request=request, names=(None, None), declined=True), None
+
+    if _AFFIRM.match(answer or ""):
+        engagement.awaiting_confirmation = False
+        engagement.asked = True
+        return Resumption(request=request, names=engagement.names, declined=False), None
+
+    # Check for corrections/new names
+    from .schemas import IntentCategory
+    from .slots import extract_slots
+
+    extracted = extract_slots(answer, IntentCategory.REQUEST_PROPOSAL).slots
+    if extracted:
+        if "brief_client_name" in extracted:
+            engagement.client_name = extracted["brief_client_name"]
+        if "brief_project_name" in extracted:
+            engagement.project_name = extracted["brief_project_name"]
+        return Resumption(
+            request=request, names=engagement.names, declined=False
+        ), format_confirmation(engagement.client_name, engagement.project_name)
+
+    # If answer did not match affirmation, declination, or extractable names
+    engagement.declined = True
+    engagement.client_name = None
+    engagement.project_name = None
+    engagement.awaiting_confirmation = False
+    engagement.asked = True
+    return Resumption(request=request, names=(None, None), declined=True), None
+
+
+def record_answer(session_id: str | None, answer: str) -> tuple[Resumption, str | None]:
     """Consume the visitor's reply to the naming question.
 
     Settles on a name, an affirmation of the document's suggestion, or a
     declination — but only when the reply is *addressing the question*. A reply
     that plainly is not (a question of their own, a correction) abandons the ask
-    and is handed back untouched via ``consumed=False``, because the alternative
-    is what shipped: the visitor's question stored as the client name and their
-    original request replayed at them as a finished quote.
+    and is handed back untouched via ``consumed=False``.
     """
     engagement = get(session_id)
     loop = engagement.loop
@@ -289,28 +329,34 @@ def record_answer(session_id: str | None, answer: str) -> Resumption:
         abandon(session_id)
         return Resumption(
             request=answer, names=engagement.names, declined=False, consumed=False
-        )
+        ), None
 
-    engagement.asked = True
     engagement.loop = None
     engagement.pending_request = None
 
     if _AFFIRM.match(answer or ""):
-        # Only here does a document-derived name become a usable value, and only
-        # because the visitor said so.
         engagement.client_name, engagement.project_name = engagement.suggestion
     elif is_declination(answer):
         engagement.declined = True
+        engagement.asked = True
+        return Resumption(
+            request=request, names=(None, None), declined=True
+        ), None
     elif loop is not None:
         confirmed = loop.process_answer(answer).slots
         engagement.client_name = confirmed.get("brief_client_name")
         engagement.project_name = confirmed.get("brief_project_name")
 
-    if not any(engagement.names):
-        # Nothing usable came back. Treat it as a declination rather than
-        # re-asking: the visitor answered, the answer just contained no name.
-        engagement.declined = True
+    if any(engagement.names):
+        engagement.awaiting_confirmation = True
+        engagement.pending_request = request
+        return Resumption(
+            request=request, names=engagement.names, declined=False
+        ), format_confirmation(engagement.client_name, engagement.project_name)
 
+    # Nothing usable came back. Treat it as a declination rather than re-asking.
+    engagement.declined = True
+    engagement.asked = True
     return Resumption(
-        request=request, names=engagement.names, declined=engagement.declined
-    )
+        request=request, names=(None, None), declined=True
+    ), None

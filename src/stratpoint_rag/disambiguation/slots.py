@@ -59,10 +59,12 @@ _DECLINE_PATTERN = re.compile(
 )
 
 _CLIENT_ANSWER = re.compile(
-    r"\bclient(?:\s*name)?\s*(?:is|:|=)\s*([^,;\n]+)", re.IGNORECASE
+    r"\b(?:change\s+|make\s+|actually\s+)?client(?:\s*name)?\s*(?:is|to|:|=)\s*([^,;\n]+?)(?=\s+(?:and\s+)?(?:project|client)\b|[,\n;]|$)",
+    re.IGNORECASE,
 )
 _PROJECT_ANSWER = re.compile(
-    r"\bproject(?:\s*name)?\s*(?:is|:|=)\s*([^,;\n]+)", re.IGNORECASE
+    r"\b(?:change\s+|make\s+|actually\s+)?project(?:\s*name|\s*title)?\s*(?:is|to|:|=)\s*([^,;\n]+?)(?=\s+(?:and\s+)?(?:project|client)\b|[,\n;]|$)",
+    re.IGNORECASE,
 )
 
 

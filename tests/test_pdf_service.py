@@ -216,7 +216,7 @@ async def test_the_async_renderer_produces_the_same_document(tmp_path):
 
     with _read(out) as doc:
         assert doc.page_count == 2
-        assert re.search(r"SP-20260809-ABC123", doc[0].get_text())
+        assert "Northwind Retail" in doc[0].get_text()
 
 
 def test_proposal_pdf_render_with_capped_phases():

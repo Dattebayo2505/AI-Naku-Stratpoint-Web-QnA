@@ -170,42 +170,48 @@ def test_silence_is_not_consent():
 def test_an_affirmation_records_the_documents_suggestion():
     engagement.start_ask("s1", "give me a quote", ("Northwind Retail", "Loyalty App"))
 
-    resumed = engagement.record_answer("s1", "yes")
+    resumed, prompt = engagement.record_answer("s1", "yes")
 
     assert resumed.names == ("Northwind Retail", "Loyalty App")
     assert not resumed.declined
+    assert prompt is not None
+    assert "Northwind Retail" in prompt
 
 
 def test_a_typed_name_is_recorded():
     engagement.start_ask("s1", "give me a quote")
 
-    resumed = engagement.record_answer("s1", "Nordic Systems")
+    resumed, prompt = engagement.record_answer("s1", "Nordic Systems")
 
     assert resumed.names[0] == "Nordic Systems"
+    assert prompt is not None
 
 
 def test_a_typed_name_overrides_the_documents_suggestion():
     engagement.start_ask("s1", "quote", ("Northwind Retail", None))
 
-    resumed = engagement.record_answer("s1", "Nordic Systems")
+    resumed, prompt = engagement.record_answer("s1", "Nordic Systems")
 
     assert resumed.names[0] == "Nordic Systems"
+    assert prompt is not None
 
 
 def test_a_declination_is_recorded_as_an_answer():
     engagement.start_ask("s1", "give me a quote", ("Northwind Retail", None))
 
-    resumed = engagement.record_answer("s1", "skip")
+    resumed, prompt = engagement.record_answer("s1", "skip")
 
     assert resumed.declined
     assert resumed.names == (None, None)
+    assert prompt is None
 
 
 def test_the_original_request_is_replayed():
     """The visitor should not have to retype what they asked for."""
     engagement.start_ask("s1", "put together a proposal for me")
 
-    assert engagement.record_answer("s1", "skip").request == (
+    resumed, _ = engagement.record_answer("s1", "skip")
+    assert resumed.request == (
         "put together a proposal for me"
     )
 
@@ -263,3 +269,101 @@ def test_no_path_writes_a_name_into_extracted_requirements():
 
     assert "client_name" not in ExtractedRequirements.model_fields
     assert "project_name" not in ExtractedRequirements.model_fields
+
+
+# ── confirmation & change command tests ─────────────────────────────────────
+
+
+def test_affirmation_includes_proceed_and_looks_good():
+    from stratpoint_rag.disambiguation.engagement import _AFFIRM
+
+    for phrase in [
+        "looks good",
+        "proceed",
+        "looks great",
+        "all good",
+        "confirm",
+        "confirmed",
+    ]:
+        assert _AFFIRM.match(phrase), f"Failed to match affirmation: {phrase}"
+
+
+def test_extract_proposal_names_change_commands():
+    from stratpoint_rag.disambiguation.schemas import IntentCategory
+    from stratpoint_rag.disambiguation.slots import extract_slots
+
+    q1 = extract_slots("change client to Acme Corp", IntentCategory.REQUEST_PROPOSAL)
+    assert q1.slots.get("brief_client_name") == "Acme Corp"
+
+    q2 = extract_slots(
+        "change project name to Alpha Initiative", IntentCategory.REQUEST_PROPOSAL
+    )
+    assert q2.slots.get("brief_project_name") == "Alpha Initiative"
+
+    q3 = extract_slots(
+        "Client Name is Clive and Project name is Project Avisala",
+        IntentCategory.REQUEST_PROPOSAL,
+    )
+    assert q3.slots.get("brief_client_name") == "Clive"
+    assert q3.slots.get("brief_project_name") == "Project Avisala"
+
+
+def test_format_confirmation():
+    from stratpoint_rag.disambiguation.engagement import format_confirmation
+
+    msg = format_confirmation("Clive", "Project Avisala")
+    assert "Client Name: Clive" in msg
+    assert "Project Name: Project Avisala" in msg
+    assert "Are these the right details or do you want to change them?" in msg
+
+    msg_partial = format_confirmation("Clive", None)
+    assert "Client Name: Clive" in msg_partial
+    assert "Project Name: (Not specified)" in msg_partial
+
+
+def test_start_confirmation_sets_state():
+    prompt = engagement.start_confirmation(
+        "s1", "give me a quote", "Clive", "Project Avisala"
+    )
+    assert "Client Name: Clive" in prompt
+    assert engagement.get("s1").awaiting_confirmation
+    assert engagement.get("s1").client_name == "Clive"
+    assert engagement.get("s1").project_name == "Project Avisala"
+
+
+def test_confirmation_response_affirmation():
+    engagement.start_confirmation("s1", "give me a quote", "Clive", "Project Avisala")
+    resumption, prompt = engagement.record_confirmation_response(
+        "s1", "looks good, proceed"
+    )
+
+    assert prompt is None
+    assert resumption.names == ("Clive", "Project Avisala")
+    assert resumption.request == "give me a quote"
+    assert engagement.get("s1").settled
+    assert not engagement.get("s1").awaiting_confirmation
+
+
+def test_confirmation_response_correction():
+    engagement.start_confirmation("s1", "give me a quote", "Clive", "Project Avisala")
+    resumption, prompt = engagement.record_confirmation_response(
+        "s1", "change client to Monica"
+    )
+
+    assert prompt is not None
+    assert "Client Name: Monica" in prompt
+    assert "Project Name: Project Avisala" in prompt
+    assert engagement.get("s1").client_name == "Monica"
+    assert engagement.get("s1").awaiting_confirmation
+
+
+def test_confirmation_response_declination():
+    engagement.start_confirmation("s1", "give me a quote", "Clive", "Project Avisala")
+    resumption, prompt = engagement.record_confirmation_response("s1", "skip")
+
+    assert prompt is None
+    assert resumption.names == (None, None)
+    assert resumption.declined
+    assert engagement.get("s1").settled
+
+
