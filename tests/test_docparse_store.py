@@ -318,6 +318,21 @@ def test_ordinary_filenames_are_untouched(uploads):
     assert record.path.name == "client-brief.pdf"
 
 
+@pytest.mark.parametrize("name", ["converted.pdf", "Converted.PDF", "converted.pdf."])
+def test_uploads_cannot_claim_the_conversion_cache_name(uploads, name):
+    """slides.ensure_pdf caches a deck's derived PDF at converted.pdf.
+
+    A .pptx uploaded under that name would be its own cache: the "cached and
+    non-empty" check would hand the raw zip back as the derived PDF, and
+    open_document would then reject a perfectly good deck.
+    """
+    record = store.save_upload("sess", "up1", name, PDF)
+
+    assert record.path.name.casefold().rstrip(". ") != "converted.pdf"
+    assert record.path.read_bytes() == PDF
+    assert store.find_upload("sess", "up1").sha256 == hashlib.sha256(PDF).hexdigest()
+
+
 # ── Win32 drops trailing dots and spaces on create ──────────────────────────
 #
 # `_UNSAFE_FILENAME_CHARS` allows "." and only *leading* dots were stripped, so

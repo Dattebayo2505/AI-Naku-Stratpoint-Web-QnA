@@ -40,6 +40,8 @@ __all__ = [
     "nvidia_api_key",
     "nvidia_base_url",
     "nvidia_vision_api_key",
+    "soffice_binary",
+    "soffice_timeout",
     "text_layer_min_chars",
     "upload_dir",
     "upload_max_bytes",
@@ -308,3 +310,27 @@ def text_layer_min_chars() -> int:
     Echoes the crawler's existing 200-char ``thin_content`` heuristic.
     """
     return _int_env("DOCPARSE_TEXT_LAYER_MIN_CHARS", 100)
+
+
+def soffice_binary() -> str:
+    """Explicit path to the LibreOffice binary; '' means auto-discover.
+
+    LibreOffice is a hard dependency of the deck path but it is a system
+    package, not a Python one, so no installer we ship puts it on PATH. It
+    routinely is not on PATH on Windows at all. This is the escape hatch;
+    ``slides.find_soffice`` owns the fallback search.
+    """
+    val = os.getenv("SOFFICE_BINARY")
+    return val.strip() if val else ""
+
+
+def soffice_timeout() -> int:
+    """Seconds a single deck conversion may take before the child is killed.
+
+    Same reasoning as VISION_TIMEOUT: a hung soffice would otherwise block an
+    upload request indefinitely, and this converts that into one clean
+    ConversionFailed. 120s is generous — a 40-slide deck converts in a few
+    seconds — because the cost of clipping a merely slow conversion is a
+    rejected upload, while the cost of the ceiling being loose is bounded.
+    """
+    return _int_env("SOFFICE_TIMEOUT", 120)

@@ -22,6 +22,8 @@ _ALL_VARS = (
     "DOCPARSE_MAX_PAGES",
     "DOCPARSE_CONCURRENCY",
     "DOCPARSE_TEXT_LAYER_MIN_CHARS",
+    "SOFFICE_BINARY",
+    "SOFFICE_TIMEOUT",
 )
 
 
@@ -135,3 +137,28 @@ def test_base_url_is_reexported_from_rag_config():
 def test_tuning_constants_are_module_constants():
     assert config.TEMPERATURE == 0.1
     assert config.MAX_TOKENS == 2048
+
+
+# ── LibreOffice ─────────────────────────────────────────────────────────────
+
+
+def test_soffice_binary_defaults_to_empty(monkeypatch):
+    """Blank means auto-discover; slides.find_soffice owns the search order."""
+    monkeypatch.delenv("SOFFICE_BINARY", raising=False)
+    assert config.soffice_binary() == ""
+
+
+def test_soffice_binary_reads_the_env(monkeypatch):
+    monkeypatch.setenv("SOFFICE_BINARY", "/opt/libreoffice/program/soffice")
+    assert config.soffice_binary() == "/opt/libreoffice/program/soffice"
+
+
+def test_soffice_timeout_defaults_to_120(monkeypatch):
+    monkeypatch.delenv("SOFFICE_TIMEOUT", raising=False)
+    assert config.soffice_timeout() == 120
+
+
+def test_soffice_timeout_falls_back_on_garbage(monkeypatch):
+    """A typo'd .env must not raise inside an upload request."""
+    monkeypatch.setenv("SOFFICE_TIMEOUT", "two minutes")
+    assert config.soffice_timeout() == 120

@@ -5,6 +5,7 @@ Layout::
     <UPLOAD_DIR>/<session_id>/<upload_id>/
         meta.json          filename + sha256
         <sanitised name>   the uploaded bytes
+        converted.pdf      decks only: the LibreOffice-derived PDF (slides.py)
         transcription.md   the hop-1 artifact
 
 Session scoping is a boundary, not tidiness: one user must not reach another's
@@ -63,7 +64,15 @@ _TRANSCRIPTION = "transcription.md"
 # Names the pipeline owns inside an upload directory. An upload may not take
 # one — see _safe_filename. Compared casefolded because the store runs on
 # Windows too, where "Meta.JSON" is the same file.
-_RESERVED_NAMES = frozenset({_META.casefold(), _TRANSCRIPTION.casefold()})
+#
+# converted.pdf joined the set when decks landed. A .pptx uploaded under that
+# name would be its own conversion cache: ensure_pdf's "cached and non-empty"
+# check would hand the raw zip back as the derived PDF, and open_document would
+# reject a perfectly good deck as an unsupported file. Not corrupting, but
+# wrong, and cheaper to exclude here than to special-case in slides.py.
+_RESERVED_NAMES = frozenset(
+    {_META.casefold(), _TRANSCRIPTION.casefold(), "converted.pdf"}
+)
 
 # Ids are ours (uuid4 hex) or the caller's session id, but both arrive back
 # over HTTP before being joined onto a path. Allowlist, never blocklist.

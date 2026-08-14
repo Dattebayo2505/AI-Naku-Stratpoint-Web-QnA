@@ -42,12 +42,19 @@ NVIDIA_VISION_API_KEY=
 #   DOCPARSE_FIGURE_PASS_NOVELTY        0.10
 #   DOCPARSE_FIGURE_PASS_MIN_NOVEL_WORDS 3   (keeps a reply the ratio would dilute)
 #   DOCPARSE_FIGURE_PASS_MIN_TEXT_CHARS 200
+#   SOFFICE_BINARY                (blank = auto-discover soffice/libreoffice on PATH)
+#   SOFFICE_TIMEOUT               120  (seconds a single .pptx conversion may take)
+# LibreOffice is a REQUIRED system package for .pptx uploads; it is not a
+# Python dependency, so no installer here puts it on PATH. On Windows it
+# usually is not on PATH at all — set SOFFICE_BINARY there.
 UPLOAD_DIR=
 UPLOAD_TTL_SECONDS=
 UPLOAD_MAX_BYTES=
 DOCPARSE_MAX_PAGES=
 DOCPARSE_CONCURRENCY=
 DOCPARSE_TEXT_LAYER_MIN_CHARS=
+SOFFICE_BINARY=
+SOFFICE_TIMEOUT=
 DOCPARSE_FIGURE_PASS_MAX_PAGES=
 DOCPARSE_FIGURE_PASS_NOVELTY=
 DOCPARSE_FIGURE_PASS_MIN_NOVEL_WORDS=
