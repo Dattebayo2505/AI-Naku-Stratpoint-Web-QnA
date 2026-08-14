@@ -537,7 +537,6 @@
       </div>
       <div class="quote-meta-box">
         <div class="quote-type-badge">Project Proposal</div>
-        <div class="quote-no">{{ quote_number }}</div>
         <div class="quote-dates">Date: {{ quote_date | date_format }} &bull; Valid: {{ valid_until | date_format }}</div>
       </div>
     </header>
@@ -625,7 +624,7 @@
 
     <!-- Page 1 Navigation Footer -->
     <div class="page-footer-nav">
-      <span>{{ company_name }} &bull; Proposal ID {{ quote_number }}</span>
+      <span>{{ company_name }}</span>
       <span>Page 1 of 2 &bull; Continued on Page 2 &rarr;</span>
     </div>
 
@@ -656,7 +655,6 @@
       </div>
       <div class="quote-meta-box">
         <div class="quote-type-badge">Page 2 of 2</div>
-        <div class="quote-no-sm">{{ quote_number }}</div>
       </div>
     </header>
 
@@ -701,7 +699,7 @@
 
 
     <div class="footer-bottom">
-      Issued by {{ company_name }} &bull; Proposal ID {{ quote_number }} &bull; Page 2 of 2
+      Issued by {{ company_name }} &bull; Page 2 of 2
     </div>
 
   </div>
