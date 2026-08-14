@@ -75,8 +75,8 @@ def test_estimate_cost_and_timeline_dynamic_phases_large_project():
     assert "Launch" in res.phase_timeline[5].phase_name
 
 
-def test_estimate_cost_and_timeline_uncapped_phases():
-    """5 features dynamically scale to 7 phases with zero maximum cap."""
+def test_estimate_cost_and_timeline_thematic_chunking():
+    """5 features dynamically scale to 5 phases under Standard complexity cap (max 6)."""
     inp = EstimationInput(
         features=["Ad Campaign", "Video Ads", "Social Media", "Search Engine Marketing", "Retargeting Analytics"],
         target_platform=["Web"],
@@ -85,9 +85,31 @@ def test_estimate_cost_and_timeline_uncapped_phases():
     )
     res = tools.estimate_cost_and_timeline(inp)
     assert res.estimated_weeks == 10.0
-    assert len(res.phase_timeline) == 7
+    assert len(res.phase_timeline) <= 6
     assert "Discovery" in res.phase_timeline[0].phase_name
-    assert "Launch" in res.phase_timeline[6].phase_name
+    assert "Launch" in res.phase_timeline[-1].phase_name
+
+
+def test_phase_limit_hard_project():
+    """50 features with complexity='hard' are capped at <= 9 phases."""
+    features = [f"Feature {i}" for i in range(1, 51)]  # 50 features
+    phases = tools._build_dynamic_phases(features, weeks=16.0, complexity="hard")
+    assert len(phases) <= 9, f"Expected <= 9 phases for Hard, got {len(phases)}"
+
+
+def test_phase_limit_standard_project():
+    """14 features with complexity='standard' are capped at <= 6 phases."""
+    features = [f"Feature {i}" for i in range(1, 15)]  # 14 features
+    phases = tools._build_dynamic_phases(features, weeks=8.0, complexity="standard")
+    assert len(phases) <= 6, f"Expected <= 6 phases for Standard, got {len(phases)}"
+
+
+def test_phase_limit_easy_project():
+    """4 features with complexity='easy' are capped at <= 4 phases."""
+    features = [f"Feature {i}" for i in range(1, 5)]  # 4 features
+    phases = tools._build_dynamic_phases(features, weeks=4.0, complexity="easy")
+    assert len(phases) <= 4, f"Expected <= 4 phases for Easy, got {len(phases)}"
+
 
 
 def test_extracted_requirements_category_schema():

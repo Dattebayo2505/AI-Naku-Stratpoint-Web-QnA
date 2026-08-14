@@ -23,6 +23,7 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -452,123 +453,15 @@ def read_brief(
     return f"{' '.join(header)}:\n\n{body}"
 
 
-def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any]) -> EstimationResult:
-    """Compute estimated project cost (USD), timeline in weeks, role breakdown, and phase roadmap from extracted requirements.
+MAX_PHASE_CAPS = {
+    "easy": 4,
+    "low": 4,
+    "standard": 6,
+    "medium": 6,
+    "hard": 9,
+    "high": 9,
+}
 
-    # TODO(teammate - scoping_calculator): replace stub body with real calculator implementation (hardcoded rules for website complexity, QA managers, dev roles)
-
-    Args:
-        input_data: Scope details or EstimationInput model/dict.
-
-    Returns:
-        EstimationResult Pydantic model containing total cost, timeline in weeks, role breakdown, and phase roadmap.
-    """
-    # ==========================================================================
-    # SKELETON STUB IMPLEMENTATION FOR SCOPING CALCULATOR
-    # ==========================================================================
-    # Teammate Implementation Seam:
-    # Replace the skeleton stub logic below with your calculator rules when ready.
-    #
-    # Example Teammate Calculator Logic (Draft / Placeholder):
-    #   if payload.complexity in ("simple", "low"):
-    #       qa_managers = 1
-    #       devs = 2
-    #       weeks = 4.0
-    #   elif payload.complexity in ("complex", "high"):
-    #       qa_managers = 2
-    #       devs = 4
-    #       weeks = 12.0
-    # ==========================================================================
-
-    if isinstance(input_data, EstimationInput):
-        payload = input_data
-    elif isinstance(input_data, dict):
-        payload = EstimationInput.model_validate(input_data)
-    else:
-        d = _parse_input_dict_or_str(input_data)
-        features = d.get("features", ["User Authentication", "Product Catalog", "Payment Gateway"])
-        if isinstance(features, str):
-            features = [features]
-        payload = EstimationInput(
-            features=features,
-            target_platform=d.get("target_platform", ["Web", "Mobile"]),
-            complexity=d.get("complexity", "medium"),
-            timeline_weeks=d.get("timeline_weeks"),
-            target_launch_date=d.get("target_launch_date"),
-            custom_phases=d.get("custom_phases") or d.get("phases") or d.get("phase_timeline"),
-        )
-
-    # Detect target currency and tech stack hints from captured session requirements / input payload
-    captured = _proposal_sink.get()
-    target_currency = "USD"
-    if captured and captured.requirements and captured.requirements.currency_code:
-        target_currency = captured.requirements.currency_code
-
-    tech_hints = list(payload.features) + list(payload.target_platform)
-
-    if payload.timeline_weeks and float(payload.timeline_weeks) > 0:
-        weeks = round(float(payload.timeline_weeks), 1)
-    else:
-        num_features = max(1, len(payload.features))
-        complexity_mult = 1.2 if payload.complexity in ("high", "complex") else (0.8 if payload.complexity in ("low", "simple") else 1.0)
-        weeks = round((4.0 + num_features * 1.3) * complexity_mult, 1)
-
-    # Handbook.md rate lookup per role adjusted by tech stack and target currency
-    tech_lead_rate, _ = calculate_role_rate("Tech Lead / Solutions Architect", target_currency=target_currency, tech_stack_hints=tech_hints)
-    engineer_rate, _ = calculate_role_rate("Senior Fullstack Engineer", target_currency=target_currency, tech_stack_hints=tech_hints)
-    qa_rate, _ = calculate_role_rate("QA Automation Manager", target_currency=target_currency, tech_stack_hints=tech_hints)
-    designer_rate, _ = calculate_role_rate("UI/UX Designer", target_currency=target_currency, tech_stack_hints=tech_hints)
-
-    r1_rate = float(tech_lead_rate)
-    r2_rate = float(engineer_rate)
-    r3_rate = float(qa_rate)
-    r4_rate = float(designer_rate)
-
-    roles = [
-        RoleBreakdownItem(
-            role="Tech Lead / Solutions Architect",
-            estimated_hours=weeks * 15,
-            hourly_rate=r1_rate,
-            total_cost=round(weeks * 15 * r1_rate, 2),
-        ),
-        RoleBreakdownItem(
-            role="Senior Fullstack Engineer",
-            estimated_hours=weeks * 30,
-            hourly_rate=r2_rate,
-            total_cost=round(weeks * 30 * r2_rate, 2),
-        ),
-        RoleBreakdownItem(
-            role="QA Automation Manager",
-            estimated_hours=weeks * 15,
-            hourly_rate=r3_rate,
-            total_cost=round(weeks * 15 * r3_rate, 2),
-        ),
-        RoleBreakdownItem(
-            role="UI/UX Designer",
-            estimated_hours=weeks * 10,
-            hourly_rate=r4_rate,
-            total_cost=round(weeks * 10 * r4_rate, 2),
-        ),
-    ]
-
-    # Category-specific handbook costing additions (Cloud, AI/ML, Data, Security, Licenses)
-    extra_costings = get_category_costings(
-        features=payload.features,
-        target_platform=payload.target_platform,
-        weeks=weeks,
-        target_currency=target_currency,
-    )
-    for c_item in extra_costings:
-        roles.append(
-            RoleBreakdownItem(
-                role=c_item["role"],
-                estimated_hours=c_item["estimated_hours"],
-                hourly_rate=c_item["hourly_rate"],
-                total_cost=c_item["total_cost"],
-            )
-        )
-
-    total_cost = round(sum(r.total_cost for r in roles), 2)
 
 def _clean_feature_list(features: list[str]) -> list[str]:
     """Clean raw feature strings into concise, readable feature names."""
@@ -592,31 +485,36 @@ def _clean_feature_list(features: list[str]) -> list[str]:
     return cleaned or ["Core Platform Features"]
 
 
-def _build_dynamic_phases(features: list[str], weeks: float) -> list[PhaseTimelineItem]:
-    """Build dynamic, un-capped domain-specific roadmap phases based on feature list and timeline."""
+def _build_dynamic_phases(features: list[str], weeks: float, complexity: str = "standard") -> list[PhaseTimelineItem]:
+    """Build dynamic domain-specific roadmap phases with strict complexity limits and thematic feature chunking."""
     cleaned_feats = _clean_feature_list(features)
     n = len(cleaned_feats)
 
+    comp_key = (complexity or "standard").strip().lower()
+    max_allowed = MAX_PHASE_CAPS.get(comp_key, 6)
+
     # For rapid/short projects with <= 2 features
-    if n <= 2 and weeks <= 3.5:
+    if n <= 2 and weeks <= 4.0:
         feat_summary = ", ".join(cleaned_feats[:2])
         return [
             PhaseTimelineItem(
                 phase_name="Phase 1: Discovery & Rapid Implementation",
-                duration_weeks=round(weeks * 0.60, 1),
+                duration_weeks=round(weeks * 0.50, 1),
                 milestones=["Architecture & Specs", f"Core Deliverables: {feat_summary}"],
             ),
             PhaseTimelineItem(
                 phase_name="Phase 2: QA, Acceptance & Deployment",
-                duration_weeks=round(weeks * 0.40, 1),
+                duration_weeks=round(weeks * 0.50, 1),
                 milestones=["End-to-End Testing", "Production Launch & Handoff"],
             ),
         ]
 
-    # Generate Phase 1 (Discovery), a dedicated Phase for each feature, and Final Phase (QA & Launch)
-    # Completely un-capped: scales to any number of features in the uploaded document!
+    # Dev budget is total cap minus 2 fixed anchor phases (Discovery & Launch)
+    dev_budget = max(1, max_allowed - 2)
+
     phases: list[PhaseTimelineItem] = []
 
+    # Phase 1: Discovery
     p1_duration = round(max(0.5, weeks * 0.15), 1)
     phases.append(
         PhaseTimelineItem(
@@ -626,21 +524,20 @@ def _build_dynamic_phases(features: list[str], weeks: float) -> list[PhaseTimeli
         )
     )
 
-    dev_budget_weeks = max(1.0, weeks * 0.70)
-    if n > 6:
-        chunk_size = 2
-        feat_chunks = [cleaned_feats[i:i + chunk_size] for i in range(0, n, chunk_size)]
-    else:
-        feat_chunks = [[f] for f in cleaned_feats]
+    # Calculate features per dev phase to respect dev_budget
+    chunk_size = max(1, math.ceil(n / dev_budget))
+    feat_chunks = [cleaned_feats[i:i + chunk_size] for i in range(0, n, chunk_size)]
 
-    num_mid_phases = len(feat_chunks)
-    per_phase_weeks = round(max(0.5, dev_budget_weeks / num_mid_phases), 1)
+    dev_budget_weeks = max(1.0, weeks * 0.70)
+    per_phase_weeks = round(max(0.5, dev_budget_weeks / max(1, len(feat_chunks))), 1)
 
     for idx, chunk in enumerate(feat_chunks, start=2):
-        chunk_title = " & ".join(chunk)
-        if len(chunk_title) > 40:
-            chunk_title = chunk_title[:37].rstrip() + "..."
-        milestone_items = [f"Deliverable: {item}" for item in chunk]
+        chunk_title = " & ".join(chunk[:2])
+        if len(chunk) > 2:
+            chunk_title += f" (+{len(chunk)-2} more)"
+        if len(chunk_title) > 45:
+            chunk_title = chunk_title[:42].rstrip() + "..."
+        milestone_items = [f"Deliverable: {item}" for item in chunk[:4]]
         phases.append(
             PhaseTimelineItem(
                 phase_name=f"Phase {idx}: Development — {chunk_title}",
@@ -649,6 +546,7 @@ def _build_dynamic_phases(features: list[str], weeks: float) -> list[PhaseTimeli
             )
         )
 
+    # Final Phase: QA & Launch
     p_final_num = len(phases) + 1
     p_final_duration = round(max(0.5, weeks * 0.15), 1)
     phases.append(
@@ -658,6 +556,17 @@ def _build_dynamic_phases(features: list[str], weeks: float) -> list[PhaseTimeli
             milestones=["End-to-End QA Regression Testing", "Security Audit & Performance Optimization", "Production Deployment & Handoff"],
         )
     )
+
+    # Hard clamp post-processor fallback loop
+    while len(phases) > max_allowed:
+        p_a = phases[1]
+        p_b = phases[2]
+        merged = PhaseTimelineItem(
+            phase_name=p_a.phase_name,
+            duration_weeks=round(p_a.duration_weeks + p_b.duration_weeks, 1),
+            milestones=p_a.milestones + p_b.milestones,
+        )
+        phases = [phases[0]] + [merged] + phases[3:]
 
     return phases
 
@@ -778,7 +687,7 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
                 phases.append(PhaseTimelineItem(phase_name=p_name, duration_weeks=p_dur, milestones=p_m))
 
     if not phases:
-        phases = _build_dynamic_phases(payload.features, weeks)
+        phases = _build_dynamic_phases(payload.features, weeks, payload.complexity)
 
 
 
