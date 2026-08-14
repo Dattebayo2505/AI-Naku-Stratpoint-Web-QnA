@@ -485,6 +485,20 @@ def _clean_feature_list(features: list[str]) -> list[str]:
     return cleaned or ["Core Platform Features"]
 
 
+def _clamp_phases(phases: list[PhaseTimelineItem], max_allowed: int) -> list[PhaseTimelineItem]:
+    """Iteratively merge adjacent development phases until len(phases) <= max_allowed."""
+    while len(phases) > max_allowed and len(phases) > 2:
+        p_a = phases[1]
+        p_b = phases[2]
+        merged = PhaseTimelineItem(
+            phase_name=p_a.phase_name,
+            duration_weeks=round(p_a.duration_weeks + p_b.duration_weeks, 1),
+            milestones=p_a.milestones + p_b.milestones,
+        )
+        phases = [phases[0]] + [merged] + phases[3:]
+    return phases
+
+
 def _build_dynamic_phases(features: list[str], weeks: float, complexity: str = "standard") -> list[PhaseTimelineItem]:
     """Build dynamic domain-specific roadmap phases with strict complexity limits and thematic feature chunking."""
     cleaned_feats = _clean_feature_list(features)
@@ -555,19 +569,7 @@ def _build_dynamic_phases(features: list[str], weeks: float, complexity: str = "
         )
     )
 
-    # Hard clamp post-processor fallback loop
-    while len(phases) > max_allowed:
-        p_a = phases[1]
-        p_b = phases[2]
-        merged = PhaseTimelineItem(
-            phase_name=p_a.phase_name,
-            duration_weeks=round(p_a.duration_weeks + p_b.duration_weeks, 1),
-            milestones=p_a.milestones + p_b.milestones,
-        )
-        phases = [phases[0]] + [merged] + phases[3:]
-
-    return phases
-
+    return _clamp_phases(phases, max_allowed)
 
 
 def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any]) -> EstimationResult:
@@ -599,6 +601,9 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
             target_launch_date=d.get("target_launch_date"),
             custom_phases=d.get("custom_phases") or d.get("phases") or d.get("phase_timeline"),
         )
+
+    comp_key = (payload.complexity or "standard").strip().lower()
+    max_allowed = MAX_PHASE_CAPS.get(comp_key, 6)
 
     # Detect target currency and tech stack hints from captured session requirements / input payload
     captured = _proposal_sink.get()
@@ -686,6 +691,8 @@ def estimate_cost_and_timeline(input_data: EstimationInput | str | dict[str, Any
 
     if not phases:
         phases = _build_dynamic_phases(payload.features, weeks, payload.complexity)
+    else:
+        phases = _clamp_phases(phases, max_allowed)
 
 
 

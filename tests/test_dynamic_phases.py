@@ -45,6 +45,23 @@ def test_estimate_cost_and_timeline_custom_phases():
     assert res.phase_timeline[3].phase_name == "Phase 4: Launch & Maintenance"
 
 
+def test_estimate_cost_and_timeline_custom_phases_clamped():
+    """Verify that 56 custom phases supplied by LLM are strictly clamped to max allowed phases (6 for standard)."""
+    custom = [
+        PhaseTimelineItem(phase_name=f"Phase {i}: Feature {i}", duration_weeks=0.5, milestones=[f"M{i}"])
+        for i in range(1, 57)
+    ]
+    inp = EstimationInput(
+        features=["Feature A"],
+        target_platform=["Web"],
+        complexity="standard",
+        timeline_weeks=12.0,
+        custom_phases=custom,
+    )
+    res = tools.estimate_cost_and_timeline(inp)
+    assert len(res.phase_timeline) <= 6, f"Expected <= 6 phases, got {len(res.phase_timeline)}"
+
+
 def test_estimate_cost_and_timeline_dynamic_phases_short_project():
     """Short projects (<= 3.5 weeks) dynamically generate 2 phases."""
     inp = EstimationInput(
