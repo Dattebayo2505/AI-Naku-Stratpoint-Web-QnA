@@ -34,6 +34,7 @@ __all__ = [
     "ensure_pdf",
     "find_soffice",
     "is_pptx",
+    "open_brief",
 ]
 
 # The part every Office Open XML presentation carries and no other OOXML
@@ -203,3 +204,20 @@ def ensure_pdf(path: str | Path, *, convert: Converter | None = None) -> Path:
         shutil.move(str(produced), str(cached))
 
     return cached
+
+
+def open_brief(path: str | Path, *, convert: Converter | None = None):
+    """Open any supported brief, converting a deck to PDF first.
+
+    The single entry point for the pipeline: ``/upload``'s page count and
+    ``transcribe_document`` both go through here, so neither has to know
+    whether a deck is involved and neither can forget the ``slides`` flag.
+
+    Imported here rather than at module scope only to keep the import graph
+    one-directional and obvious — ``render`` knows nothing about LibreOffice.
+    """
+    from stratpoint_rag.docparse import render
+
+    path = Path(path)
+    render_path = ensure_pdf(path, convert=convert)
+    return render.open_document(render_path, slides=render_path != path)

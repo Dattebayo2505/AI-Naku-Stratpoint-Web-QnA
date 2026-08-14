@@ -1141,3 +1141,65 @@ def test_one_stray_novel_word_does_not_clear_the_floor(scanned_pdf, serial):
     result = transcribe_document(scanned_pdf, vision=vision)
 
     assert "figure pass -->" not in result.markdown
+
+
+# ── decks: one image per slide, never a text extract ────────────────────────
+
+
+def _slide_deck(tmp_path, text="Migrate the platform to Kubernetes on AWS."):
+    """A .pptx whose fake conversion yields a PDF with a FAT text layer.
+
+    The text layer matters: it is what would send every slide down the free
+    text route if the slides kind were not forcing vision. A deck whose
+    converted PDF had no text would pass the test for the wrong reason.
+    """
+    import zipfile
+
+    import pymupdf
+
+    path = tmp_path / "clientdeck.pptx"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("ppt/presentation.xml", "<presentation/>")
+
+    def convert(src, outdir):
+        doc = pymupdf.open()
+        for n in (1, 2):
+            page = doc.new_page(width=720, height=405)
+            page.insert_text((40, 60), f"Slide {n}: {text}", fontsize=14)
+            page.insert_text((40, 90), text * 4, fontsize=10)
+        doc.save(outdir / f"{src.stem}.pdf")
+        doc.close()
+
+    return path, convert
+
+
+def test_every_slide_takes_the_vision_route(tmp_path, monkeypatch):
+    """No text extracts. Both slides carry a text layer far over
+    text_layer_min_chars and both must still be rasterized."""
+    from stratpoint_rag.docparse import slides as slides_mod
+
+    path, convert = _slide_deck(tmp_path)
+    monkeypatch.setattr(slides_mod, "_soffice_convert", convert)
+
+    result = transcribe_document(path, vision=FakeVisionClient())
+
+    assert result.pages_total == 2
+    assert result.pages_via_vision == 2
+
+
+def test_deck_provenance_names_the_original_not_the_derived_pdf(
+    tmp_path, monkeypatch
+):
+    """The visitor uploaded a .pptx. A hash of a PDF they never saw cannot be
+    checked against anything they hold."""
+    import hashlib
+
+    from stratpoint_rag.docparse import slides as slides_mod
+
+    path, convert = _slide_deck(tmp_path)
+    monkeypatch.setattr(slides_mod, "_soffice_convert", convert)
+
+    result = transcribe_document(path, vision=FakeVisionClient())
+
+    assert result.source_file == "clientdeck.pptx"
+    assert result.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()

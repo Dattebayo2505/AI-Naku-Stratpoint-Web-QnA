@@ -58,10 +58,12 @@ from stratpoint_rag.docparse.names import NameSuggestion, suggest_names
 from stratpoint_rag.docparse.nim import NimTextClient, NimVisionClient
 from stratpoint_rag.docparse.render import EncryptedDocument, UnsupportedDocument
 from stratpoint_rag.docparse.schema import ExtractedRequirements
+from stratpoint_rag.docparse.slides import ConversionFailed
 from stratpoint_rag.docparse.transcribe import transcribe_document
 
 __all__ = [
     "BriefRef",
+    "ConversionFailed",
     "EncryptedDocument",
     "ExtractedRequirements",
     "NameSuggestion",

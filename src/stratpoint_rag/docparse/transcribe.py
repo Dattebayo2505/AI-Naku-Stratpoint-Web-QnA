@@ -41,7 +41,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from stratpoint_rag import llmops
-from stratpoint_rag.docparse import config, prompts, render
+from stratpoint_rag.docparse import config, prompts, render, slides
 from stratpoint_rag.docparse.clients import VisionClient
 from stratpoint_rag.docparse.models import PageResult, TranscriptionResult
 from stratpoint_rag.docparse.nim import NimVisionClient
@@ -291,6 +291,15 @@ def _needs_vision(doc: render.Document, index: int, min_chars: int) -> bool:
     """
     if doc.kind == "image":
         return True  # no text layer exists to check
+    if doc.kind == "slides":
+        # A converted deck carries a PERFECT text layer — it is the real slide
+        # text, not OCR — so every slide would take the free text route and the
+        # deck feature would do nothing. That is the wrong trade here: a slide
+        # is mostly picture, and the architecture diagram on it holds
+        # constraints (on-prem, a named cloud, microservices) that exist
+        # nowhere in its words. The text layer is still read and handed to the
+        # worker, but only as the figure pass's novelty baseline.
+        return True
     if len(doc.page_text(index).strip()) < min_chars:
         return True
     # A page can carry both real text and a diagram; the diagram holds
@@ -503,7 +512,10 @@ def transcribe_document(
     sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
     min_chars = config.text_layer_min_chars()
 
-    with render.open_document(path) as doc:
+    # slides.open_brief, not render.open_document: a .pptx is converted to PDF
+    # first. sha256 and source_file above are read from the ORIGINAL upload, so
+    # the artifact names the file the visitor actually sent.
+    with slides.open_brief(path) as doc:
         pages_total = doc.page_count
         limit = min(pages_total, config.max_pages())
 

@@ -234,3 +234,35 @@ def test_find_soffice_raises_when_absent(monkeypatch):
     with pytest.raises(RuntimeError) as ex:
         slides.find_soffice()
     assert "LibreOffice" in str(ex.value)
+
+
+# ── the pipeline entry point ────────────────────────────────────────────────
+
+
+def test_open_brief_marks_a_converted_deck_as_slides(deck, monkeypatch):
+    """The whole feature turns on this flag: without it the converted PDF's
+    text layer sends every slide down the free text route."""
+    import pymupdf
+
+    def convert(src, outdir):
+        doc = pymupdf.open()
+        doc.new_page(width=720, height=405)
+        doc.save(outdir / f"{src.stem}.pdf")
+        doc.close()
+
+    with slides.open_brief(deck, convert=convert) as doc:
+        assert doc.kind == "slides"
+        assert doc.page_count == 1
+
+
+def test_open_brief_leaves_a_pdf_alone(tmp_path):
+    import pymupdf
+
+    path = tmp_path / "brief.pdf"
+    doc = pymupdf.open()
+    doc.new_page(width=595, height=842)
+    doc.save(path)
+    doc.close()
+
+    with slides.open_brief(path) as opened:
+        assert opened.kind == "pdf"
