@@ -46,25 +46,25 @@ def test_convert_currency_same_currency():
 def test_calculate_role_rate():
     rate_php, code_php = calculate_role_rate("Tech Lead / Solutions Architect", "PHP")
     assert code_php == "PHP"
-    assert rate_php == Decimal("3567.00")
+    assert rate_php == Decimal("2496.90")
 
     rate_usd, code_usd = calculate_role_rate("Tech Lead / Solutions Architect", "USD")
     assert code_usd == "USD"
-    assert rate_usd == Decimal("59.45")  # 3567 / 60 = 59.45
+    assert rate_usd == Decimal("41.62")  # 2496.90 / 60 = 41.615 -> 41.62
 
 
 def test_tech_stack_handbook_rate():
-    # Go Senior rate from handbook.md (₱3,567/hr PHP -> $59.45/hr USD)
+    # Go Senior rate from handbook.md (₱2,496.90/hr PHP -> $41.62/hr USD)
     rate_go, _ = calculate_role_rate("Senior Fullstack Engineer", "USD", tech_stack_hints=["Go Backend"])
-    assert rate_go == Decimal("59.45")
+    assert rate_go == Decimal("41.62")
 
-    # React Senior rate from handbook.md (₱2,813/hr PHP -> $46.88/hr USD)
+    # React Senior rate from handbook.md (₱1,969.10/hr PHP -> $32.82/hr USD)
     rate_react, _ = calculate_role_rate("Senior Fullstack Engineer", "USD", tech_stack_hints=["React SPA"])
-    assert rate_react == Decimal("46.88")
+    assert rate_react == Decimal("32.82")
 
-    # AI/ML Senior rate from handbook.md (₱3,625/hr PHP -> $60.42/hr USD)
+    # AI/ML Senior rate from handbook.md (₱2,537.50/hr PHP -> $42.29/hr USD)
     rate_ai, _ = calculate_role_rate("Senior Fullstack Engineer", "USD", tech_stack_hints=["AI Model Tuning"])
-    assert rate_ai == Decimal("60.42")
+    assert rate_ai == Decimal("42.29")
 
 
 def test_discrepancy_conversion_in_mapping():
@@ -124,18 +124,18 @@ def test_ordinary_words_do_not_trigger_a_stack_rate(hint):
     ``test_a_shared_stack_hint_does_not_override_a_non_engineering_role``.
     """
     rate, _ = calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=[hint])
-    assert rate == Decimal("2668.00")  # the role's own handbook rate
+    assert rate == Decimal("1867.60")  # the role's own handbook rate
 
 
 @pytest.mark.parametrize(
     "hint,expected",
     [
-        ("Go Backend", "3567.00"),
-        ("React SPA", "2813.00"),
-        ("AI Model Tuning", "3625.00"),
-        ("Next.js frontend", "3132.00"),
-        ("Python/Django API", "2987.00"),
-        ("Vue.js dashboard", "2668.00"),
+        ("Go Backend", "2496.90"),
+        ("React SPA", "1969.10"),
+        ("AI Model Tuning", "2537.50"),
+        ("Next.js frontend", "2192.40"),
+        ("Python/Django API", "2090.90"),
+        ("Vue.js dashboard", "1867.60"),
     ],
 )
 def test_real_stack_hints_still_win(hint, expected):
@@ -257,19 +257,19 @@ def test_an_undeclared_currency_survives_the_proposal_input_contract():
 def test_a_shared_stack_hint_does_not_override_a_non_engineering_role():
     hints = ["User login", "Product catalog", "Mobile"]
 
-    assert calculate_role_rate("QA Automation Manager", "PHP", tech_stack_hints=hints)[0] == Decimal("1856.00")
-    assert calculate_role_rate("UI/UX Designer", "PHP", tech_stack_hints=hints)[0] == Decimal("2100.00")
-    assert calculate_role_rate("Tech Lead / Solutions Architect", "PHP", tech_stack_hints=hints)[0] == Decimal("3567.00")
+    assert calculate_role_rate("QA Automation Manager", "PHP", tech_stack_hints=hints)[0] == Decimal("1299.20")
+    assert calculate_role_rate("UI/UX Designer", "PHP", tech_stack_hints=hints)[0] == Decimal("1470.00")
+    assert calculate_role_rate("Tech Lead / Solutions Architect", "PHP", tech_stack_hints=hints)[0] == Decimal("2496.90")
     # The engineer the "Mobile" hint is actually about still moves.
-    assert calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=hints)[0] == Decimal("2987.00")
+    assert calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=hints)[0] == Decimal("2090.90")
 
 
 @pytest.mark.parametrize(
     "hint,expected",
     [
-        ("Backend in Python.", "2987.00"),
-        ("Built on blockchain.", "3857.00"),
-        ("Frontend in React.", "2813.00"),
+        ("Backend in Python.", "2090.90"),
+        ("Built on blockchain.", "2699.90"),
+        ("Frontend in React.", "1969.10"),
     ],
 )
 def test_a_trailing_full_stop_does_not_hide_a_stack_token(hint, expected):
@@ -287,7 +287,7 @@ def test_the_first_matching_hint_wins_not_the_first_table_key():
         "PHP",
         tech_stack_hints=["React SPA dashboard", "Python reporting API"],
     )
-    assert rate == Decimal("2813.00")  # React — the first hint that matched
+    assert rate == Decimal("1969.10")  # React — the first hint that matched
 
 
 # ── category costings match whole words, and invent no products ────────────

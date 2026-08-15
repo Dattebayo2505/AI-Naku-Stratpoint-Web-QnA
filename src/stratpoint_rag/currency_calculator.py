@@ -19,42 +19,42 @@ DEFAULT_EXCHANGE_RATE: Decimal = Decimal("60.0")
 
 # Standard Handbook PHP rates per hour by role & tech stack (Handbook Section 1.1)
 HANDBOOK_PHP_RATES: dict[str, Decimal] = {
-    "Tech Lead / Solutions Architect": Decimal("3567.00"),  # ₱3,190 - ₱3,944/hr
-    "Solution Architect": Decimal("3915.00"),               # ₱3,480 - ₱4,350/hr
-    "Senior Fullstack Engineer": Decimal("2987.00"),        # ₱2,610 - ₱3,364/hr
-    "Senior Frontend Developer": Decimal("2668.00"),        # ₱2,320 - ₱3,016/hr
-    "Senior Backend Developer": Decimal("2813.00"),         # ₱2,436 - ₱3,190/hr
-    "QA Automation Manager": Decimal("1856.00"),            # ₱1,624 - ₱2,436/hr
-    "UI/UX Designer": Decimal("2100.00"),                   # ₱1,740 - ₱2,436/hr
+    "Tech Lead / Solutions Architect": Decimal("2496.90"),  # ₱2,233 - ₱2,760.80/hr
+    "Solution Architect": Decimal("2740.50"),               # ₱2,436 - ₱3,045/hr
+    "Senior Fullstack Engineer": Decimal("2090.90"),        # ₱1,827 - ₱2,354.80/hr
+    "Senior Frontend Developer": Decimal("1867.60"),        # ₱1,624 - ₱2,111.20/hr
+    "Senior Backend Developer": Decimal("1969.10"),         # ₱1,705.20 - ₱2,233/hr
+    "QA Automation Manager": Decimal("1299.20"),            # ₱1,136.80 - ₱1,705.20/hr
+    "UI/UX Designer": Decimal("1470.00"),                   # ₱1,218 - ₱1,705.20/hr
 }
 
 # Tech-Stack Specific Senior Rates from Handbook Section 1.1
 HANDBOOK_STACK_RATES_PHP: dict[str, Decimal] = {
-    "go": Decimal("3567.00"),          # Go: ₱3,190 – ₱3,944/hr
-    "golang": Decimal("3567.00"),
-    "ai": Decimal("3625.00"),          # Senior AI/ML: ₱3,190 – ₱4,060/hr
-    "ml": Decimal("3625.00"),
-    "blockchain": Decimal("3857.00"),  # Senior Blockchain: ₱3,364 – ₱4,350/hr
-    "security": Decimal("3480.00"),    # Senior Security: ₱3,016 – ₱3,944/hr
-    "mobile": Decimal("2987.00"),      # Senior Mobile (iOS/Android): ₱2,610 – ₱3,364/hr
-    "ios": Decimal("2987.00"),
-    "android": Decimal("2987.00"),
-    "next.js": Decimal("3132.00"),     # Next.js/Nuxt: ₱2,784 – ₱3,480/hr
-    "nuxt": Decimal("3132.00"),
-    "python": Decimal("2987.00"),      # Python: ₱2,610 – ₱3,364/hr
-    "angular": Decimal("2987.00"),     # Angular: ₱2,610 – ₱3,364/hr
-    "react": Decimal("2813.00"),       # React: ₱2,436 – ₱3,190/hr
-    "node.js": Decimal("2813.00"),     # Node.js: ₱2,436 – ₱3,190/hr
-    "vue.js": Decimal("2668.00"),      # Vue.js: ₱2,320 – ₱3,016/hr
-    "php": Decimal("2494.00"),         # PHP/Laravel: ₱2,204 – ₱2,784/hr
-    "laravel": Decimal("2494.00"),
+    "go": Decimal("2496.90"),          # Go: ₱2,233 – ₱2,760.80/hr
+    "golang": Decimal("2496.90"),
+    "ai": Decimal("2537.50"),          # Senior AI/ML: ₱2,233 – ₱2,842/hr
+    "ml": Decimal("2537.50"),
+    "blockchain": Decimal("2699.90"),  # Senior Blockchain: ₱2,354.80 – ₱3,045/hr
+    "security": Decimal("2436.00"),    # Senior Security: ₱2,111.20 – ₱2,760.80/hr
+    "mobile": Decimal("2090.90"),      # Senior Mobile (iOS/Android): ₱1,827 – ₱2,354.80/hr
+    "ios": Decimal("2090.90"),
+    "android": Decimal("2090.90"),
+    "next.js": Decimal("2192.40"),     # Next.js/Nuxt: ₱1,948.80 – ₱2,436/hr
+    "nuxt": Decimal("2192.40"),
+    "python": Decimal("2090.90"),      # Python: ₱1,827 – ₱2,354.80/hr
+    "angular": Decimal("2090.90"),     # Angular: ₱1,827 – ₱2,354.80/hr
+    "react": Decimal("1969.10"),       # React: ₱1,705.20 – ₱2,233/hr
+    "node.js": Decimal("1969.10"),     # Node.js: ₱1,705.20 – ₱2,233/hr
+    "vue.js": Decimal("1867.60"),      # Vue.js: ₱1,624 – ₱2,111.20/hr
+    "php": Decimal("1745.80"),         # PHP/Laravel: ₱1,542.80 – ₱1,948.80/hr
+    "laravel": Decimal("1745.80"),
 }
 
 # Software & License Annual Prices in PHP from Handbook Section 1.2
 HANDBOOK_LICENSE_PHP_ANNUAL: dict[str, Decimal] = {
-    "google_workspace_starter": Decimal("6467.64"),
-    "google_workspace_standard": Decimal("15872.04"),
-    "google_workspace_plus": Decimal("20579.64"),
+    "google_workspace_starter": Decimal("4527.35"),
+    "google_workspace_standard": Decimal("11110.43"),
+    "google_workspace_plus": Decimal("14405.75"),
     "gemini_standard": Decimal("23132.04"),
     "gemini_plus": Decimal("38364.84"),
     "google_ai_pro": Decimal("12574.81"),
@@ -233,7 +233,7 @@ def lookup_handbook_rate(
         php_rate = _stack_rate_for(tech_stack_hints)
 
     if not php_rate:
-        php_rate = HANDBOOK_PHP_RATES.get(role_name, Decimal("2987.00"))
+        php_rate = HANDBOOK_PHP_RATES.get(role_name, Decimal("2090.90"))
 
     if target_c == "PHP":
         return php_rate
@@ -294,7 +294,7 @@ def get_category_costings(
     # 1. Cloud & Infrastructure Category (Handbook Section 3)
     has_cloud = has("cloud", "aws", "gcp", "azure", "devops", "infrastructure", "kubernetes", "docker", "sre", "storage")
     if has_cloud:
-        devops_php = Decimal("2610.00")  # Senior DevOps / SRE: ₱2,610/hr
+        devops_php = Decimal("1827.00")  # Senior DevOps / SRE: ₱1,827/hr
         devops_rate = float(convert_currency(devops_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(devops_php)
         hours = max(15.0, round(weeks * 12.0, 1))
         additions.append({
@@ -305,7 +305,7 @@ def get_category_costings(
         })
 
         if has("storage", "10tb", "cloud storage", "backup"):
-            storage_php = Decimal("132908.04")  # Handbook Section 3: ₱132,908.04/user/yr
+            storage_php = Decimal("93035.63")  # Handbook Section 3: ₱93,035.63/user/yr
             storage_cost = float(convert_currency(storage_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(storage_php)
             additions.append({
                 "role": "Cloud Storage & Backup License Add-on (Annual)",
@@ -317,7 +317,7 @@ def get_category_costings(
     # 2. Artificial Intelligence Category (Handbook Section 5)
     has_ai = has("ai", "ml", "machine learning", "llm", "rag", "model", "gemini", "ai pro", "gpt")
     if has_ai:
-        ai_php = Decimal("3625.00")  # Senior AI/ML Engineer: ₱3,625/hr
+        ai_php = Decimal("2537.50")  # Senior AI/ML Engineer: ₱2,537.50/hr
         ai_rate = float(convert_currency(ai_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(ai_php)
         hours = max(20.0, round(weeks * 15.0, 1))
         additions.append({
@@ -333,7 +333,7 @@ def get_category_costings(
         # out of the two contracts, or a documented constant. Billing every
         # AI-flagged brief for Gemini invented one at PHP 23,132.04/yr.
         if has("gemini", "google ai", "ai pro"):
-            gemini_php = Decimal("23132.04")  # Gemini Standard License: ₱23,132.04/yr
+            gemini_php = Decimal("23132.04")  # Gemini Standard License: ₱23,132.04/yr (Unchanged)
             gemini_cost = float(convert_currency(gemini_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(gemini_php)
             additions.append({
                 "role": "Gemini Enterprise AI Software License (Annual)",
@@ -345,7 +345,7 @@ def get_category_costings(
     # 3. Data Services Category (Handbook Section 4)
     has_data = has("data", "etl", "analytics", "pipeline", "data engineering", "data science")
     if has_data and not has_ai:
-        data_php = Decimal("2610.00")  # Python Data Developer: ₱2,610/hr
+        data_php = Decimal("1827.00")  # Python Data Developer: ₱1,827/hr
         data_rate = float(convert_currency(data_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(data_php)
         hours = max(15.0, round(weeks * 10.0, 1))
         additions.append({
@@ -358,7 +358,7 @@ def get_category_costings(
     # 4. Security & Audit Category (Handbook Section 1.1)
     has_security = has("security", "audit", "compliance", "gdpr", "penetration", "encryption")
     if has_security:
-        sec_php = Decimal("3480.00")  # Security Engineer: ₱3,480/hr
+        sec_php = Decimal("2436.00")  # Security Engineer: ₱2,436/hr
         sec_rate = float(convert_currency(sec_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(sec_php)
         hours = max(10.0, round(weeks * 8.0, 1))
         additions.append({
@@ -371,7 +371,7 @@ def get_category_costings(
     # 5. Software & Workspace Licenses Category (Handbook Section 1.2)
     has_workspace = has("google workspace", "workspace license", "email license", "google frontline")
     if has_workspace:
-        gw_php = Decimal("15872.04")  # Google Workspace Standard: ₱15,872.04/yr
+        gw_php = Decimal("11110.43")  # Google Workspace Standard: ₱11,110.43/yr
         gw_cost = float(convert_currency(gw_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(gw_php)
         additions.append({
             "role": "Google Workspace Enterprise License (Annual)",
