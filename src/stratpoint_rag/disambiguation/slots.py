@@ -125,18 +125,18 @@ _TOPIC_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"pricing|cost|rate|fee|budget", re.IGNORECASE), "Pricing"),
     (re.compile(r"project|case.study|portfolio", re.IGNORECASE), "Projects"),
     (re.compile(r"career|job|hire|intern", re.IGNORECASE), "Careers"),
-    (re.compile(r"service", re.IGNORECASE), "Services Overview"),
-    (re.compile(r"overview|about|what\s+(?:is|are|does|do)|tell me|introduce|company", re.IGNORECASE), "General"),
+    (re.compile(r"service|offer|offering|capability|capabilities|solution|solutions|expertise|specialt|strength|portfolio|deliver|product|feature|stack", re.IGNORECASE), "Services Overview"),
+    (re.compile(r"overview|about|what\s+(?:is|are|does|do)|who\s+(?:is|are|was|were)|tell me|introduce|company|background|profile|summary", re.IGNORECASE), "General"),
     (re.compile(r"contact|email|phone|address|locat|office|reach|find", re.IGNORECASE), "Contact / Location"),
 ]
 
 _SERVICE_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"develop|engineering|coding|programming", re.IGNORECASE), "Development"),
+    (re.compile(r"develop|engineering|coding|programming|build|architecture", re.IGNORECASE), "Development"),
     (re.compile(r"consult|advisory|strategy", re.IGNORECASE), "Consulting"),
     (re.compile(r"design|ux|ui|prototype", re.IGNORECASE), "Design"),
     (re.compile(r"manage|support|maintenance", re.IGNORECASE), "Managed Services"),
     (re.compile(r"train|workshop|upskill", re.IGNORECASE), "Training"),
-    (re.compile(r"service", re.IGNORECASE), "Services"),
+    (re.compile(r"service|offer|offering|capability|capabilities|solution|solutions", re.IGNORECASE), "Services"),
 ]
 
 _PROJECT_PATTERNS: list[tuple[re.Pattern, str]] = [

@@ -78,6 +78,8 @@ STRATPOINT_KEYWORDS = {
     "react", "angular", "vue", "python", "javascript", "typescript",
     "database", "devops", "ci/cd", "agile", "scrum", "qa", "testing",
     "docker", "kubernetes", "ml", "ai", "data", "analytics",
+    "offer", "offers", "offering", "offerings", "capability", "capabilities",
+    "solution", "solutions", "feature", "features", "strength", "strengths",
 }
 
 

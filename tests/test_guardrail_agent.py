@@ -102,6 +102,36 @@ def test_guardrail_agent_nemo_with_query(monkeypatch):
     assert "software development" in result.answer
 
 
+def test_guardrail_agent_list_offerings_query(monkeypatch):
+    """Regression: 'list 5 things that Stratpoint offers' should reach the RAG path
+    and not be stopped with 'Needed clarification: ask_stratpoint'."""
+    from stratpoint_rag.guardrails.schemas import GuardrailResult
+    from stratpoint_rag.rag.models import Chunk
+
+    class FakeNeMoPipeline:
+        def __init__(self, config=None):
+            pass
+        def run_input(self, user_input):
+            return user_input, [GuardrailResult(passed=True, action="allow")]
+        def run_output(self, response, source_chunks):
+            return response, [GuardrailResult(passed=True, action="allow")]
+
+    import stratpoint_rag.guardrails.nemo_guardrails as ng
+    monkeypatch.setattr(ng, "NeMoGuardrailPipeline", FakeNeMoPipeline)
+
+    import stratpoint_rag.agent.guardrail_agent as ga
+    chunks = [Chunk(id="c1", slug="dev", url="https://stratpoint.com/dev", title="Dev", text="Stratpoint offers 1. Cloud, 2. Web, 3. Mobile, 4. Data, 5. QA.")]
+    monkeypatch.setattr(
+        ga,
+        "answer_grounded",
+        lambda q, k=8, enable_reasoning=False: ("1. Cloud, 2. Web, 3. Mobile, 4. Data, 5. QA.", chunks, None, None),
+    )
+
+    result = run_with_guardrails("list 5 things that Stratpoint offers", use_nemo=True)
+    assert result.answer == "1. Cloud, 2. Web, 3. Mobile, 4. Data, 5. QA."
+    assert result.guardrail_reason != "Needed clarification: ask_stratpoint"
+
+
 def test_guardrail_agent_surfaces_grounding_metadata(monkeypatch):
     """RAG path carries is_grounded/confidence/citations to the UI debug panel."""
     from stratpoint_rag.guardrails.schemas import GuardrailResult

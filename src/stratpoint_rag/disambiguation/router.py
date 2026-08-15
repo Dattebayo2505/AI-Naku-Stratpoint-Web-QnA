@@ -20,23 +20,38 @@ _HARMFUL_RESPONSE = "I can't process that request. Please ask a question about S
 
 _DEFAULT_CLARIFY = "I'm not sure I understand. Could you tell me what you'd like to know about Stratpoint?"
 
-_QUESTION_PATTERN = re.compile(r"^(what|how|why|when|where|which|who|does|do|is|are|can|could|would)", re.IGNORECASE)
+_POLITENESS_PREFIX = r"(?:(?:please|kindly|can\s+you(?:\s+please)?|could\s+you(?:\s+please)?|would\s+you(?:\s+please)?|i\s+(?:want|would\s+like)\s+to\s+(?:know|see|ask|get|understand)|help\s+me\s+(?:to\s+)?(?:know|see|understand|find))\s+)*"
 
-# A substantive ask: a question, or an explicit request (esp. for a resource).
+_QUESTION_VERBS = (
+    r"what|how|why|when|where|which|who|whom|whose|"
+    r"does|do|did|is|are|was|were|can|could|would|should|will|shall|may|might|has|have|had|"
+    r"list|give|show|tell|explain|describe|summarize|summary|provide|name|outline|enumerate|"
+    r"detail|share|identify|present|state|mention|find|get|check|compare|recommend|suggest|"
+    r"walk|discuss|clarify"
+)
+
+_QUESTION_PATTERN = re.compile(
+    rf"^{_POLITENESS_PREFIX}(?:{_QUESTION_VERBS})\b",
+    re.IGNORECASE,
+)
+
+# A substantive ask: a question, or an explicit request (esp. for a resource or topic).
 # When present, a missing hardcoded-topic slot must NOT force a clarification —
 # the query is specific enough; let retrieval (RAG / find_resource) handle it.
 _REQUEST_PATTERN = re.compile(
     r"\b(document|pdf|one[- ]?pager|whitepaper|white\s*paper|brochure|guide|ebook|"
-    r"download|resource|report|send|share)\b",
+    r"download|resource|report|send|share|offer|offering|offerings|capability|capabilities|"
+    r"solution|solutions|service|services|pricing|cost|timeline|portfolio|case\s*stud(?:y|ies))\b",
     re.IGNORECASE,
 )
 
 
 def _is_specific_ask(user_input: str) -> bool:
+    cleaned = user_input.strip()
     return (
-        "?" in user_input
-        or bool(_QUESTION_PATTERN.search(user_input))
-        or bool(_REQUEST_PATTERN.search(user_input))
+        "?" in cleaned
+        or bool(_QUESTION_PATTERN.search(cleaned))
+        or bool(_REQUEST_PATTERN.search(cleaned))
     )
 
 
@@ -53,8 +68,7 @@ def route(
     intent_query = classify(user_input, conversation_context=context)
 
     if intent_query.confidence < 0.7 and intent_query.intent != IntentCategory.NEEDS_CLARIFICATION:
-        is_question = "?" in user_input or bool(_QUESTION_PATTERN.search(user_input))
-        if not is_question:
+        if not _is_specific_ask(user_input):
             intent_query.intent = IntentCategory.NEEDS_CLARIFICATION
 
     if intent_query.intent == IntentCategory.HARMFUL:

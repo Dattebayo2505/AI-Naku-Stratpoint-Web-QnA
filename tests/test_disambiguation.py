@@ -107,6 +107,30 @@ def test_router_resource_request_without_topic_pattern_proceeds():
     assert result.clarification_question is None
 
 
+def test_router_list_offerings_imperative_proceeds():
+    """Regression: 'list 5 things that Stratpoint offers' must proceed directly
+    to retrieval rather than triggering a clarification question."""
+    result = route("list 5 things that Stratpoint offers")
+    assert result.intent == IntentCategory.ASK_STRATPOINT
+    assert result.should_retrieve
+    assert result.clarification_question is None
+
+
+def test_router_imperative_verbs_proceed():
+    for q in [
+        "give me 3 reasons to choose Stratpoint",
+        "show me Stratpoint's main capabilities",
+        "tell me what Stratpoint offers",
+        "please explain Stratpoint services",
+        "summarize what Stratpoint does",
+        "enumerate Stratpoint solutions",
+    ]:
+        result = route(q)
+        assert result.intent == IntentCategory.ASK_STRATPOINT, f"Failed on: {q}"
+        assert result.should_retrieve, f"Failed on: {q}"
+        assert result.clarification_question is None, f"Failed on: {q}"
+
+
 def test_router_with_session_memory():
     mem = ConversationMemory(session_id="test")
     mem.add_turn("user", "What is OutSystems?")

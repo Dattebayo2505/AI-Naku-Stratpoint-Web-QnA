@@ -47,7 +47,9 @@ _STRATPOINT_KEYWORDS = [
     "agile", "scrum", "qa", "testing", "automation", "retail",
     "healthcare", "finance", "startup", "enterprise",
     "data", "analytics", "machine learning", "artificial intelligence",
-    "capstone", "stratmega", "integrated", "solutions",
+    "capstone", "stratmega", "integrated", "solutions", "solution",
+    "offer", "offers", "offering", "offerings", "capability", "capabilities",
+    "feature", "features", "strength", "strengths",
     "what do you do", "what do you", "who are you", "tell me about yourself",
     "what is this", "what is stratpoint",
     "where are you", "where is", "how do i", "contact", "location",
@@ -108,7 +110,15 @@ _DOCUMENT_REFERENCE = re.compile(
     re.IGNORECASE,
 )
 
-_QUESTION_STARTERS = ("what", "where", "when", "why", "how", "who", "which", "do", "does", "is", "are", "can", "could", "would", "should", "tell", "give", "show", "list", "explain", "describe")
+_QUESTION_STARTERS = (
+    "what", "where", "when", "why", "how", "who", "which", "whom", "whose",
+    "do", "does", "did", "is", "are", "was", "were",
+    "can", "could", "would", "should", "will", "shall", "may", "might",
+    "tell", "give", "show", "list", "explain", "describe", "summarize", "summary",
+    "provide", "name", "outline", "enumerate", "detail", "share", "identify",
+    "present", "state", "mention", "help", "find", "get", "check", "compare",
+    "recommend", "suggest", "walk", "discuss", "clarify",
+)
 
 _CLASSIFIER_SYSTEM_PROMPT = (
     "You are a strict intent classifier for a chatbot about Stratpoint (stratpoint.com), "
@@ -230,7 +240,13 @@ def _heuristic_classify(user_input: str, context: str | None = None) -> IntentQu
             intent=IntentCategory.NEEDS_CLARIFICATION, confidence=0.55, reasoning="Input too short"
         )
 
-    if "?" in text or text.startswith(_QUESTION_STARTERS):
+    stripped = text
+    for prefix in ("please ", "kindly ", "can you please ", "could you please ", "would you please "):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix):].strip()
+            break
+
+    if "?" in text or text.startswith(_QUESTION_STARTERS) or stripped.startswith(_QUESTION_STARTERS):
         return IntentQuery(
             intent=IntentCategory.ASK_STRATPOINT, confidence=0.7, reasoning="Question — let RAG decide relevance"
         )
