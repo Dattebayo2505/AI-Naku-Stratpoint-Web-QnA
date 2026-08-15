@@ -14,7 +14,11 @@ class Citation(BaseModel):
 class GroundedAnswer(BaseModel):
     answer: str = Field(
         ...,
-        description="The grounded answer to the question using ONLY provided context. If is_grounded is false, explain what is missing.",
+        description=(
+            "The grounded answer in markdown format using ONLY provided context. "
+            "Follow any user formatting requests (e.g. bullet points, numbered lists) when specified. "
+            "If is_grounded is false, explain what is missing."
+        ),
     )
     citations: list[Citation] = Field(
         ..., description="List of source URLs and titles used to build the answer."

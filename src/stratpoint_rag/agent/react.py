@@ -281,8 +281,7 @@ def render_system_prompt(
         else "- Do NOT produce a cost, a timeline, a role breakdown, or a "
         "proposal PDF. The visitor did not ask for one; offer to build one only "
         "if it is genuinely useful, and wait for them to say yes.\n"
-        "- Match the length the visitor asked for. If they asked for two "
-        "sentences, give two sentences.\n"
+        "- Match the formatting and length the visitor asked for. If they asked for bullet points or a list, format the answer with bullet points. If they asked for two sentences, give two sentences.\n"
     )
 
     return (

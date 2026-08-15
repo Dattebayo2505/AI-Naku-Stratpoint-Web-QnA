@@ -34,3 +34,31 @@ def test_few_shot_json_examples_still_parse_against_schema():
                     payload = block[start : i + 1]
                     break
         GroundedAnswer.model_validate(json.loads(payload))
+
+
+def test_grounded_answer_supports_bullet_list_markdown():
+    bullet_text = "We offer:\n- Service A\n- Service B"
+    g = GroundedAnswer(answer=bullet_text, citations=[], is_grounded=True, confidence=1.0)
+    assert g.answer == bullet_text
+    serialized = g.model_dump_json()
+    deserialized = GroundedAnswer.model_validate_json(serialized)
+    assert deserialized.answer == bullet_text
+
+
+def test_system_prompts_include_formatting_instruction():
+    from stratpoint_rag.prompts.system_prompts import (
+        SYSTEM_PROMPT_V0_ZEROSHOT,
+        SYSTEM_PROMPT_V1_FEWSHOT,
+        SYSTEM_PROMPT_V2_COT,
+        SYSTEM_PROMPT_V3_ROLE_STRUCTURED,
+        SYSTEM_PROMPT_V4_COMBINED,
+    )
+    for prompt in (
+        SYSTEM_PROMPT_V0_ZEROSHOT,
+        SYSTEM_PROMPT_V1_FEWSHOT,
+        SYSTEM_PROMPT_V2_COT,
+        SYSTEM_PROMPT_V3_ROLE_STRUCTURED,
+        SYSTEM_PROMPT_V4_COMBINED,
+    ):
+        assert "format" in prompt.lower() or "bullet" in prompt.lower()
+

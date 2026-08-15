@@ -67,6 +67,27 @@ Assistant Grounded JSON Answer:
   "is_grounded": false,
   "confidence": 0.0
 }
+
+Example 4: Formatted / List Question
+User Context:
+---
+[Source: Cloud Capabilities] (https://stratpoint.com/cloud/)
+Stratpoint provides cloud migration, managed cloud services, infrastructure modernization, and cloud security consulting.
+---
+Question: What cloud services do you provide? Please list them in bullet points.
+
+Assistant Grounded JSON Answer:
+{
+  "answer": "We provide the following cloud services:\\n- Cloud migration\\n- Managed cloud services\\n- Infrastructure modernization\\n- Cloud security consulting",
+  "citations": [
+    {
+      "url": "https://stratpoint.com/cloud/",
+      "title": "Cloud Capabilities"
+    }
+  ],
+  "is_grounded": true,
+  "confidence": 1.0
+}
 """
 
 # Few-shot examples in free-text format (V1 Few-Shot)
@@ -110,4 +131,22 @@ Question: What is Stratpoint's current stock market ticker and share price?
 
 Assistant:
 Sorry, I don't have that information. Is there anything else about Stratpoint's services or projects I can help you with?
+
+Example 4:
+User Context:
+---
+[Source: Cloud Capabilities] (https://stratpoint.com/cloud/)
+Stratpoint provides cloud migration, managed cloud services, infrastructure modernization, and cloud security consulting.
+---
+Question: What cloud services do you provide? Please list them in bullet points.
+
+Assistant:
+We provide the following cloud services:
+- Cloud migration
+- Managed cloud services
+- Infrastructure modernization
+- Cloud security consulting
+
+Sources used:
+- Cloud Capabilities (https://stratpoint.com/cloud/)
 """
