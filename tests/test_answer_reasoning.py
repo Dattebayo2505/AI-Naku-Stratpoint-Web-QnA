@@ -141,3 +141,107 @@ def test_missing_content_key_degrades_the_same_way(monkeypatch):
     text, _, grounded, _ = answer_mod.answer_grounded("q")
     assert text == ""
     assert grounded is None
+
+
+@respx.mock
+def test_echoed_schema_before_json_object_parses_successfully(monkeypatch):
+    """When the model outputs the schema definition before the actual answer JSON."""
+    _stub(monkeypatch)
+    schema_def = {
+        "$defs": {"Citation": {"properties": {"url": {"type": "string"}, "title": {"type": "string"}}}},
+        "properties": {"answer": {"type": "string"}, "citations": {"type": "array"}, "is_grounded": {"type": "boolean"}, "confidence": {"type": "number"}},
+        "required": ["answer", "citations", "is_grounded", "confidence"],
+        "title": "GroundedAnswer",
+        "type": "object"
+    }
+    actual_answer = {
+        "answer": "Here are 5 jobs:\n\n| Role | Location |\n| --- | --- |\n| Dev | Manila |",
+        "citations": [{"url": "https://stratpoint.com/careers/", "title": "Careers"}],
+        "is_grounded": True,
+        "confidence": 0.95
+    }
+    content = f"Reasoning: Found jobs in context.\n{json.dumps(schema_def)}\n{json.dumps(actual_answer)}"
+    respx.post(_NIM_URL).mock(return_value=httpx.Response(200, json=_payload(content)))
+
+    text, chunks, grounded, reasoning = answer_mod.answer_grounded("q", enable_reasoning=True)
+
+    assert grounded is not None
+    assert "Here are 5 jobs:" in grounded.answer
+    assert "| Role | Location |" in grounded.answer
+    assert grounded.is_grounded is True
+    assert grounded.confidence == 0.95
+    assert len(grounded.citations) == 1
+    assert reasoning == "Found jobs in context."
+    assert "Here are 5 jobs:" in text
+
+
+@respx.mock
+def test_reasoning_ending_with_json_output_label_is_cleaned(monkeypatch):
+    """When the reasoning text ends with 'JSON Output:' before the JSON objects."""
+    _stub(monkeypatch)
+    actual_answer = {
+        "answer": "| Role | Setup |\n| --- | --- |\n| Data Eng | Remote |",
+        "citations": [{"url": "https://stratpoint.com/careers/", "title": "Careers"}],
+        "is_grounded": True,
+        "confidence": 0.8
+    }
+    content = f"Reasoning: Analyzed the context.\n\nJSON Output:\n{json.dumps(actual_answer)}"
+    respx.post(_NIM_URL).mock(return_value=httpx.Response(200, json=_payload(content)))
+
+    text, chunks, grounded, reasoning = answer_mod.answer_grounded("q", enable_reasoning=True)
+
+    assert grounded is not None
+    assert "| Role | Setup |" in grounded.answer
+    assert reasoning == "Analyzed the context."
+
+
+@respx.mock
+def test_verbatim_user_multi_object_payload_with_table(monkeypatch):
+    """Verbatim test case reported by the user containing schema + answer table."""
+    _stub(monkeypatch)
+    content = (
+        "Reasoning: The provided context includes various links and information about Stratpoint's services. "
+        "To answer the question, I will extract relevant information from the provided context.\n\n"
+        "JSON Output:\n"
+        "{\n"
+        '  "$defs": {\n'
+        '    "Citation": {\n'
+        '      "properties": {\n'
+        '        "url": {"type": "string"},\n'
+        '        "title": {"type": "string"}\n'
+        "      }\n"
+        "    }\n"
+        "  },\n"
+        '  "properties": {\n'
+        '    "answer": {"type": "string"},\n'
+        '    "citations": {"type": "array"},\n'
+        '    "is_grounded": {"type": "boolean"},\n'
+        '    "confidence": {"type": "number"}\n'
+        "  },\n"
+        '  "title": "GroundedAnswer",\n'
+        '  "type": "object"\n'
+        "}\n"
+        "{\n"
+        '  "answer": "Here are 5 job listings in table format:\\n\\n| Role | Work Setup | Location | Job Code | Application Link |\\n| --- | --- | --- | --- | --- |\\n| Data Engineer | Partially Remote | Mandaluyong, Metro Manila | `strt0382` | [Apply Now](https://stratpoint.hire.trakstar.com/jobs/fk0px4x/) |\\n",\n'
+        '  "citations": [\n'
+        '    {"url": "https://stratpoint.com/data-engineering/", "title": "Data Engineering"}\n'
+        "  ],\n"
+        '  "is_grounded": true,\n'
+        '  "confidence": 0.8\n'
+        "}"
+    )
+    respx.post(_NIM_URL).mock(return_value=httpx.Response(200, json=_payload(content)))
+
+    text, chunks, grounded, reasoning = answer_mod.answer_grounded("q", enable_reasoning=True)
+
+    assert grounded is not None
+    assert "| Role | Work Setup | Location | Job Code | Application Link |" in grounded.answer
+    assert "[Apply Now](https://stratpoint.hire.trakstar.com/jobs/fk0px4x/)" in grounded.answer
+    assert grounded.is_grounded is True
+    assert grounded.confidence == 0.8
+    assert len(grounded.citations) == 1
+    assert "JSON Output:" not in (reasoning or "")
+    assert "| Role | Work Setup |" in text
+    assert "Sources used:" in text
+
+

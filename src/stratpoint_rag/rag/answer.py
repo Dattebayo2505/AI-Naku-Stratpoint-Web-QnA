@@ -73,10 +73,72 @@ def _split_reasoning(raw: str) -> tuple[str, str | None]:
     # closing fence on the tail of the body — neither is caught by
     # _strip_code_fences, which only handles a leading fence. Trim both.
     reasoning = re.sub(r"```(?:json)?\s*$", "", reasoning).strip()
+    # Also trim any trailing "JSON Output:", "JSON:", or "Output:" label that
+    # the model emitted right before the JSON object.
+    reasoning = re.sub(r"(?i)\b(?:JSON\s+Output|JSON|Output)\s*:\s*$", "", reasoning).strip()
     body = s[brace:].rstrip()
     if body.endswith("```"):
         body = body[:-3].rstrip()
     return body, (reasoning or None)
+
+
+def _extract_grounded_answer(raw_response: str | None) -> GroundedAnswer | None:
+    """Extract and validate a GroundedAnswer from a raw model response.
+
+    Handles:
+    - Direct JSON string matching GroundedAnswer
+    - Markdown fenced JSON (```json ... ```)
+    - Multiple JSON blocks / schema definitions echoed before the instance JSON
+    - Preamble/postamble text surrounding the JSON
+    """
+    if not raw_response:
+        return None
+
+    cleaned = _strip_code_fences(raw_response)
+
+    # 1. Direct validation attempt
+    try:
+        return GroundedAnswer.model_validate_json(cleaned)
+    except Exception:
+        pass
+
+    # 2. Extract from markdown code fences if present
+    fence_pattern = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
+    for match in fence_pattern.finditer(raw_response):
+        block = match.group(1).strip()
+        try:
+            return GroundedAnswer.model_validate_json(block)
+        except Exception:
+            try:
+                data = json.loads(block)
+                if isinstance(data, dict):
+                    return GroundedAnswer.model_validate(data)
+            except Exception:
+                pass
+
+    # 3. Scan for top-level JSON objects using JSONDecoder (handles echoed schema + instance JSON)
+    decoder = json.JSONDecoder()
+    candidates: list[GroundedAnswer] = []
+    idx = 0
+    while idx < len(cleaned):
+        brace_pos = cleaned.find("{", idx)
+        if brace_pos == -1:
+            break
+        try:
+            obj, end_pos = decoder.raw_decode(cleaned, idx=brace_pos)
+            idx = max(end_pos, brace_pos + 1)
+            if isinstance(obj, dict):
+                try:
+                    candidates.append(GroundedAnswer.model_validate(obj))
+                except Exception:
+                    pass
+        except Exception:
+            idx = brace_pos + 1
+
+    if candidates:
+        return candidates[-1]
+
+    return None
 
 
 def _dedupe_citations(citations: list[Citation]) -> list[Citation]:
@@ -183,12 +245,12 @@ def answer_grounded(
     if enable_reasoning:
         raw_response, reasoning = _split_reasoning(raw_response)
 
-    # 4. Parse and validate the response (tolerate markdown-fenced JSON, which
-    #    appears on the reasoning-on path where json_object mode is disabled).
-    try:
-        parsed = GroundedAnswer.model_validate_json(_strip_code_fences(raw_response))
-    except Exception as e:
-        log.warning("JSON parsing failed, falling back to raw response: %s", e)
+    # 4. Parse and validate the response (tolerate markdown-fenced JSON, schema
+    #    echoes, or multiple JSON blocks on the reasoning-on path where
+    #    json_object mode is disabled).
+    parsed = _extract_grounded_answer(raw_response)
+    if parsed is None:
+        log.warning("JSON parsing failed, falling back to raw response: %s", raw_response)
         return raw_response, chunks, None, reasoning
 
     # 5. Format answer and citations

@@ -88,6 +88,27 @@ Assistant Grounded JSON Answer:
   "is_grounded": true,
   "confidence": 1.0
 }
+
+Example 5: Table Formatted Question
+User Context:
+---
+[Source: Cloud Capabilities] (https://stratpoint.com/cloud/)
+Stratpoint provides Cloud Migration, Managed Cloud, and Cloud Security consulting across AWS, GCP, and Azure.
+---
+Question: What cloud services do you provide? Please output in a table format.
+
+Assistant Grounded JSON Answer:
+{
+  "answer": "Here are our cloud services in table format:\\n\\n| Service | Supported Platforms | Description |\\n| --- | --- | --- |\\n| Cloud Migration | AWS, GCP, Azure | End-to-end cloud migration |\\n| Managed Cloud | AWS, GCP, Azure | 24/7 cloud management |\\n| Cloud Security | AWS, GCP, Azure | Security and compliance consulting |",
+  "citations": [
+    {
+      "url": "https://stratpoint.com/cloud/",
+      "title": "Cloud Capabilities"
+    }
+  ],
+  "is_grounded": true,
+  "confidence": 1.0
+}
 """
 
 # Few-shot examples in free-text format (V1 Few-Shot)
@@ -146,6 +167,26 @@ We provide the following cloud services:
 - Managed cloud services
 - Infrastructure modernization
 - Cloud security consulting
+
+Sources used:
+- Cloud Capabilities (https://stratpoint.com/cloud/)
+
+Example 5:
+User Context:
+---
+[Source: Cloud Capabilities] (https://stratpoint.com/cloud/)
+Stratpoint provides Cloud Migration, Managed Cloud, and Cloud Security consulting across AWS, GCP, and Azure.
+---
+Question: What cloud services do you provide? Please output in a table format.
+
+Assistant:
+Here are our cloud services in table format:
+
+| Service | Supported Platforms | Description |
+| --- | --- | --- |
+| Cloud Migration | AWS, GCP, Azure | End-to-end cloud migration |
+| Managed Cloud | AWS, GCP, Azure | 24/7 cloud management |
+| Cloud Security | AWS, GCP, Azure | Security and compliance consulting |
 
 Sources used:
 - Cloud Capabilities (https://stratpoint.com/cloud/)

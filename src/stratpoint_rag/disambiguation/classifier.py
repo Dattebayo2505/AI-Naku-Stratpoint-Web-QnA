@@ -177,6 +177,12 @@ def classify(user_input: str, conversation_context: str | None = None) -> Intent
     return result
 
 
+_VAGUE_PHRASES = {
+    "i need help", "need help", "help me", "can you help me", "could you help me",
+    "please help", "please help me", "i have a question", "help", "support",
+}
+
+
 def _heuristic_classify(user_input: str, context: str | None = None) -> IntentQuery:
     text = user_input.lower().strip()
     check_text = text
@@ -196,6 +202,13 @@ def _heuristic_classify(user_input: str, context: str | None = None) -> IntentQu
     clean = text.strip("!.,?;:")
     if clean in _GREETINGS or any(text.startswith(g) for g in ("hello ", "hi ", "hey ", "thank")):
         return IntentQuery(intent=IntentCategory.GREETING, confidence=0.95, reasoning="Matched greeting")
+
+    if clean in _VAGUE_PHRASES:
+        return IntentQuery(
+            intent=IntentCategory.NEEDS_CLARIFICATION,
+            confidence=0.95,
+            reasoning="Vague help request without topic",
+        )
 
     for kw in _HARMFUL_KEYWORDS:
         if kw in text:
