@@ -220,3 +220,48 @@ def test_clarification_loop_serialization():
 def test_intent_slots_defined():
     assert IntentCategory.ASK_STRATPOINT in INTENT_SLOTS
     assert len(INTENT_SLOTS[IntentCategory.ASK_STRATPOINT]) >= 3
+
+
+def test_router_table_format_followup_with_session_memory():
+    """Turn 2 'Output me in table format' following a careers/jobs question must route to
+    retrieval rather than asking for clarification."""
+    mem = ConversationMemory(session_id="test-table")
+    mem.add_turn("user", "List all job openings for Stratpoint")
+    mem.add_turn("assistant", "We have the following job openings: Lead Designer, Delivery Manager...")
+    result = route("Output me in table format", session_memory=mem)
+    assert result.intent == IntentCategory.ASK_STRATPOINT
+    assert result.should_retrieve is True
+    assert result.clarification_question is None
+
+
+def test_router_followup_formatting_imperatives():
+    """Formatting imperatives with session memory should proceed directly to retrieval."""
+    mem = ConversationMemory(session_id="test-formats")
+    mem.add_turn("user", "What services does Stratpoint offer?")
+    mem.add_turn("assistant", "Stratpoint offers cloud, mobile, and data services.")
+
+    for q in [
+        "Output me in table format",
+        "Format as a table",
+        "Put this in a table",
+        "Make it a table",
+        "Tabulate this",
+        "Summarize in bullet points",
+        "Convert to a markdown table",
+        "Tell me more about it",
+    ]:
+        result = route(q, session_memory=mem)
+        assert result.intent == IntentCategory.ASK_STRATPOINT, f"Failed intent on: {q}"
+        assert result.should_retrieve is True, f"Failed should_retrieve on: {q}"
+        assert result.clarification_question is None, f"Failed clarification_question on: {q}"
+
+
+def test_slots_extract_from_conversation_memory_turns():
+    """extract_slots should extract topic/project/service from Turn objects in history."""
+    mem = ConversationMemory(session_id="test-slots")
+    mem.add_turn("user", "List all job openings for Stratpoint")
+    mem.add_turn("assistant", "We have the following job openings...")
+    query = extract_slots("Output me in table format", IntentCategory.ASK_STRATPOINT, history=mem.turns)
+    assert query.slots.get("topic") == "Careers"
+    assert "topic" not in query.missing_slots
+

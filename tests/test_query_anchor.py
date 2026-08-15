@@ -16,7 +16,7 @@ end-to-end retrieval behaviour and needs the built Chroma store.
 """
 import pytest
 
-from stratpoint_rag.rag.query_rewrite import anchor_entity
+from stratpoint_rag.rag.query_rewrite import anchor_entity, contextualize_query, is_followup_query
 
 
 class TestAnchorEntity:
@@ -81,6 +81,30 @@ class TestAnchorEntity:
         assert anchor_entity("Do you have focus in Australia?") == (
             "Do Stratpoint have focus in Australia?"
         )
+
+    def test_is_followup_query_detects_formatting_and_pronouns(self):
+        assert is_followup_query("Output me in table format") is True
+        assert is_followup_query("Put this in a table") is True
+        assert is_followup_query("Summarize in bullet points") is True
+        assert is_followup_query("Tell me more about it") is True
+        assert is_followup_query("What services does Stratpoint offer?") is False
+
+    def test_contextualize_query_enriches_followup_with_history(self):
+        history = [
+            {"role": "user", "content": "List all job openings for Stratpoint"},
+            {"role": "assistant", "content": "We have Lead Designer and Delivery Manager..."},
+        ]
+        result = contextualize_query("Output me in table format", history=history)
+        assert "List all job openings for Stratpoint" in result
+        assert "table format" in result
+
+    def test_contextualize_query_leaves_standalone_query_intact(self):
+        history = [
+            {"role": "user", "content": "List all job openings for Stratpoint"},
+            {"role": "assistant", "content": "We have Lead Designer..."},
+        ]
+        result = contextualize_query("What is OutSystems?", history=history)
+        assert result == "What is OutSystems?"
 
 
 # The chunk that answers the question: the About Us leadership section.

@@ -196,15 +196,32 @@ def extract_slots(
 
     if history:
         for hist_item in history:
-            if hasattr(hist_item, "answer"):
-                for pattern, topic in _TOPIC_PATTERNS:
-                    if pattern.search(hist_item.answer):
-                        cleaned["topic"] = topic
-                        break
+            text_to_check = ""
+            if hasattr(hist_item, "content"):
+                text_to_check = hist_item.content or ""
+            elif hasattr(hist_item, "answer"):
+                text_to_check = hist_item.answer or ""
             elif isinstance(hist_item, dict):
+                text_to_check = hist_item.get("content") or hist_item.get("answer") or ""
+            elif isinstance(hist_item, str):
+                text_to_check = hist_item
+
+            if text_to_check:
+                for pattern, project in _PROJECT_PATTERNS:
+                    if "project_name" not in cleaned and pattern.search(text_to_check):
+                        cleaned["project_name"] = project
+                        break
                 for pattern, topic in _TOPIC_PATTERNS:
-                    if pattern.search(hist_item.get("answer", "")):
-                        cleaned["topic"] = topic
+                    if "topic" not in cleaned:
+                        m = pattern.search(text_to_check)
+                        if m:
+                            cleaned["topic"] = topic
+                            if not matched_keyword:
+                                matched_keyword = m.group(0).lower()
+                            break
+                for pattern, service in _SERVICE_PATTERNS:
+                    if "service_type" not in cleaned and pattern.search(text_to_check):
+                        cleaned["service_type"] = service
                         break
 
     missing = [s for s in missing if s not in cleaned]

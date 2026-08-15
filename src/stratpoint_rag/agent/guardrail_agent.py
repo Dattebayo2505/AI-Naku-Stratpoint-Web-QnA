@@ -281,6 +281,13 @@ def run_with_guardrails(
     memory = _get_memory(session_id)
     config = guardrail_config or GuardrailConfig()
 
+    if history and memory.is_empty:
+        for h in history[-memory.max_turns:]:
+            if isinstance(h, dict) and "role" in h and "content" in h:
+                memory.add_turn(h["role"], h["content"])
+
+    effective_history = history or [{"role": t.role, "content": t.content} for t in memory.turns]
+
     # ── Input guardrails (built-in keyword/PII → NeMo) ────────────────
     processed_input, block_reason = _run_input_guardrails(message, config, use_nemo)
     if block_reason:
@@ -407,7 +414,7 @@ def run_with_guardrails(
         try:
             result = run_agent(
                 message,
-                history=history,
+                history=effective_history,
                 chat=agent,
                 enable_reasoning=enable_reasoning,
                 briefs=briefs,
@@ -451,7 +458,14 @@ def run_with_guardrails(
             ]
             if slugs:
                 query = f"{message} {' '.join(slugs[:10])}"
-        raw, source_chunks, grounded, reasoning = answer_grounded(query, k=8, enable_reasoning=enable_reasoning)
+        try:
+            raw, source_chunks, grounded, reasoning = answer_grounded(
+                query, k=8, enable_reasoning=enable_reasoning, history=effective_history
+            )
+        except TypeError:
+            raw, source_chunks, grounded, reasoning = answer_grounded(
+                query, k=8, enable_reasoning=enable_reasoning
+            )
         result = AgentResult(answer=raw)
         result.reasoning = reasoning
         if grounded is not None:

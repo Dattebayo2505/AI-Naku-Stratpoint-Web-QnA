@@ -15,6 +15,7 @@ import httpx
 from stratpoint_rag import llmops
 from stratpoint_rag.rag import config
 from stratpoint_rag.rag.models import Chunk
+from stratpoint_rag.rag.query_rewrite import contextualize_query
 from stratpoint_rag.rag.retrieve import retrieve
 from stratpoint_rag.prompts.builder import build_prompt
 from stratpoint_rag.prompts.schema import Citation, GroundedAnswer
@@ -99,17 +100,22 @@ def _dedupe_citations(citations: list[Citation]) -> list[Citation]:
     return deduped
 
 
-def answer(query: str, k: int = _DEFAULT_K) -> tuple[str, list[Chunk]]:
+def answer(
+    query: str, k: int = _DEFAULT_K, history: list[dict] | list | None = None
+) -> tuple[str, list[Chunk]]:
     """Backward-compatible 2-tuple seam (used by agent tools).
 
     Delegates to answer_grounded and drops the parsed GroundedAnswer + reasoning.
     """
-    text, chunks, _, _ = answer_grounded(query, k)
+    text, chunks, _, _ = answer_grounded(query, k, history=history)
     return text, chunks
 
 
 def answer_grounded(
-    query: str, k: int = _DEFAULT_K, enable_reasoning: bool = False
+    query: str,
+    k: int = _DEFAULT_K,
+    enable_reasoning: bool = False,
+    history: list[dict] | list | None = None,
 ) -> tuple[str, list[Chunk], GroundedAnswer | None, str | None]:
     """Like answer(), but also returns the parsed GroundedAnswer (or None on
     parse-failure fallback) and the model's reasoning text (or None).
@@ -123,8 +129,9 @@ def answer_grounded(
     if not key:
         raise RuntimeError("NVIDIA_API_KEY is not set (see .envexample)")
 
-    # 1. Retrieve the top-k relevant context chunks
-    chunks = retrieve(query, k=k)
+    # 1. Retrieve the top-k relevant context chunks (contextualized if follow-up)
+    retrieval_query = contextualize_query(query, history=history)
+    chunks = retrieve(retrieval_query, k=k)
 
     # 2. Build the system and user prompts. Reasoning is prompted, not native:
     #    NIM's endpoint for meta/llama-3.1-8b-instruct does not support
@@ -133,13 +140,19 @@ def answer_grounded(
     variant = "v4_combined_reasoning" if enable_reasoning else "v4_combined_lowtemp"
     system_prompt, user_prompt = build_prompt(query, chunks, variant=variant)
 
-    # 3. Call the NVIDIA NIM endpoint
+    # 3. Call the NVIDIA NIM endpoint with conversation history if present
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    if history:
+        for h in history:
+            role = getattr(h, "role", None) or (h.get("role") if isinstance(h, dict) else None)
+            content = getattr(h, "content", None) or (h.get("content") if isinstance(h, dict) else None)
+            if role and content:
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": user_prompt})
+
     body = {
         "model": config.llm_model(),
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        "messages": messages,
         "max_tokens": 4096,
         "temperature": 0.1,
         "top_p": 0.95,

@@ -389,3 +389,67 @@ def _route_stub():
         matched_keyword = None
 
     return R()
+
+
+def test_guardrail_agent_table_format_followup_turn(monkeypatch):
+    """Regression: Turn 1 asks for job openings, Turn 2 asks 'Output me in table format'.
+    Turn 2 must NOT be intercepted with 'Needed clarification: ask_stratpoint'."""
+    from stratpoint_rag.agent import guardrail_agent as ga
+    from stratpoint_rag.rag.models import Chunk
+    from stratpoint_rag.prompts.schema import GroundedAnswer
+
+    _fake_nemo(monkeypatch)
+
+    ga.clear_memory("test-multiturn-table")
+
+    calls = []
+
+    def fake_answer_grounded(query, k=8, enable_reasoning=False, history=None):
+        calls.append({"query": query, "history": history})
+        chunks = [
+            Chunk(
+                id="c1",
+                slug="careers",
+                url="https://stratpoint.com/careers",
+                title="Careers",
+                text="Job openings: Lead Designer, Delivery Manager.",
+            )
+        ]
+        if "table" in query.lower():
+            table_ans = "| Role | Location |\n|---|---|\n| Lead Designer | Mandaluyong |\n| Delivery Manager | Mandaluyong |"
+            grounded = GroundedAnswer(
+                answer=table_ans, citations=[], is_grounded=True, confidence=0.95
+            )
+            return (table_ans, chunks, grounded, None)
+        text = "We have Lead Designer and Delivery Manager job openings."
+        grounded = GroundedAnswer(
+            answer=text, citations=[], is_grounded=True, confidence=0.95
+        )
+        return (text, chunks, grounded, None)
+
+    monkeypatch.setattr(ga, "answer_grounded", fake_answer_grounded)
+
+    try:
+        # Turn 1
+        res1 = ga.run_with_guardrails(
+            "List all job openings for Stratpoint",
+            session_id="test-multiturn-table",
+            use_nemo=True,
+        )
+        assert "Lead Designer" in res1.answer
+        assert res1.guardrail_reason is None
+
+        # Turn 2
+        res2 = ga.run_with_guardrails(
+            "Output me in table format",
+            session_id="test-multiturn-table",
+            use_nemo=True,
+        )
+        assert res2.guardrail_reason != "Needed clarification: ask_stratpoint"
+        assert "|" in res2.answer
+        assert len(calls) == 2
+        assert calls[1]["history"] is not None
+        assert len(calls[1]["history"]) >= 2
+    finally:
+        ga.clear_memory("test-multiturn-table")
+

@@ -71,3 +71,63 @@ def anchor_entity(query: str, company: str = COMPANY) -> str:
     if len(query.split()) > _MAX_CONVERSATIONAL_WORDS:
         return query
     return _PRONOUNS.sub(lambda m: _replacement(m.group(1), company), query)
+
+
+_FORMATTING_KEYWORDS = re.compile(
+    r"\b(table|tabular|chart|matrix|bullet|bullets|bulleted|csv|json|markdown|list\s*format|"
+    r"format|reformat|tabulate|structure|organize|summarize|summary|simplify|shorten|expand)\b",
+    re.IGNORECASE,
+)
+
+_REFERENTIAL_CUES = re.compile(
+    r"\b(it|that|this|them|these|those|there|here|more|again|else)\b",
+    re.IGNORECASE,
+)
+
+_CONTINUATION_PREFIX = re.compile(
+    r"^(?:what\s+about|how\s+about|and\s+in|and\s+for|what\s+of|also\s+in|also\s+for)\b",
+    re.IGNORECASE,
+)
+
+
+def is_followup_query(query: str) -> bool:
+    """True when query is a follow-up, formatting request, or referential ask needing conversation context."""
+    text = query.strip().lower()
+    if not text:
+        return False
+    if bool(_FORMATTING_KEYWORDS.search(text)):
+        return True
+    if bool(_REFERENTIAL_CUES.search(text)):
+        return True
+    if bool(_CONTINUATION_PREFIX.search(text)):
+        return True
+    return False
+
+
+def contextualize_query(
+    query: str,
+    history: list | None = None,
+    company: str = COMPANY,
+) -> str:
+    """Rewrite or enrich a query with conversation context for retrieval.
+
+    If the query is a follow-up or formatting request, enrich it with the most recent
+    user question from history before applying pronoun anchoring.
+    """
+    if not history or not is_followup_query(query):
+        return anchor_entity(query, company=company)
+
+    last_user_query = ""
+    for item in reversed(history):
+        role = getattr(item, "role", None) or (item.get("role") if isinstance(item, dict) else None)
+        content = getattr(item, "content", None) or (item.get("content") if isinstance(item, dict) else "")
+        if role == "user" and content:
+            last_user_query = content.strip()
+            break
+
+    if last_user_query and last_user_query.lower() != query.lower():
+        combined = f"{last_user_query} {query}"
+        return anchor_entity(combined, company=company)
+
+    return anchor_entity(query, company=company)
+
