@@ -5,9 +5,12 @@ import pytest
 
 from stratpoint_rag.currency_calculator import (
     EXCHANGE_RATE_PESOS_PER_DOLLAR,
+    HANDBOOK_LICENSE_PHP_ANNUAL,
+    HANDBOOK_PHP_RATES,
     calculate_role_rate,
     convert_currency,
     get_category_costings,
+    lookup_handbook_rate,
     normalize_currency_code,
 )
 from stratpoint_rag.agent.contracts import EstimationResult, RoleBreakdownItem
@@ -53,18 +56,29 @@ def test_calculate_role_rate():
     assert rate_usd == Decimal("41.62")  # 2496.90 / 60 = 41.615 -> 41.62
 
 
-def test_tech_stack_handbook_rate():
-    # Go Senior rate from handbook.md (₱2,496.90/hr PHP -> $41.62/hr USD)
-    rate_go, _ = calculate_role_rate("Senior Fullstack Engineer", "USD", tech_stack_hints=["Go Backend"])
-    assert rate_go == Decimal("41.62")
+def test_handbook_role_rates():
+    """Verify Section 1.1 role rates in PHP and USD."""
+    roles = {
+        "Tech Lead / Solutions Architect": Decimal("2496.90"),
+        "Solution Architect": Decimal("2740.50"),
+        "Senior Fullstack Engineer": Decimal("2090.90"),
+        "Senior Frontend Developer": Decimal("1867.60"),
+        "Senior Backend Developer": Decimal("1969.10"),
+        "QA Automation Manager": Decimal("1299.20"),
+        "UI/UX Designer": Decimal("1470.00"),
+    }
+    for role, expected_php in roles.items():
+        assert lookup_handbook_rate(role, target_currency="PHP") == expected_php
 
-    # React Senior rate from handbook.md (₱1,969.10/hr PHP -> $32.82/hr USD)
-    rate_react, _ = calculate_role_rate("Senior Fullstack Engineer", "USD", tech_stack_hints=["React SPA"])
-    assert rate_react == Decimal("32.82")
 
-    # AI/ML Senior rate from handbook.md (₱2,537.50/hr PHP -> $42.29/hr USD)
-    rate_ai, _ = calculate_role_rate("Senior Fullstack Engineer", "USD", tech_stack_hints=["AI Model Tuning"])
-    assert rate_ai == Decimal("42.29")
+def test_handbook_licenses_removed_sections():
+    """Verify 5.2 (Gemini), 5.3 (AI Pro), and 1.2b (Frontline/Edu) are not in license dict."""
+    assert "google_workspace_starter" in HANDBOOK_LICENSE_PHP_ANNUAL
+    assert "google_workspace_standard" in HANDBOOK_LICENSE_PHP_ANNUAL
+    assert "google_workspace_plus" in HANDBOOK_LICENSE_PHP_ANNUAL
+    assert "gemini_standard" not in HANDBOOK_LICENSE_PHP_ANNUAL
+    assert "gemini_plus" not in HANDBOOK_LICENSE_PHP_ANNUAL
+    assert "google_ai_pro" not in HANDBOOK_LICENSE_PHP_ANNUAL
 
 
 def test_discrepancy_conversion_in_mapping():
@@ -98,52 +112,6 @@ def test_discrepancy_conversion_in_mapping():
     assert ctx_php.grand_total_amount == Decimal("600000.00")
 
 
-# ── stack hints are matched as whole tokens ────────────────────────────────
-#
-# These keys are two and three characters long and are matched against free-text
-# feature descriptions written by an LLM. Substring matching put "ai" inside
-# "Email"/"Plain"/"Domain", "ml" inside "HTML" and "go" inside "Google".
-
-
-@pytest.mark.parametrize(
-    "hint",
-    [
-        "Email notifications",   # 'ai' inside "Email"
-        "Domain registration",   # 'ai' inside "Domain"
-        "Plain CRUD forms",      # 'ai' inside "Plain"
-        "HTML export",           # 'ml' inside "HTML"
-        "Google Maps integration",  # 'go' inside "Google"
-        "Company logo upload",   # 'go' inside "logo"
-    ],
-)
-def test_ordinary_words_do_not_trigger_a_stack_rate(hint):
-    """A plain CRUD website must not bill at the senior AI/ML rate.
-
-    Asked of a role the stack table *is* about, so the assertion is about
-    tokenisation and not about role eligibility — see
-    ``test_a_shared_stack_hint_does_not_override_a_non_engineering_role``.
-    """
-    rate, _ = calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=[hint])
-    assert rate == Decimal("1867.60")  # the role's own handbook rate
-
-
-@pytest.mark.parametrize(
-    "hint,expected",
-    [
-        ("Go Backend", "2496.90"),
-        ("React SPA", "1969.10"),
-        ("AI Model Tuning", "2537.50"),
-        ("Next.js frontend", "2192.40"),
-        ("Python/Django API", "2090.90"),
-        ("Vue.js dashboard", "1867.60"),
-    ],
-)
-def test_real_stack_hints_still_win(hint, expected):
-    """The override itself must keep working — including dotted keys."""
-    rate, _ = calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=[hint])
-    assert rate == Decimal(expected)
-
-
 # ── line items convert on the declared code, not the magnitude ─────────────
 
 
@@ -164,12 +132,7 @@ def _estimate(hourly_rate: float, currency_code: str) -> EstimationResult:
 
 
 def test_high_usd_rate_is_not_mistaken_for_pesos():
-    """A genuine $600/hr USD rate used to be divided by 60 and printed as $10.
-
-    The old rule inferred the source currency from the number's size: under 500
-    meant dollars, 500 or more meant pesos. That holds for the current handbook
-    rates and for nothing else.
-    """
+    """A genuine $600/hr USD rate used to be divided by 60 and printed as $10."""
     ctx = build_quote_context(
         proposal_id="p1",
         estimation=_estimate(600.0, "USD"),
@@ -201,11 +164,6 @@ def test_php_estimate_converts_to_a_usd_quote():
 
 
 # ── an undeclared estimation currency is inferred, never assumed to be USD ──
-#
-# The model re-supplies an estimation as a *dict* copied out of a prior
-# Observation, and that dict predates `currency_code`. With the field defaulting
-# to "USD" the peso amounts inside it were relabelled dollars and multiplied by
-# 60 on the way to a peso quote: PHP 2,987.00/hr printed as PHP 179,220.00/hr.
 
 
 _UNDECLARED_PESO_ESTIMATE = {
@@ -247,49 +205,6 @@ def test_an_undeclared_currency_survives_the_proposal_input_contract():
     assert ctx.grand_total_amount < Decimal("1000000")
 
 
-# ── the stack table is consulted for the roles it is about ─────────────────
-#
-# Handbook 1.1's stack rates are labelled "Senior <stack> Engineer". One shared
-# hint list is passed for every role, so testing the table before the role's own
-# rate billed a QA manager (+61%) and a designer (+42%) at senior mobile rates.
-
-
-def test_a_shared_stack_hint_does_not_override_a_non_engineering_role():
-    hints = ["User login", "Product catalog", "Mobile"]
-
-    assert calculate_role_rate("QA Automation Manager", "PHP", tech_stack_hints=hints)[0] == Decimal("1299.20")
-    assert calculate_role_rate("UI/UX Designer", "PHP", tech_stack_hints=hints)[0] == Decimal("1470.00")
-    assert calculate_role_rate("Tech Lead / Solutions Architect", "PHP", tech_stack_hints=hints)[0] == Decimal("2496.90")
-    # The engineer the "Mobile" hint is actually about still moves.
-    assert calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=hints)[0] == Decimal("2090.90")
-
-
-@pytest.mark.parametrize(
-    "hint,expected",
-    [
-        ("Backend in Python.", "2090.90"),
-        ("Built on blockchain.", "2699.90"),
-        ("Frontend in React.", "1969.10"),
-    ],
-)
-def test_a_trailing_full_stop_does_not_hide_a_stack_token(hint, expected):
-    """`tech_hints` is LLM-written prose that ends sentences; the token regex
-    admitted `.` so `next.js` would survive and swallowed the full stop too."""
-    rate, _ = calculate_role_rate("Senior Frontend Developer", "PHP", tech_stack_hints=[hint])
-    assert rate == Decimal(expected)
-
-
-def test_the_first_matching_hint_wins_not_the_first_table_key():
-    """Flattening every hint into one set discarded hint order, so the winner
-    became whichever key is declared first in `HANDBOOK_STACK_RATES_PHP`."""
-    rate, _ = calculate_role_rate(
-        "Senior Frontend Developer",
-        "PHP",
-        tech_stack_hints=["React SPA dashboard", "Python reporting API"],
-    )
-    assert rate == Decimal("1969.10")  # React — the first hint that matched
-
-
 # ── category costings match whole words, and invent no products ────────────
 
 
@@ -320,11 +235,8 @@ def test_genuine_category_keywords_still_bill():
     assert any("DevOps" in i["role"] for i in cloud)
 
 
-def test_a_gemini_licence_is_only_billed_when_the_brief_names_it():
-    """Nothing on the page is invented — a line item for a named third-party
-    product is a feature the brief never asked for."""
-    generic = get_category_costings(["LLM chatbot with RAG"], ["Web"], 6.0, "PHP")
-    assert not any("Gemini" in i["role"] for i in generic)
-
+def test_gemini_licence_not_billed_when_removed():
+    """Gemini licenses (5.2) are removed from handbook, so category costing only adds AI/ML specialist."""
     named = get_category_costings(["Gemini Enterprise integration"], ["Web"], 6.0, "PHP")
-    assert any("Gemini" in i["role"] for i in named)
+    assert any("AI/ML" in i["role"] for i in named)
+    assert not any("Gemini Enterprise AI Software License" in i["role"] for i in named)

@@ -17,7 +17,7 @@ from typing import Any
 EXCHANGE_RATE_PESOS_PER_DOLLAR: float = 60.0
 DEFAULT_EXCHANGE_RATE: Decimal = Decimal("60.0")
 
-# Standard Handbook PHP rates per hour by role & tech stack (Handbook Section 1.1)
+# Standard Handbook PHP rates per hour by role (Handbook Section 1.1)
 HANDBOOK_PHP_RATES: dict[str, Decimal] = {
     "Tech Lead / Solutions Architect": Decimal("2496.90"),  # ₱2,233 - ₱2,760.80/hr
     "Solution Architect": Decimal("2740.50"),               # ₱2,436 - ₱3,045/hr
@@ -28,36 +28,11 @@ HANDBOOK_PHP_RATES: dict[str, Decimal] = {
     "UI/UX Designer": Decimal("1470.00"),                   # ₱1,218 - ₱1,705.20/hr
 }
 
-# Tech-Stack Specific Senior Rates from Handbook Section 1.1
-HANDBOOK_STACK_RATES_PHP: dict[str, Decimal] = {
-    "go": Decimal("2496.90"),          # Go: ₱2,233 – ₱2,760.80/hr
-    "golang": Decimal("2496.90"),
-    "ai": Decimal("2537.50"),          # Senior AI/ML: ₱2,233 – ₱2,842/hr
-    "ml": Decimal("2537.50"),
-    "blockchain": Decimal("2699.90"),  # Senior Blockchain: ₱2,354.80 – ₱3,045/hr
-    "security": Decimal("2436.00"),    # Senior Security: ₱2,111.20 – ₱2,760.80/hr
-    "mobile": Decimal("2090.90"),      # Senior Mobile (iOS/Android): ₱1,827 – ₱2,354.80/hr
-    "ios": Decimal("2090.90"),
-    "android": Decimal("2090.90"),
-    "next.js": Decimal("2192.40"),     # Next.js/Nuxt: ₱1,948.80 – ₱2,436/hr
-    "nuxt": Decimal("2192.40"),
-    "python": Decimal("2090.90"),      # Python: ₱1,827 – ₱2,354.80/hr
-    "angular": Decimal("2090.90"),     # Angular: ₱1,827 – ₱2,354.80/hr
-    "react": Decimal("1969.10"),       # React: ₱1,705.20 – ₱2,233/hr
-    "node.js": Decimal("1969.10"),     # Node.js: ₱1,705.20 – ₱2,233/hr
-    "vue.js": Decimal("1867.60"),      # Vue.js: ₱1,624 – ₱2,111.20/hr
-    "php": Decimal("1745.80"),         # PHP/Laravel: ₱1,542.80 – ₱1,948.80/hr
-    "laravel": Decimal("1745.80"),
-}
-
 # Software & License Annual Prices in PHP from Handbook Section 1.2
 HANDBOOK_LICENSE_PHP_ANNUAL: dict[str, Decimal] = {
     "google_workspace_starter": Decimal("4527.35"),
     "google_workspace_standard": Decimal("11110.43"),
     "google_workspace_plus": Decimal("14405.75"),
-    "gemini_standard": Decimal("23132.04"),
-    "gemini_plus": Decimal("38364.84"),
-    "google_ai_pro": Decimal("12574.81"),
 }
 
 
@@ -120,31 +95,6 @@ def convert_currency(
     return converted.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-# Stack hints arrive as free-text feature descriptions from an LLM, so they are
-# tokenised before they are matched. Substring matching over keys this short is
-# indefensible: "ai" is inside "Email", "Plain" and "Domain", "ml" is inside
-# "HTML", and "go" is inside "Google" and "Logo". Measured before the fix, a
-# UI/UX Designer on a brief whose features said "Plain CRUD forms" billed at the
-# senior AI/ML rate — PHP 3,625.00/hr against their own PHP 2,100.00/hr, a 73%
-# overcharge on a plain CRUD website.
-#
-# Dots, plus and hash are kept *inside* a token so "next.js", "node.js",
-# "vue.js" and languages like "c#"/"c++" survive tokenisation as single terms —
-# but a token may not *end* on one, or a hint ending a sentence loses its stack:
-# "Backend in Python." tokenised to "python." and fell through to the base role
-# rate, ~16% under. `tech_stack_hints` is LLM-written prose, so trailing
-# punctuation is the common case, not the edge case.
-_STACK_TOKEN_RE = re.compile(r"[a-z0-9](?:[a-z0-9.+#]*[a-z0-9+#])?")
-
-
-def _stack_tokens(hints: list[str] | None) -> set[str]:
-    """Every whole word across the hints, lowercased."""
-    tokens: set[str] = set()
-    for hint in hints or []:
-        tokens.update(_STACK_TOKEN_RE.findall(str(hint).lower()))
-    return tokens
-
-
 # One whole-word matcher for the whole project. `pdf_gen.mapping` imports it
 # rather than compiling its own: the two had drifted apart — one handled
 # trailing punctuation and the other did not, and only one of them handled
@@ -173,67 +123,17 @@ def word_in(key: str, text: str) -> bool:
     return pattern.search(text) is not None
 
 
-# Handbook Section 1.1's stack rates are labelled "Senior <stack> Engineer" —
-# they are specialisations of a *senior engineer's* rate, not a multiplier for
-# everyone on the team. `agent/tools.py` passes one shared hint list
-# (`features + target_platform`) for every role, so testing the table ahead of
-# the role's own rate billed a whole team at one stack rate: on a brief whose
-# hints were ["User login", "Product catalog", "Mobile"], the QA Automation
-# Manager billed PHP 2,987.00 against their own PHP 1,856.00 (+61%) and the
-# UI/UX Designer PHP 2,987.00 against PHP 2,100.00 (+42%).
-_STACK_RATE_ROLES = frozenset(
-    {
-        "senior fullstack engineer",
-        "senior frontend developer",
-        "senior backend developer",
-    }
-)
-
-
-def _stack_rate_for(tech_stack_hints: list[str] | None) -> Decimal | None:
-    """The first *hint* that names a stack, not the first key in the table.
-
-    Hint order is the caller's statement of priority; table order is an
-    implementation detail. Flattening every hint into one set discarded the
-    former and silently substituted the latter — ``["React SPA dashboard",
-    "Python reporting API"]`` returned Python's rate because ``python`` happens
-    to be declared above ``react`` here, moving every role on the quote ~6%.
-    """
-    for hint in tech_stack_hints or []:
-        tokens = _stack_tokens([hint])
-        if not tokens:
-            continue
-        for key, stack_rate in HANDBOOK_STACK_RATES_PHP.items():
-            if key in tokens:
-                return stack_rate
-    return None
-
-
 def lookup_handbook_rate(
     role_name: str,
     tech_stack_hints: list[str] | None = None,
     target_currency: str = "USD",
     rate: float | Decimal = EXCHANGE_RATE_PESOS_PER_DOLLAR,
 ) -> Decimal:
-    """Look up exact PHP hourly rate from handbook.md based on role and tech stack hints,
+    """Look up exact PHP hourly rate from handbook.md based on role,
     and convert to target_currency (USD or PHP) using 60 Pesos = 1 Dollar rate.
-
-    **The role's own handbook rate wins.** A stack hint overrides it only for
-    the senior engineering roles the stack table is about (``_STACK_RATE_ROLES``)
-    and only on a **whole-token** match — see ``_STACK_TOKEN_RE`` for what
-    substring matching cost here.
     """
     target_c = normalize_currency_code(target_currency)
-
-    php_rate = None
-    if role_name.strip().casefold() in _STACK_RATE_ROLES:
-        # Iterating the hint tokens against the rate table (rather than the
-        # table against the text) means a hint matches a key only when it *is*
-        # that key.
-        php_rate = _stack_rate_for(tech_stack_hints)
-
-    if not php_rate:
-        php_rate = HANDBOOK_PHP_RATES.get(role_name, Decimal("2090.90"))
+    php_rate = HANDBOOK_PHP_RATES.get(role_name, Decimal("2090.90"))
 
     if target_c == "PHP":
         return php_rate
@@ -272,17 +172,11 @@ def get_category_costings(
     rate: float | Decimal = EXCHANGE_RATE_PESOS_PER_DOLLAR,
 ) -> list[dict[str, Any]]:
     """Generate category-specific costing line items referenced from handbook.md
-
     based on extracted brief features, platforms, and services.
     Returns list of dicts suitable for creating RoleBreakdownItem objects.
 
     **Keys are matched as whole words**, via the same ``word_in`` the rate
-    lookup and ``pdf_gen.mapping`` use. Substring matching here is worse than it
-    was eighty lines above: this function appends *priced line items*, so
-    ["Email notifications", "Plain contact form", "Domain registration"] — "ai"
-    inside each — added a Senior AI/ML Specialist and a software licence,
-    ~PHP 382,000 of work nobody asked for, straight into ``role_breakdown`` and
-    onto the client's PDF.
+    lookup and ``pdf_gen.mapping`` use.
     """
     target_c = normalize_currency_code(target_currency)
     all_text = " ".join((features or []) + (target_platform or [])).lower()
@@ -317,7 +211,7 @@ def get_category_costings(
     # 2. Artificial Intelligence Category (Handbook Section 5)
     has_ai = has("ai", "ml", "machine learning", "llm", "rag", "model", "gemini", "ai pro", "gpt")
     if has_ai:
-        ai_php = Decimal("2537.50")  # Senior AI/ML Engineer: ₱2,537.50/hr
+        ai_php = Decimal("2537.50")  # Senior AI/ML Engineer: ₱2,537.50/hr (Handbook Section 5.1)
         ai_rate = float(convert_currency(ai_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(ai_php)
         hours = max(20.0, round(weeks * 15.0, 1))
         additions.append({
@@ -326,21 +220,6 @@ def get_category_costings(
             "hourly_rate": round(ai_rate, 2),
             "total_cost": round(hours * ai_rate, 2),
         })
-
-        # Only when the brief names the product. A line item for a named
-        # third-party licence is a *feature*, and pdf_gen's rule is that nothing
-        # on the page is invented: everything is supplied by the caller, read
-        # out of the two contracts, or a documented constant. Billing every
-        # AI-flagged brief for Gemini invented one at PHP 23,132.04/yr.
-        if has("gemini", "google ai", "ai pro"):
-            gemini_php = Decimal("23132.04")  # Gemini Standard License: ₱23,132.04/yr (Unchanged)
-            gemini_cost = float(convert_currency(gemini_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(gemini_php)
-            additions.append({
-                "role": "Gemini Enterprise AI Software License (Annual)",
-                "estimated_hours": 1.0,
-                "hourly_rate": round(gemini_cost, 2),
-                "total_cost": round(gemini_cost, 2),
-            })
 
     # 3. Data Services Category (Handbook Section 4)
     has_data = has("data", "etl", "analytics", "pipeline", "data engineering", "data science")
@@ -369,7 +248,7 @@ def get_category_costings(
         })
 
     # 5. Software & Workspace Licenses Category (Handbook Section 1.2)
-    has_workspace = has("google workspace", "workspace license", "email license", "google frontline")
+    has_workspace = has("google workspace", "workspace license", "email license")
     if has_workspace:
         gw_php = Decimal("11110.43")  # Google Workspace Standard: ₱11,110.43/yr
         gw_cost = float(convert_currency(gw_php, "PHP", target_c, rate=rate)) if target_c == "USD" else float(gw_php)

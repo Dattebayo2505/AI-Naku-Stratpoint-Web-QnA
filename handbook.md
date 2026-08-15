@@ -44,16 +44,6 @@
     * Senior: ₱2,111.20 – ₱2,760.80/hr
     * Lead / Architect: ₱2,760.80 – ₱3,451.00/hr
 
-* **Developer Rates by Tech Stack (Junior / Mid-Level / Senior):**
-  * **React:** ₱812.00 – ₱1,055.60/hr | ₱1,218.00 – ₱1,624.00/hr | ₱1,705.20 – ₱2,233.00/hr
-  * **Vue.js:** ₱730.80 – ₱974.40/hr | ₱1,136.80 – ₱1,542.80/hr | ₱1,624.00 – ₱2,111.20/hr
-  * **Angular:** ₱893.20 – ₱1,136.80/hr | ₱1,299.20 – ₱1,705.20/hr | ₱1,827.00 – ₱2,354.80/hr
-  * **Next.js / Nuxt:** ₱974.40 – ₱1,218.00/hr | ₱1,421.00 – ₱1,827.00/hr | ₱1,948.80 – ₱2,436.00/hr
-  * **Node.js:** ₱812.00 – ₱1,055.60/hr | ₱1,218.00 – ₱1,624.00/hr | ₱1,705.20 – ₱2,233.00/hr
-  * **Python:** ₱893.20 – ₱1,136.80/hr | ₱1,299.20 – ₱1,705.20/hr | ₱1,827.00 – ₱2,354.80/hr
-  * **PHP / Laravel:** ₱730.80 – ₱974.40/hr | ₱1,136.80 – ₱1,461.60/hr | ₱1,542.80 – ₱1,948.80/hr
-  * **Go:** ₱1,136.80 – ₱1,421.00/hr | ₱1,624.00 – ₱2,030.00/hr | ₱2,233.00 – ₱2,760.80/hr
-
 * **Pricing Models & Effective Rates:**
   * **Project-Based Pricing:** Typically 15–20% lower than Time & Materials (T&M)
   * **True Cost (Junior with 20–30% oversight/rework):** ₱1,136.80 – ₱1,421.00/hr
@@ -79,30 +69,6 @@
     * **New:** Tier 1: ₱14,405.75/yr (₱1,200.48/mo) | Tier 2: ₱13,022.18/yr (₱1,085.18/mo)
     * **Renewal:** Tier 1: ₱16,830.32/yr (₱1,402.53/mo) | Tier 2: ₱15,577.04/yr (₱1,298.08/mo)
     * **Transfer:** Tier 1: ₱16,830.32/yr (₱1,402.53/mo) | Tier 2: ₱15,935.14/yr (₱1,327.93/mo)
-
-* **Google Frontline Plans:**
-  * **Google Frontline Starter:**
-    * **New:** Tier 1: ₱2,063.46/yr (₱171.96/mo) | Tier 2: ₱1,865.30/yr (₱155.44/mo)
-    * **Renewal:** Tier 1: ₱2,396.10/yr (₱199.68/mo) | Tier 2: ₱2,217.68/yr (₱184.80/mo)
-    * **Transfer:** Tier 1: ₱2,396.10/yr (₱199.68/mo) | Tier 2: ₱2,294.12/yr (₱191.17/mo)
-  * **Google Frontline Standard:**
-    * **New:** Tier 1: ₱4,943.06/yr (₱411.92/mo) | Tier 2: ₱4,468.30/yr (₱372.36/mo)
-    * **Renewal:** Tier 1: ₱5,773.66/yr (₱481.14/mo) | Tier 2: ₱5,282.26/yr (₱440.19/mo)
-    * **Transfer:** Tier 1: ₱5,773.66/yr (₱481.14/mo) | Tier 2: ₱5,466.55/yr (₱455.55/mo)
-  * **Google Frontline Plus:**
-    * **New:** Tier 1: ₱6,611.72/yr (₱550.98/mo) | Tier 2: ₱5,942.33/yr (₱495.19/mo)
-    * **Renewal:** Tier 1: ₱7,693.06/yr (₱641.09/mo) | Tier 2: ₱7,094.22/yr (₱591.19/mo)
-    * **Transfer:** Tier 1: ₱7,693.06/yr (₱641.09/mo) | Tier 2: ₱7,278.52/yr (₱606.54/mo)
-
-* **Google for Education Plans:**
-  * **Google for Education Plus:**
-    * **New:** Tier 1: ₱206.64/yr | Tier 2: ₱186.76/yr
-    * **Renewal:** Tier 1: ₱227.14/yr | Tier 2: ₱205.32/yr
-    * **Transfer:** Tier 1: ₱244.44/yr | Tier 2: ₱220.98/yr
-  * **Google for Education Teaching & Learning:**
-    * **New:** Tier 1: ₱2,059.60/yr | Tier 2: ₱1,861.80/yr
-    * **Renewal:** Tier 1: ₱2,263.63/yr | Tier 2: ₱2,046.24/yr
-    * **Transfer:** Tier 1: ₱2,451.04/yr | Tier 2: ₱2,215.60/yr
 
 ---
 
@@ -143,33 +109,3 @@
     * Mid-Level AI/ML Engineer: ₱1,624.00 – ₱2,111.20/hr | ₱259,840.00 – ₱337,792.00/mo
     * Senior AI/ML Engineer: ₱2,233.00 – ₱2,842.00/hr | ₱357,280.00 – ₱454,720.00/mo
     * Lead / Architect AI/ML Engineer: ₱2,842.00 – ₱3,654.00/hr | ₱454,720.00 – ₱584,640.00/mo
-
-* **Artificial Intelligence Software & Licenses:** *(Software & Licenses PDF)*
-  * **Gemini Software Licenses:** *(Annual per user in PHP)*
-    * **Gemini Frontline (New):** Tier 1 (1–9,999): ₱9,597.36/yr | Tier 2 (10,000–59,999): ₱9,543.38/yr
-    * **Gemini Standard (New):** Tier 1: ₱23,132.04/yr | Tier 2: ₱23,061.30/yr
-    * **Gemini Plus (New):** Tier 1: ₱38,364.84/yr | Tier 2: ₱38,294.44/yr
-    * **Gemini Frontline Starter (New, Min 500 licenses):** Tier 1: ₱4,750.09/yr | Tier 2: ₱4,740.68/yr
-    * **Gemini Emerging Markets (New, Min 500 licenses):** Tier 1: ₱6,729.29/yr | Tier 2: ₱6,715.97/yr
-
-  * **Google AI Pro Licenses:** *(Annual per user in PHP)*
-    * **Non-Edu Plus (New):**
-      * Google AI Pro (1–999): Tier 1: ₱12,574.81/yr
-      * Google AI Pro (1,000–4,999): Tier 1: ₱9,616.03/yr
-      * Google AI Pro (5,000–9,999): Tier 1: ₱8,202.84/yr
-      * Google AI Pro (10,000–59,999): Tier 2: ₱8,136.64/yr
-    * **Edu Plus (New):**
-      * Google AI Pro (1–999): Tier 1: ₱11,095.42/yr
-      * Google AI Pro (1,000–4,999): Tier 1: ₱8,136.64/yr
-      * Google AI Pro (5,000–9,999): Tier 1: ₱6,716.04/yr
-      * Google AI Pro (10,000–59,999): Tier 2: ₱6,657.25/yr
-    * **Edu Plus (Renewal):**
-      * Google AI Pro (1–999): Tier 1: ₱12,204.96/yr
-      * Google AI Pro (1,000–4,999): Tier 1: ₱8,950.30/yr
-      * Google AI Pro (5,000–9,999): Tier 1: ₱7,382.52/yr
-      * Google AI Pro (10,000–59,999): Tier 2: ₱7,322.98/yr
-    * **Edu Plus (Transfer):**
-      * Google AI Pro (1–999): Tier 1: ₱13,175.81/yr
-      * Google AI Pro (1,000–4,999): Tier 1: ₱9,662.26/yr
-      * Google AI Pro (5,000–9,999): Tier 1: ₱8,018.52/yr
-      * Google AI Pro (10,000–59,999): Tier 2: ₱7,980.78/yr
